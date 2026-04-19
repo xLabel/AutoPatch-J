@@ -63,6 +63,30 @@ class PendingEdit:
 
 
 @dataclass(slots=True)
+class ProjectConfig:
+    repo_root: str
+    scanner_name: str | None = None
+    semgrep_config: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "repo_root": self.repo_root,
+            "scanner_name": self.scanner_name,
+            "semgrep_config": self.semgrep_config,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "ProjectConfig":
+        return cls(
+            repo_root=str(data.get("repo_root", "")),
+            scanner_name=str(data.get("scanner_name")) if data.get("scanner_name") else None,
+            semgrep_config=(
+                str(data.get("semgrep_config")) if data.get("semgrep_config") else None
+            ),
+        )
+
+
+@dataclass(slots=True)
 class SessionState:
     repo_root: str | None = None
     active_scope: list[str] = field(default_factory=list)
@@ -127,9 +151,28 @@ def ensure_project_layout(repo_root: Path) -> None:
         (base_dir / dirname).mkdir(exist_ok=True)
 
 
-def save_config(repo_root: Path) -> None:
-    payload = {"repo_root": str(repo_root.resolve())}
+def save_config(repo_root: Path, config: ProjectConfig | None = None) -> None:
+    resolved_root = str(repo_root.resolve())
+    payload = (
+        config.to_dict()
+        if config is not None
+        else ProjectConfig(repo_root=resolved_root).to_dict()
+    )
+    payload["repo_root"] = resolved_root
     config_file(repo_root).write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def load_config(repo_root: Path) -> ProjectConfig:
+    target = config_file(repo_root)
+    if not target.exists():
+        return ProjectConfig(repo_root=str(repo_root.resolve()))
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return ProjectConfig(repo_root=str(repo_root.resolve()))
+    config = ProjectConfig.from_dict(payload)
+    if not config.repo_root:
+        config.repo_root = str(repo_root.resolve())
+    return config
 
 
 def save_session(repo_root: Path, session: SessionState) -> None:

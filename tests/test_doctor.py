@@ -57,7 +57,23 @@ class DoctorReportTests(unittest.TestCase):
         self.assertEqual(checks["openai_decision_engine"].status, "ok")
         self.assertEqual(checks["openai_edit_drafter"].status, "ok")
 
-    def test_doctor_command_formats_report_for_cli(self) -> None:
+    def test_env_command_formats_report_for_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            initialize_project(repo_root)
+            cli = AutoPatchCLI(repo_root)
+
+            with patch.dict(os.environ, {}, clear=True):
+                with patch("autopatch_j.doctor.shutil.which", return_value=None):
+                    with patch("autopatch_j.doctor.importlib.util.find_spec", return_value=None):
+                        output = cli.handle_command("/env")
+
+        self.assertIn("Environment report:", output)
+        self.assertIn("- project: ok", output)
+        self.assertIn("- scanner: error", output)
+        self.assertIn("- openai_decision_engine: unavailable", output)
+
+    def test_doctor_alias_still_works(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             initialize_project(repo_root)
@@ -68,10 +84,7 @@ class DoctorReportTests(unittest.TestCase):
                     with patch("autopatch_j.doctor.importlib.util.find_spec", return_value=None):
                         output = cli.handle_command("/doctor")
 
-        self.assertIn("Doctor report:", output)
-        self.assertIn("- project: ok", output)
-        self.assertIn("- scanner: error", output)
-        self.assertIn("- openai_decision_engine: unavailable", output)
+        self.assertIn("Environment report:", output)
 
 
 if __name__ == "__main__":

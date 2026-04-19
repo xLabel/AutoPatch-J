@@ -32,12 +32,19 @@ class UnsupportedJavaScanner:
         )
 
 
-def build_default_java_scanner() -> JavaScanner:
-    configured_name = os.getenv("AUTOPATCH_SCANNER", "semgrep").strip().lower() or "semgrep"
+def build_java_scanner(
+    scanner_name: str | None = None,
+    semgrep_config: str | None = None,
+) -> JavaScanner:
+    configured_name = (scanner_name or os.getenv("AUTOPATCH_SCANNER", "semgrep")).strip().lower() or "semgrep"
     if configured_name == "semgrep":
-        config = os.getenv("AUTOPATCH_SEMGREP_CONFIG", "p/java")
+        config = semgrep_config or os.getenv("AUTOPATCH_SEMGREP_CONFIG", "p/java")
         return SemgrepScanner(config=config)
     return UnsupportedJavaScanner(configured_name)
+
+
+def build_default_java_scanner() -> JavaScanner:
+    return build_java_scanner()
 
 
 __all__ = [
@@ -46,5 +53,6 @@ __all__ = [
     "ScanResult",
     "SemgrepScanner",
     "UnsupportedJavaScanner",
+    "build_java_scanner",
     "build_default_java_scanner",
 ]

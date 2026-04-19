@@ -28,7 +28,9 @@ Inside the shell:
 
 ```text
 /init .
-/doctor
+/env
+/scanner
+/scanner semgrep rules/demo.yml
 @UserService<Tab> scan this file
 @src/main/java/com/foo/UserService.java scan this file
 /reindex
@@ -56,6 +58,9 @@ Inside the shell:
 - scanner execution now goes through a Java scanner adapter; current supported backend: `semgrep`
 - set `AUTOPATCH_SCANNER=semgrep` to select the current backend explicitly
 - set `AUTOPATCH_SEMGREP_CONFIG` to override the default Semgrep config (`p/java`)
+- use `/scanner` to inspect the active scanner and project-level overrides
+- use `/scanner semgrep [config]` to persist the scanner choice into the project
+- use `/scanner reset` to clear project overrides and fall back to env/defaults
 - current fallback routing is keyword-based; if `OPENAI_API_KEY` is present, scan decisions can go through OpenAI
 - prompt-level review requests such as `列出问题` reuse the current findings artifact instead of forcing a re-scan
 - after findings are loaded, prompt-level patch requests such as `修复第1个问题` can draft a pending edit
@@ -63,12 +68,13 @@ Inside the shell:
 
 ## Runtime diagnosis
 
-- run `/doctor` to inspect whether the current machine is ready for:
+- run `/env` to inspect whether the current machine is ready for:
   - repository initialization
   - scanner execution
   - Tree-sitter Java syntax validation
   - OpenAI decision routing
   - OpenAI patch drafting
+- `/doctor` is kept as a compatibility alias
 
 The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns a clear error and keeps session state intact.
 

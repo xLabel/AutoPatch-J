@@ -37,17 +37,26 @@ from autopatch_j.project import (
     ProjectSummary,
     discover_repo_root,
     initialize_project,
+    load_project_config,
     load_project,
     refresh_project_index,
+    save_project_config,
 )
-from autopatch_j.scanners import ScanResult, build_default_java_scanner
-from autopatch_j.session import PendingEdit, SessionState, save_session
+from autopatch_j.scanners import ScanResult, build_java_scanner
+from autopatch_j.session import PendingEdit, ProjectConfig, SessionState, save_session
 from autopatch_j.tools.edit_tool import EditPreview
 from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 from autopatch_j.validators.rescan import RescanValidationResult, validate_post_apply_rescan
 
 HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
+  /env          Inspect runtime prerequisites and feature availability
+  /doctor       Compatibility alias for /env
+  /scanner      Show the current scanner configuration
+  /scanner semgrep [config]
+                Persist project scanner selection and optional Semgrep config
+  /scanner reset
+                Clear project scanner overrides and fall back to env/defaults
   /draft-edit <file_path> <instruction>
                  Ask the model to draft one search-replace edit for a file
   /draft-fix <finding_index> [artifact_id]
@@ -61,7 +70,6 @@ HELP_TEXT = """Commands:
                  Show a saved scan artifact, or the current active findings if omitted
   /show-validation [artifact_id]
                  Show a saved post-apply validation artifact, or the latest one if omitted
-  /doctor        Inspect the current runtime prerequisites and feature availability
   /reindex       Refresh repository index for @mention and scope lookup
   /status        Show current session state
   /help          Show this message
@@ -86,16 +94,18 @@ class AutoPatchCLI:
         self.cwd = cwd.resolve()
         self.repo_root = discover_repo_root(self.cwd)
         self.session = SessionState()
+        self.project_config = ProjectConfig(repo_root=str(self.repo_root)) if self.repo_root else None
         self.index: list[IndexEntry] = []
         self._completion_matches: list[str] = []
-        self.scanner = build_default_java_scanner()
         self.decision_engine = build_default_decision_engine()
         self.edit_drafter = build_default_edit_drafter()
-        self.tool_registry = ToolRegistry(scanner=self.scanner)
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
+            self.project_config = load_project_config(self.repo_root)
             if self.session.repo_root is None:
                 self.session.repo_root = str(self.repo_root)
+        self.rebuild_scanner()
+        self.tool_registry = ToolRegistry(scanner=self.scanner)
 
     def run(self) -> int:
         self.configure_readline()
@@ -248,8 +258,10 @@ class AutoPatchCLI:
         if command == "/show-validation":
             artifact_id = parts[1] if len(parts) > 1 else None
             return self.handle_show_validation(artifact_id)
-        if command == "/doctor":
-            return self.handle_doctor()
+        if command in {"/env", "/doctor"}:
+            return self.handle_env()
+        if command == "/scanner":
+            return self.handle_scanner(parts)
         if command == "/reindex":
             return self.handle_reindex()
         if command == "/status":
@@ -264,6 +276,9 @@ class AutoPatchCLI:
         self.repo_root = Path(summary.repo_root)
         self.session = session
         self.index = index
+        self.project_config = load_project_config(self.repo_root)
+        self.rebuild_scanner()
+        self.tool_registry = ToolRegistry(scanner=self.scanner)
         return format_init_summary(summary)
 
     def handle_reindex(self) -> str:
@@ -273,7 +288,7 @@ class AutoPatchCLI:
         self.index, summary = refresh_project_index(self.repo_root)
         return format_reindex_summary(summary)
 
-    def handle_doctor(self) -> str:
+    def handle_env(self) -> str:
         report = build_doctor_report(
             repo_root=self.repo_root,
             scanner=self.scanner,
@@ -281,6 +296,40 @@ class AutoPatchCLI:
             edit_drafter_label=self.edit_drafter.label if self.edit_drafter else None,
         )
         return format_doctor_report(report)
+
+    def handle_scanner(self, parts: list[str]) -> str:
+        if len(parts) == 1:
+            return format_scanner_summary(self.scanner, self.project_config)
+        if self.repo_root is None or self.project_config is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+        if len(parts) == 2 and parts[1] == "reset":
+            self.project_config.scanner_name = None
+            self.project_config.semgrep_config = None
+            save_project_config(self.repo_root, self.project_config)
+            self.rebuild_scanner()
+            self.tool_registry = ToolRegistry(scanner=self.scanner)
+            return (
+                "Scanner config reset to env/default.\n"
+                f"{format_scanner_summary(self.scanner, self.project_config)}"
+            )
+        if parts[1] != "semgrep" or len(parts) > 3:
+            return (
+                "Usage:\n"
+                "  /scanner\n"
+                "  /scanner semgrep [config]\n"
+                "  /scanner reset"
+            )
+
+        semgrep_config = parts[2] if len(parts) == 3 else "p/java"
+        self.project_config.scanner_name = "semgrep"
+        self.project_config.semgrep_config = semgrep_config
+        save_project_config(self.repo_root, self.project_config)
+        self.rebuild_scanner()
+        self.tool_registry = ToolRegistry(scanner=self.scanner)
+        return (
+            "Scanner config updated.\n"
+            f"{format_scanner_summary(self.scanner, self.project_config)}"
+        )
 
     def format_status(self) -> str:
         if self.repo_root is None:
@@ -815,6 +864,14 @@ class AutoPatchCLI:
             message="Syntax validation result was unavailable for this tool execution.",
         )
 
+    def rebuild_scanner(self) -> None:
+        scanner_name = self.project_config.scanner_name if self.project_config else None
+        semgrep_config = self.project_config.semgrep_config if self.project_config else None
+        self.scanner = build_java_scanner(
+            scanner_name=scanner_name,
+            semgrep_config=semgrep_config,
+        )
+
 
 def format_init_summary(summary: ProjectSummary) -> str:
     return (
@@ -839,11 +896,20 @@ def format_reindex_summary(summary: ProjectSummary) -> str:
 
 
 def format_doctor_report(report: DoctorReport) -> str:
-    lines = ["Doctor report:"]
+    lines = ["Environment report:"]
     for check in report.checks:
         lines.append(f"- {check.name}: {check.status}")
         lines.append(f"  {check.message}")
     return "\n".join(lines)
+
+
+def format_scanner_summary(scanner: object, project_config: ProjectConfig | None) -> str:
+    return (
+        "Scanner config:\n"
+        f"- active: {getattr(scanner, 'label', '(unknown)')}\n"
+        f"- project scanner: {project_config.scanner_name if project_config and project_config.scanner_name else '(none)'}\n"
+        f"- project semgrep config: {project_config.semgrep_config if project_config and project_config.semgrep_config else '(none)'}"
+    )
 
 
 def format_scan_result(result: ScanResult) -> str:
