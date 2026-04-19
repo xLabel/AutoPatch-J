@@ -47,6 +47,7 @@ from autopatch_j.project import (
 from autopatch_j.planner import AgentDecision, DecisionContext, build_default_planner
 from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
 from autopatch_j.scanners import ScanResult, build_java_scanner
+from autopatch_j.scanners.catalog import ScannerCatalogEntry, build_scanner_catalog
 from autopatch_j.session import PendingEdit, ProjectConfig, SessionState, save_session
 from autopatch_j.tools.edit_tool import EditPreview
 from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
@@ -55,7 +56,7 @@ from autopatch_j.validators.rescan import RescanValidationResult, validate_post_
 HELP_TEXT = """Commands:
   /init         Initialize the current repository for AutoPatch-J
   /status       Show project readiness and current work summary
-  /tools        Show local scanner and validator readiness
+  /scanners     Show Java static scanner choices
   /reindex       Refresh repository index for @mention and scope lookup
   /help          Show this message
   /quit          Exit the CLI
@@ -216,8 +217,8 @@ class AutoPatchCLI:
         command = parts[0]
         if command == "/help":
             return HELP_TEXT
-        if command == "/tools":
-            return self.handle_tools()
+        if command == "/scanners":
+            return self.handle_scanners()
         if command == "/reindex":
             return self.handle_reindex()
         if command == "/status":
@@ -256,8 +257,8 @@ class AutoPatchCLI:
             edit_drafter_label=self.edit_drafter.label if self.edit_drafter else None,
         )
 
-    def handle_tools(self) -> str:
-        return format_tools_report(self.build_readiness_report())
+    def handle_scanners(self) -> str:
+        return format_scanners_report(build_scanner_catalog(self.repo_root, self.scanner))
 
     def format_status(self) -> str:
         if self.repo_root is None:
@@ -265,7 +266,7 @@ class AutoPatchCLI:
                 "AutoPatch-J status:\n"
                 "- project: not initialized\n"
                 "- next: run /init from the Java repository root\n\n"
-                f"{format_tools_report(self.build_readiness_report())}"
+                f"{format_readiness_report(self.build_readiness_report())}"
             )
 
         summary = summarize_index(self.index)
@@ -284,7 +285,7 @@ class AutoPatchCLI:
             f"- active findings: {active_findings}\n"
             f"- pending patch: {pending_patch}\n"
             f"- last validation: {last_validation}\n\n"
-            f"{format_tools_report(self.build_readiness_report())}"
+            f"{format_readiness_report(self.build_readiness_report())}"
         )
 
     def format_active_findings_status(self) -> str:
@@ -925,13 +926,22 @@ def format_reindex_summary(summary: ProjectSummary) -> str:
     )
 
 
-def format_tools_report(report: ReadinessReport) -> str:
-    lines = ["Tool readiness:"]
+def format_readiness_report(report: ReadinessReport) -> str:
+    lines = ["Runtime readiness:"]
     for check in report.checks:
         if check.name == "project":
             continue
         lines.append(f"- {check.name}: {check.status}")
         lines.append(f"  {check.message}")
+    return "\n".join(lines)
+
+
+def format_scanners_report(entries: list[ScannerCatalogEntry]) -> str:
+    lines = ["Java scanners:"]
+    for entry in entries:
+        selector = "selected" if entry.selected else "disabled" if not entry.selectable else "available"
+        lines.append(f"- [{selector}] {entry.name}: {entry.status}")
+        lines.append(f"  {entry.message}")
     return "\n".join(lines)
 
 
