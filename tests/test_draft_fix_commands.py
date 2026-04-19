@@ -133,7 +133,8 @@ class DraftFixFlowTests(unittest.TestCase):
             output = cli.handle_line("修复第1个问题")
             self.assertEqual(
                 output,
-                "Edit drafter is disabled. Set OPENAI_API_KEY to enable patch drafting.",
+                "Edit drafter is disabled. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "to enable patch drafting.",
             )
 
 

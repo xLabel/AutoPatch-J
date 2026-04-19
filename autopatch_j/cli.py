@@ -523,7 +523,10 @@ class AutoPatchCLI:
                 "then ask AutoPatch-J to draft a patch."
             )
         if self.edit_drafter is None:
-            return "Edit drafter is disabled. Set OPENAI_API_KEY to enable patch drafting."
+            return (
+                "Edit drafter is disabled. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "to enable patch drafting."
+            )
 
         result = load_scan_result(self.repo_root, artifact_id)
         if result is None:

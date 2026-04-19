@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from typing import Protocol
 
-from autopatch_j.openai_responses import OpenAIResponsesClient
+from autopatch_j.llm import LLMResponse, OpenAICompatibleChatClient, build_default_llm_client
 
 
 @dataclass(slots=True)
@@ -37,22 +36,24 @@ class RepairingEditDrafter(EditDrafter, Protocol):
         """Return a corrected draft after preview or syntax feedback."""
 
 
-class OpenAIEditDrafter:
-    def __init__(self, client: OpenAIResponsesClient) -> None:
+class LLMEditDrafter:
+    def __init__(self, client: OpenAICompatibleChatClient) -> None:
         self.client = client
 
     @property
     def label(self) -> str:
-        return f"openai:{self.client.model}"
+        return self.client.label
 
     def draft_edit(self, file_path: str, instruction: str, file_content: str) -> DraftedEdit:
-        payload = build_edit_draft_payload(
-            model=self.client.model,
-            file_path=file_path,
-            instruction=instruction,
-            file_content=file_content,
+        response = self.client.complete(
+            messages=build_edit_draft_messages(
+                file_path=file_path,
+                instruction=instruction,
+                file_content=file_content,
+            ),
+            response_format={"type": "json_object"},
+            stream=False,
         )
-        response = self.client.create_response(payload)
         return parse_edit_draft_response(response, expected_file_path=file_path)
 
     def redraft_edit(
@@ -63,28 +64,47 @@ class OpenAIEditDrafter:
         previous_edit: DraftedEdit,
         feedback: str,
     ) -> DraftedEdit:
-        payload = build_edit_draft_payload(
-            model=self.client.model,
-            file_path=file_path,
-            instruction=instruction,
-            file_content=file_content,
-            previous_edit=previous_edit,
-            feedback=feedback,
+        response = self.client.complete(
+            messages=build_edit_draft_messages(
+                file_path=file_path,
+                instruction=instruction,
+                file_content=file_content,
+                previous_edit=previous_edit,
+                feedback=feedback,
+            ),
+            response_format={"type": "json_object"},
+            stream=False,
         )
-        response = self.client.create_response(payload)
         return parse_edit_draft_response(response, expected_file_path=file_path)
 
 
-def build_default_edit_drafter() -> OpenAIEditDrafter | None:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+def build_default_edit_drafter() -> LLMEditDrafter | None:
+    client = build_default_llm_client()
+    if client is None:
         return None
+    return LLMEditDrafter(client)
 
-    model = os.getenv("AUTOPATCH_OPENAI_MODEL", "gpt-5.4-mini")
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    return OpenAIEditDrafter(
-        OpenAIResponsesClient(api_key=api_key, model=model, base_url=base_url)
-    )
+
+def build_edit_draft_messages(
+    file_path: str,
+    instruction: str,
+    file_content: str,
+    previous_edit: DraftedEdit | None = None,
+    feedback: str | None = None,
+) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": EDIT_DRAFT_INSTRUCTIONS},
+        {
+            "role": "user",
+            "content": render_edit_draft_prompt(
+                file_path=file_path,
+                instruction=instruction,
+                file_content=file_content,
+                previous_edit=previous_edit,
+                feedback=feedback,
+            ),
+        },
+    ]
 
 
 def build_edit_draft_payload(
@@ -97,43 +117,25 @@ def build_edit_draft_payload(
 ) -> dict[str, object]:
     return {
         "model": model,
-        "instructions": EDIT_DRAFT_INSTRUCTIONS,
-        "input": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": render_edit_draft_prompt(
-                            file_path=file_path,
-                            instruction=instruction,
-                            file_content=file_content,
-                            previous_edit=previous_edit,
-                            feedback=feedback,
-                        ),
-                    }
-                ],
-            }
-        ],
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "search_replace_edit",
-                "strict": True,
-                "schema": EDIT_DRAFT_SCHEMA,
-            }
-        },
+        "messages": build_edit_draft_messages(
+            file_path=file_path,
+            instruction=instruction,
+            file_content=file_content,
+            previous_edit=previous_edit,
+            feedback=feedback,
+        ),
+        "response_format": {"type": "json_object"},
     }
 
 
-def parse_edit_draft_response(response: dict[str, object], expected_file_path: str) -> DraftedEdit:
-    raw = extract_response_text(response)
+def parse_edit_draft_response(response: LLMResponse | dict[str, object], expected_file_path: str) -> DraftedEdit:
+    raw = extract_draft_response_text(response)
     if not raw:
-        raise ValueError("OpenAI returned no draft edit content.")
+        raise ValueError("LLM returned no draft edit content.")
 
     payload = json.loads(raw)
     if not isinstance(payload, dict):
-        raise ValueError("OpenAI returned a non-object draft edit payload.")
+        raise ValueError("LLM returned a non-object draft edit payload.")
 
     file_path = str(payload.get("file_path", ""))
     if file_path != expected_file_path:
@@ -149,7 +151,10 @@ def parse_edit_draft_response(response: dict[str, object], expected_file_path: s
     )
 
 
-def extract_response_text(response: dict[str, object]) -> str:
+def extract_draft_response_text(response: LLMResponse | dict[str, object]) -> str:
+    if isinstance(response, LLMResponse):
+        return response.content.strip()
+
     output = response.get("output", [])
     if not isinstance(output, list):
         return ""
@@ -214,22 +219,9 @@ def render_edit_draft_prompt(
 
 
 EDIT_DRAFT_INSTRUCTIONS = (
-    "You are generating a minimal search-replace edit for AutoPatch-J. "
-    "Return exactly one edit for the given target file. "
+    "You generate one minimal search-replace edit for AutoPatch-J. "
+    "Return only a JSON object with keys: file_path, old_string, new_string, rationale. "
     "The old_string must match a unique span from the current file content. "
     "Keep the change as small as possible and avoid introducing new dependencies. "
     "If previous draft feedback is provided, correct that failed draft instead of repeating it."
 )
-
-
-EDIT_DRAFT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "file_path": {"type": "string"},
-        "old_string": {"type": "string"},
-        "new_string": {"type": "string"},
-        "rationale": {"type": "string"},
-    },
-    "required": ["file_path", "old_string", "new_string", "rationale"],
-    "additionalProperties": False,
-}

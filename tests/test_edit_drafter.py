@@ -6,37 +6,40 @@ from unittest.mock import patch
 
 from autopatch_j.edit_drafter import (
     DraftedEdit,
-    OpenAIEditDrafter,
+    LLMEditDrafter,
     build_default_edit_drafter,
     build_edit_draft_payload,
     parse_edit_draft_response,
     render_edit_draft_prompt,
 )
+from autopatch_j.llm import LLMResponse
 
 
 class FakeDraftClient:
-    def __init__(self, response: dict[str, object]) -> None:
+    def __init__(self, response: LLMResponse) -> None:
         self.response = response
-        self.model = "gpt-5.4-mini"
-        self.payloads: list[dict[str, object]] = []
+        self.model = "deepseek-chat"
+        self.label = "openai-compatible:deepseek-chat"
+        self.calls: list[dict[str, object]] = []
 
-    def create_response(self, payload: dict[str, object]) -> dict[str, object]:
-        self.payloads.append(payload)
+    def complete(self, **payload: object) -> LLMResponse:
+        self.calls.append(payload)
         return self.response
 
 
 class EditDrafterTests(unittest.TestCase):
-    def test_build_payload_uses_json_schema_format(self) -> None:
+    def test_build_payload_uses_chat_messages_and_json_object_format(self) -> None:
         payload = build_edit_draft_payload(
-            model="gpt-5.4-mini",
+            model="deepseek-chat",
             file_path="Demo.java",
             instruction="guard string compare",
             file_content="class Demo {}",
         )
 
-        self.assertEqual(payload["model"], "gpt-5.4-mini")
-        self.assertEqual(payload["text"]["format"]["type"], "json_schema")
-        self.assertEqual(payload["text"]["format"]["name"], "search_replace_edit")
+        self.assertEqual(payload["model"], "deepseek-chat")
+        self.assertEqual(payload["response_format"], {"type": "json_object"})
+        self.assertEqual(payload["messages"][0]["role"], "system")
+        self.assertEqual(payload["messages"][1]["role"], "user")
 
     def test_parse_response_returns_drafted_edit(self) -> None:
         drafted = parse_edit_draft_response(
@@ -84,30 +87,22 @@ class EditDrafterTests(unittest.TestCase):
                 expected_file_path="Demo.java",
             )
 
-    def test_openai_edit_drafter_calls_client(self) -> None:
+    def test_llm_edit_drafter_calls_client_without_streaming(self) -> None:
         client = FakeDraftClient(
-            {
-                "output": [
-                    {
-                        "type": "message",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": (
-                                    '{"file_path":"Demo.java","old_string":"call();",'
-                                    '"new_string":"safeCall();","rationale":"Minimal guard."}'
-                                ),
-                            }
-                        ],
-                    }
-                ]
-            }
+            LLMResponse(
+                content=(
+                    '{"file_path":"Demo.java","old_string":"call();",'
+                    '"new_string":"safeCall();","rationale":"Minimal guard."}'
+                )
+            )
         )
-        drafter = OpenAIEditDrafter(client)
+        drafter = LLMEditDrafter(client)
         drafted = drafter.draft_edit("Demo.java", "guard string compare", "call();")
 
         self.assertEqual(drafted.new_string, "safeCall();")
-        self.assertEqual(len(client.payloads), 1)
+        self.assertEqual(len(client.calls), 1)
+        self.assertFalse(client.calls[0]["stream"])
+        self.assertEqual(client.calls[0]["response_format"], {"type": "json_object"})
 
     def test_render_prompt_includes_previous_draft_feedback(self) -> None:
         prompt = render_edit_draft_prompt(
