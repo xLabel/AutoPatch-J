@@ -11,6 +11,7 @@ Current checkpoint:
 - `@mention` path resolution with interactive disambiguation
 - rule-based scan routing
 - Semgrep wrapper with normalized findings artifacts
+- pending edit review/apply gate
 
 ## Run
 
@@ -24,6 +25,9 @@ Inside the shell:
 /init .
 @src/main/java/com/foo/UserService.java scan this file
 /status
+/preview-edit Demo.java "call();" "safeCall();"
+/show-pending
+/apply-pending
 ```
 
 The model/tool loop is not wired yet. This slice establishes the repository and scope primitives that later agent steps will build on.
@@ -35,3 +39,10 @@ The model/tool loop is not wired yet. This slice establishes the repository and 
 - current routing is keyword-based; it will be replaced by LLM tool decisions later
 
 The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns a clear error and keeps session state intact.
+
+## Edit review gate
+
+- `/preview-edit` only previews a `search-replace` edit and stores it as pending
+- `/show-pending` shows the current pending diff
+- `/apply-pending` writes the pending edit to disk
+- `/clear-pending` drops the pending edit without changing files

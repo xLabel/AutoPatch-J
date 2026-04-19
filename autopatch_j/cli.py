@@ -9,12 +9,18 @@ from autopatch_j.decision_engine import AgentDecision, DecisionContext, RuleBase
 from autopatch_j.indexer import IndexEntry, summarize_index
 from autopatch_j.mentions import MentionResolution, ParsedPrompt, parse_prompt
 from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
-from autopatch_j.session import SessionState, save_session
+from autopatch_j.session import PendingEdit, SessionState, save_session
+from autopatch_j.tools.edit_tool import EditPreview
 from autopatch_j.tools.scan_java import ScanResult, scan_java
 from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 
 HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
+  /preview-edit <file_path> <old_string> <new_string>
+                 Preview a search-replace edit and store it as pending
+  /show-pending  Show the current pending edit and diff
+  /apply-pending Apply the current pending edit to the working tree
+  /clear-pending Drop the current pending edit without writing files
   /show-findings [artifact_id]
                  Show a saved scan artifact, or the current active findings if omitted
   /status        Show current session state
@@ -107,6 +113,14 @@ class AutoPatchCLI:
         command = parts[0]
         if command == "/help":
             return HELP_TEXT
+        if command == "/preview-edit":
+            return self.handle_preview_edit(parts)
+        if command == "/show-pending":
+            return self.handle_show_pending()
+        if command == "/apply-pending":
+            return self.handle_apply_pending()
+        if command == "/clear-pending":
+            return self.handle_clear_pending()
         if command == "/show-findings":
             artifact_id = parts[1] if len(parts) > 1 else None
             return self.handle_show_findings(artifact_id)
@@ -131,6 +145,7 @@ class AutoPatchCLI:
         summary = summarize_index(self.index)
         active_scope = ", ".join(self.session.active_scope) if self.session.active_scope else "(none)"
         recent_mentions = ", ".join(self.session.recent_mentions) if self.session.recent_mentions else "(none)"
+        pending_edit = self.session.pending_edit.file_path if self.session.pending_edit else "(none)"
         return (
             f"Repo root: {self.repo_root}\n"
             f"Indexed entries: {summary['entries']} "
@@ -138,8 +153,91 @@ class AutoPatchCLI:
             f"Active scope: {active_scope}\n"
             f"Recent mentions: {recent_mentions}\n"
             f"Current goal: {self.session.current_goal or '(none)'}\n"
-            f"Active findings: {self.session.active_findings_id or '(none)'}"
+            f"Active findings: {self.session.active_findings_id or '(none)'}\n"
+            f"Pending edit: {pending_edit}"
         )
+
+    def handle_preview_edit(self, parts: list[str]) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+        if len(parts) != 4:
+            return (
+                "Usage: /preview-edit <file_path> <old_string> <new_string>\n"
+                "Wrap values with spaces in quotes."
+            )
+
+        execution = self.tool_registry.execute(
+            repo_root=self.repo_root,
+            tool_name="preview_search_replace",
+            tool_args={
+                "file_path": parts[1],
+                "old_string": parts[2],
+                "new_string": parts[3],
+            },
+        )
+        preview = self.extract_edit_preview(execution, parts[1])
+        if preview.status == "ok":
+            self.session.pending_edit = PendingEdit(
+                file_path=parts[1],
+                old_string=parts[2],
+                new_string=parts[3],
+                diff=preview.diff,
+            )
+            save_session(self.repo_root, self.session)
+            return format_edit_preview(preview, prefix="Pending edit updated.")
+
+        self.session.pending_edit = None
+        save_session(self.repo_root, self.session)
+        return format_edit_preview(preview, prefix="Pending edit cleared because preview failed.")
+
+    def handle_show_pending(self) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+        pending = self.session.pending_edit
+        if pending is None:
+            return "No pending edit."
+        return (
+            "Pending edit:\n"
+            f"- file: {pending.file_path}\n"
+            f"- old_string length: {len(pending.old_string)}\n"
+            f"- new_string length: {len(pending.new_string)}\n"
+            f"{pending.diff}"
+        )
+
+    def handle_apply_pending(self) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+        pending = self.session.pending_edit
+        if pending is None:
+            return "No pending edit to apply."
+
+        execution = self.tool_registry.execute(
+            repo_root=self.repo_root,
+            tool_name="apply_search_replace",
+            tool_args={
+                "file_path": pending.file_path,
+                "old_string": pending.old_string,
+                "new_string": pending.new_string,
+            },
+        )
+        preview = self.extract_edit_preview(execution, pending.file_path)
+        if preview.status == "ok":
+            self.session.pending_edit = None
+            self.session.current_goal = "pending_edit_applied"
+            save_session(self.repo_root, self.session)
+            return format_edit_preview(preview, prefix="Pending edit applied.")
+
+        save_session(self.repo_root, self.session)
+        return format_edit_preview(preview, prefix="Pending edit was not applied.")
+
+    def handle_clear_pending(self) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+        if self.session.pending_edit is None:
+            return "No pending edit to clear."
+        self.session.pending_edit = None
+        save_session(self.repo_root, self.session)
+        return "Pending edit cleared."
 
     def handle_show_findings(self, artifact_id: str | None) -> str:
         if self.repo_root is None:
@@ -232,6 +330,18 @@ class AutoPatchCLI:
             findings=[],
         )
 
+    def extract_edit_preview(self, execution: ToolExecutionResult, file_path: str) -> EditPreview:
+        if isinstance(execution.payload, EditPreview):
+            return execution.payload
+
+        return EditPreview(
+            file_path=file_path,
+            status="error",
+            message=execution.message,
+            occurrences=0,
+            diff="",
+        )
+
     def apply_scan_result(self, result: ScanResult) -> None:
         if result.status == "ok":
             artifact_id = save_scan_result(self.repo_root, result)
@@ -282,6 +392,19 @@ def format_scan_result(result: ScanResult) -> str:
             f"{finding.check_id} - {finding.message}"
         )
     return "\n".join(header)
+
+
+def format_edit_preview(preview: EditPreview, prefix: str) -> str:
+    lines = [
+        prefix,
+        f"- file: {preview.file_path}",
+        f"- status: {preview.status}",
+        f"- message: {preview.message}",
+        f"- occurrences: {preview.occurrences}",
+    ]
+    if preview.diff:
+        lines.append(preview.diff)
+    return "\n".join(lines)
 
 
 def main() -> int:

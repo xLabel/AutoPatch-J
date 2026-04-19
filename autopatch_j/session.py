@@ -12,12 +12,38 @@ ARTIFACT_DIRS = ("findings", "logs", "patches", "validations")
 
 
 @dataclass(slots=True)
+class PendingEdit:
+    file_path: str
+    old_string: str
+    new_string: str
+    diff: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "file_path": self.file_path,
+            "old_string": self.old_string,
+            "new_string": self.new_string,
+            "diff": self.diff,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "PendingEdit":
+        return cls(
+            file_path=str(data.get("file_path", "")),
+            old_string=str(data.get("old_string", "")),
+            new_string=str(data.get("new_string", "")),
+            diff=str(data.get("diff", "")),
+        )
+
+
+@dataclass(slots=True)
 class SessionState:
     repo_root: str | None = None
     active_scope: list[str] = field(default_factory=list)
     recent_mentions: list[str] = field(default_factory=list)
     current_goal: str | None = None
     active_findings_id: str | None = None
+    pending_edit: PendingEdit | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -26,6 +52,7 @@ class SessionState:
             "recent_mentions": list(self.recent_mentions),
             "current_goal": self.current_goal,
             "active_findings_id": self.active_findings_id,
+            "pending_edit": self.pending_edit.to_dict() if self.pending_edit else None,
         }
 
     @classmethod
@@ -37,6 +64,11 @@ class SessionState:
             current_goal=str(data["current_goal"]) if data.get("current_goal") else None,
             active_findings_id=(
                 str(data["active_findings_id"]) if data.get("active_findings_id") else None
+            ),
+            pending_edit=(
+                PendingEdit.from_dict(data["pending_edit"])
+                if isinstance(data.get("pending_edit"), dict)
+                else None
             ),
         )
 
