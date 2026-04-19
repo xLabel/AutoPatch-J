@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from autopatch_j.scanners import JavaScanner, ScanResult, build_default_java_scanner
+from autopatch_j.scanners import JavaScanner, ScanResult, build_java_scanner
 from autopatch_j.tools.edit_tool import EditPreview, SearchReplaceEdit, apply_search_replace, preview_search_replace
 from autopatch_j.tools.scan_java import scan_java
 
@@ -21,7 +21,7 @@ class ToolExecutionResult:
 
 class ToolRegistry:
     def __init__(self, scanner: JavaScanner | None = None) -> None:
-        self.scanner = scanner or build_default_java_scanner()
+        self.scanner = scanner or build_java_scanner()
         self._handlers: dict[str, ToolHandler] = {
             "apply_search_replace": self._apply_search_replace,
             "preview_search_replace": self._preview_search_replace,
