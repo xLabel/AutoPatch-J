@@ -18,7 +18,6 @@ from autopatch_j.artifacts import (
 )
 from autopatch_j.context import build_context_preview, build_mention_context_text
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
-from autopatch_j.doctor import DoctorReport, build_doctor_report
 from autopatch_j.edit_drafter import (
     DraftedEdit,
     RepairingEditDrafter,
@@ -46,6 +45,7 @@ from autopatch_j.project import (
     load_project,
     refresh_project_index,
 )
+from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
 from autopatch_j.scanners import ScanResult, build_java_scanner
 from autopatch_j.session import PendingEdit, ProjectConfig, SessionState, save_session
 from autopatch_j.tools.edit_tool import EditPreview
@@ -260,8 +260,8 @@ class AutoPatchCLI:
         self.index, summary = refresh_project_index(self.repo_root)
         return format_reindex_summary(summary)
 
-    def build_readiness_report(self) -> DoctorReport:
-        return build_doctor_report(
+    def build_readiness_report(self) -> ReadinessReport:
+        return build_readiness_snapshot(
             repo_root=self.repo_root,
             scanner=self.scanner,
             decision_engine_label=self.decision_engine.label,
@@ -877,7 +877,7 @@ def format_reindex_summary(summary: ProjectSummary) -> str:
     )
 
 
-def format_tools_report(report: DoctorReport) -> str:
+def format_tools_report(report: ReadinessReport) -> str:
     lines = ["Tool readiness:"]
     for check in report.checks:
         if check.name == "project":

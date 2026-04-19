@@ -9,23 +9,23 @@ from autopatch_j.scanners import JavaScanner, SemgrepScanner, UnsupportedJavaSca
 
 
 @dataclass(slots=True)
-class DoctorCheck:
+class ReadinessCheck:
     name: str
     status: str
     message: str
 
 
 @dataclass(slots=True)
-class DoctorReport:
-    checks: list[DoctorCheck] = field(default_factory=list)
+class ReadinessReport:
+    checks: list[ReadinessCheck] = field(default_factory=list)
 
 
-def build_doctor_report(
+def build_readiness_report(
     repo_root: Path | None,
     scanner: JavaScanner,
     decision_engine_label: str,
     edit_drafter_label: str | None,
-) -> DoctorReport:
+) -> ReadinessReport:
     checks = [
         build_project_check(repo_root),
         build_scanner_check(repo_root, scanner),
@@ -33,26 +33,26 @@ def build_doctor_report(
         build_openai_decision_check(decision_engine_label),
         build_openai_drafter_check(edit_drafter_label),
     ]
-    return DoctorReport(checks=checks)
+    return ReadinessReport(checks=checks)
 
 
-def build_project_check(repo_root: Path | None) -> DoctorCheck:
+def build_project_check(repo_root: Path | None) -> ReadinessCheck:
     if repo_root is None:
-        return DoctorCheck(
+        return ReadinessCheck(
             name="project",
             status="unavailable",
             message="No active project. Run /init to initialize repository state.",
         )
-    return DoctorCheck(
+    return ReadinessCheck(
         name="project",
         status="ok",
         message=f"Active project: {repo_root}",
     )
 
 
-def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> DoctorCheck:
+def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> ReadinessCheck:
     if isinstance(scanner, UnsupportedJavaScanner):
-        return DoctorCheck(
+        return ReadinessCheck(
             name="scanner",
             status="error",
             message=(
@@ -65,7 +65,7 @@ def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> DoctorC
         resolved = scanner.resolve_binary_with_source(repo_root)
         if resolved:
             semgrep_path, source = resolved
-            return DoctorCheck(
+            return ReadinessCheck(
                 name="scanner",
                 status="ok",
                 message=(
@@ -74,7 +74,7 @@ def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> DoctorC
                 ),
             )
         if scanner.binary_path:
-            return DoctorCheck(
+            return ReadinessCheck(
                 name="scanner",
                 status="error",
                 message=(
@@ -82,7 +82,7 @@ def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> DoctorC
                     f"is missing or not executable: {scanner.binary_path}"
                 ),
             )
-        return DoctorCheck(
+        return ReadinessCheck(
             name="scanner",
             status="error",
             message=(
@@ -91,18 +91,18 @@ def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> DoctorC
             ),
         )
 
-    return DoctorCheck(
+    return ReadinessCheck(
         name="scanner",
         status="ok",
         message=f"Custom scanner configured: {scanner.label}",
     )
 
 
-def build_tree_sitter_check() -> DoctorCheck:
+def build_tree_sitter_check() -> ReadinessCheck:
     has_tree_sitter = importlib.util.find_spec("tree_sitter") is not None
     has_tree_sitter_java = importlib.util.find_spec("tree_sitter_java") is not None
     if has_tree_sitter and has_tree_sitter_java:
-        return DoctorCheck(
+        return ReadinessCheck(
             name="java_syntax_validator",
             status="ok",
             message="Tree-sitter Java syntax validation is available through Python modules.",
@@ -112,7 +112,7 @@ def build_tree_sitter_check() -> DoctorCheck:
         missing.append("tree_sitter")
     if not has_tree_sitter_java:
         missing.append("tree_sitter_java")
-    return DoctorCheck(
+    return ReadinessCheck(
         name="java_syntax_validator",
         status="unavailable",
         message=(
@@ -122,30 +122,30 @@ def build_tree_sitter_check() -> DoctorCheck:
     )
 
 
-def build_openai_decision_check(decision_engine_label: str) -> DoctorCheck:
+def build_openai_decision_check(decision_engine_label: str) -> ReadinessCheck:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return DoctorCheck(
+        return ReadinessCheck(
             name="openai_decision_engine",
             status="unavailable",
             message="OPENAI_API_KEY is not set. LLM decision making is unavailable.",
         )
-    return DoctorCheck(
+    return ReadinessCheck(
         name="openai_decision_engine",
         status="ok",
         message=f"OpenAI decision engine is enabled: {decision_engine_label}.",
     )
 
 
-def build_openai_drafter_check(edit_drafter_label: str | None) -> DoctorCheck:
+def build_openai_drafter_check(edit_drafter_label: str | None) -> ReadinessCheck:
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        return DoctorCheck(
+        return ReadinessCheck(
             name="openai_edit_drafter",
             status="unavailable",
             message="OPENAI_API_KEY is not set. Patch drafting is unavailable.",
         )
-    return DoctorCheck(
+    return ReadinessCheck(
         name="openai_edit_drafter",
         status="ok",
         message=f"OpenAI edit drafter is enabled: {edit_drafter_label or 'openai'}.",
