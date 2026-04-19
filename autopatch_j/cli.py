@@ -5,7 +5,7 @@ from pathlib import Path
 
 from autopatch_j.artifacts import load_scan_result, save_scan_result
 from autopatch_j.context import build_context_preview
-from autopatch_j.decision_engine import AgentDecision, DecisionContext, RuleBasedDecisionEngine
+from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
 from autopatch_j.indexer import IndexEntry, summarize_index
 from autopatch_j.mentions import MentionResolution, ParsedPrompt, parse_prompt
 from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
@@ -40,7 +40,7 @@ class AutoPatchCLI:
         self.repo_root = discover_repo_root(self.cwd)
         self.session = SessionState()
         self.index: list[IndexEntry] = []
-        self.decision_engine = RuleBasedDecisionEngine()
+        self.decision_engine = build_default_decision_engine()
         self.tool_registry = ToolRegistry()
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
@@ -148,6 +148,7 @@ class AutoPatchCLI:
         pending_edit = self.session.pending_edit.file_path if self.session.pending_edit else "(none)"
         return (
             f"Repo root: {self.repo_root}\n"
+            f"Decision engine: {self.decision_engine.label}\n"
             f"Indexed entries: {summary['entries']} "
             f"(files: {summary['files']}, dirs: {summary['directories']}, java: {summary['java_files']})\n"
             f"Active scope: {active_scope}\n"

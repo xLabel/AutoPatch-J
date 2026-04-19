@@ -12,6 +12,7 @@ Current checkpoint:
 - rule-based scan routing
 - Semgrep wrapper with normalized findings artifacts
 - pending edit review/apply gate
+- optional OpenAI `Responses API` decision engine
 
 ## Run
 
@@ -47,3 +48,11 @@ The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns 
 - `/apply-pending` writes the pending edit to disk
 - `/clear-pending` drops the pending edit without changing files
 - Java edits require Tree-sitter validation before apply; if `tree_sitter` or `tree_sitter_java` is missing, preview still works but apply is blocked
+
+## Decision engine
+
+- default: rule-based routing
+- if `OPENAI_API_KEY` is present, AutoPatch-J switches to an OpenAI `Responses API` decision engine
+- optional environment variables:
+  - `AUTOPATCH_OPENAI_MODEL`
+  - `OPENAI_BASE_URL`
