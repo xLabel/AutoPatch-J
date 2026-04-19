@@ -17,7 +17,6 @@ from autopatch_j.artifacts import (
     save_validation_result,
 )
 from autopatch_j.context import build_context_preview, build_mention_context_text
-from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
 from autopatch_j.edit_drafter import (
     DraftedEdit,
     RepairingEditDrafter,
@@ -45,6 +44,7 @@ from autopatch_j.project import (
     load_project,
     refresh_project_index,
 )
+from autopatch_j.planner import AgentDecision, DecisionContext, build_default_planner
 from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
 from autopatch_j.scanners import ScanResult, build_java_scanner
 from autopatch_j.session import PendingEdit, ProjectConfig, SessionState, save_session
@@ -82,7 +82,7 @@ class AutoPatchCLI:
         self.project_config = ProjectConfig(repo_root=str(self.repo_root)) if self.repo_root else None
         self.index: list[IndexEntry] = []
         self._completion_matches: list[str] = []
-        self.decision_engine = build_default_decision_engine()
+        self.planner = build_default_planner()
         self.edit_drafter = build_default_edit_drafter()
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
@@ -180,7 +180,7 @@ class AutoPatchCLI:
 
         if has_scan_intent(parsed.clean_text):
             preview = build_context_preview(self.repo_root, parsed)
-            decision = self.decision_engine.decide(
+            decision = self.planner.decide(
                 DecisionContext(
                     user_text=parsed.clean_text,
                     scoped_paths=self.effective_scope(parsed),
@@ -194,7 +194,7 @@ class AutoPatchCLI:
             return response
 
         preview = build_context_preview(self.repo_root, parsed)
-        decision = self.decision_engine.decide(
+        decision = self.planner.decide(
             DecisionContext(
                 user_text=parsed.clean_text,
                 scoped_paths=self.effective_scope(parsed),
@@ -252,7 +252,7 @@ class AutoPatchCLI:
         return build_readiness_snapshot(
             repo_root=self.repo_root,
             scanner=self.scanner,
-            decision_engine_label=self.decision_engine.label,
+            planner_label=self.planner.label,
             edit_drafter_label=self.edit_drafter.label if self.edit_drafter else None,
         )
 

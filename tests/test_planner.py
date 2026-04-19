@@ -4,15 +4,15 @@ import os
 import unittest
 from unittest.mock import patch
 
-from autopatch_j.decision_engine import (
+from autopatch_j.planner import (
     AGENT_ACTION_TOOLS,
     DecisionContext,
-    build_default_decision_engine,
+    build_default_planner,
     build_decision_messages,
-    LLMDecisionEngine,
+    LLMPlanner,
     parse_llm_decision_response,
     render_decision_prompt,
-    UnavailableDecisionEngine,
+    UnavailablePlanner,
 )
 from autopatch_j.llm import LLMResponse, LLMToolCall
 
@@ -32,7 +32,7 @@ class FakeClient:
         return self.response
 
 
-class DecisionEngineTests(unittest.TestCase):
+class PlannerTests(unittest.TestCase):
     def test_build_messages_contains_user_context(self) -> None:
         messages = build_decision_messages(
             DecisionContext(
@@ -116,7 +116,7 @@ class DecisionEngineTests(unittest.TestCase):
         self.assertEqual(decision.message, "No scan is needed.")
 
     def test_engine_calls_client_with_streaming_tools(self) -> None:
-        engine = LLMDecisionEngine(
+        engine = LLMPlanner(
             client=FakeClient(
                 response=LLMResponse(
                     tool_calls=[LLMToolCall(name="scan", arguments={"scope": ["."]})]
@@ -137,7 +137,7 @@ class DecisionEngineTests(unittest.TestCase):
         self.assertTrue(engine.client.calls[0]["stream"])
 
     def test_engine_does_not_fall_back_to_rules_when_client_errors(self) -> None:
-        engine = LLMDecisionEngine(client=FakeClient(error=RuntimeError("boom")))
+        engine = LLMPlanner(client=FakeClient(error=RuntimeError("boom")))
         decision = engine.decide(
             DecisionContext(
                 user_text="scan this repository",
@@ -151,9 +151,9 @@ class DecisionEngineTests(unittest.TestCase):
 
     def test_build_default_engine_is_unavailable_without_api_key(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            engine = build_default_decision_engine()
+            engine = build_default_planner()
         self.assertEqual(engine.label, "llm:unavailable")
-        self.assertIsInstance(engine, UnavailableDecisionEngine)
+        self.assertIsInstance(engine, UnavailablePlanner)
 
 
 if __name__ == "__main__":

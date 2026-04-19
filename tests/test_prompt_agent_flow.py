@@ -6,8 +6,8 @@ from pathlib import Path
 
 from autopatch_j.artifacts import save_scan_result
 from autopatch_j.cli import AutoPatchCLI
-from autopatch_j.decision_engine import AgentDecision, DecisionContext
 from autopatch_j.edit_drafter import DraftedEdit
+from autopatch_j.planner import AgentDecision, DecisionContext
 from autopatch_j.project import initialize_project
 from autopatch_j.tools.registry import ToolRegistry
 from autopatch_j.tools.scan_java import Finding, ScanResult
@@ -38,8 +38,8 @@ class PromptAwareEditDrafter:
         raise AssertionError(f"Unexpected file path for draft_edit: {file_path}")
 
 
-class FixedDecisionEngine:
-    label = "fixed-decision-engine"
+class FixedPlanner:
+    label = "fixed-planner"
 
     def __init__(self, decision: AgentDecision) -> None:
         self.decision = decision
@@ -73,7 +73,7 @@ class PromptAgentFlowTests(unittest.TestCase):
             initialize_project(repo_root)
 
             cli = AutoPatchCLI(repo_root)
-            cli.decision_engine = FixedDecisionEngine(
+            cli.planner = FixedPlanner(
                 AgentDecision(
                     action="scan",
                     message="scan",
@@ -125,7 +125,7 @@ class PromptAgentFlowTests(unittest.TestCase):
             cli = AutoPatchCLI(repo_root)
             cli.session.active_findings_id = artifact_id
             cli.edit_drafter = PromptAwareEditDrafter()
-            cli.decision_engine = FixedDecisionEngine(
+            cli.planner = FixedPlanner(
                 AgentDecision(
                     action="draft_patch",
                     message="draft",

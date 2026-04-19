@@ -22,7 +22,7 @@ class ReadinessReportTests(unittest.TestCase):
                             report = build_readiness_report(
                                 repo_root=None,
                                 scanner=SemgrepScanner(),
-                                decision_engine_label="llm:unavailable",
+                                planner_label="llm:unavailable",
                                 edit_drafter_label=None,
                             )
 
@@ -47,7 +47,7 @@ class ReadinessReportTests(unittest.TestCase):
                     report = build_readiness_report(
                         repo_root=Path("/tmp/demo"),
                         scanner=SemgrepScanner(config="rules/demo.yml"),
-                        decision_engine_label="openai-compatible:deepseek-chat",
+                        planner_label="openai-compatible:deepseek-chat",
                         edit_drafter_label="openai-compatible:deepseek-chat",
                     )
 
@@ -79,7 +79,7 @@ class ReadinessReportTests(unittest.TestCase):
                     report = build_readiness_report(
                         repo_root=repo_root,
                         scanner=SemgrepScanner(binary_path=str(binary.relative_to(repo_root))),
-                        decision_engine_label="llm:unavailable",
+                        planner_label="llm:unavailable",
                         edit_drafter_label=None,
                     )
 

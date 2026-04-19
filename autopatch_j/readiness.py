@@ -23,14 +23,14 @@ class ReadinessReport:
 def build_readiness_report(
     repo_root: Path | None,
     scanner: JavaScanner,
-    decision_engine_label: str,
+    planner_label: str,
     edit_drafter_label: str | None,
 ) -> ReadinessReport:
     checks = [
         build_project_check(repo_root),
         build_scanner_check(repo_root, scanner),
         build_tree_sitter_check(),
-        build_llm_decision_check(decision_engine_label),
+        build_llm_planner_check(planner_label),
         build_llm_drafter_check(edit_drafter_label),
     ]
     return ReadinessReport(checks=checks)
@@ -126,7 +126,7 @@ def has_llm_api_key() -> bool:
     return bool(os.getenv("AUTOPATCH_LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
 
 
-def build_llm_decision_check(decision_engine_label: str) -> ReadinessCheck:
+def build_llm_planner_check(planner_label: str) -> ReadinessCheck:
     api_key = has_llm_api_key()
     if not api_key:
         return ReadinessCheck(
@@ -140,7 +140,7 @@ def build_llm_decision_check(decision_engine_label: str) -> ReadinessCheck:
     return ReadinessCheck(
         name="llm_planner",
         status="ok",
-        message=f"LLM planner is enabled: {decision_engine_label}.",
+        message=f"LLM planner is enabled: {planner_label}.",
     )
 
 

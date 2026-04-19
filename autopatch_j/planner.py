@@ -23,7 +23,7 @@ class AgentDecision:
     tool_args: dict[str, object] = field(default_factory=dict)
 
 
-class DecisionEngine(Protocol):
+class Planner(Protocol):
     def decide(self, context: DecisionContext) -> AgentDecision:
         """Return the next agent action for the current turn."""
 
@@ -32,7 +32,7 @@ class DecisionEngine(Protocol):
         """A short label for status output."""
 
 
-class UnavailableDecisionEngine:
+class UnavailablePlanner:
     @property
     def label(self) -> str:
         return "llm:unavailable"
@@ -48,7 +48,7 @@ class UnavailableDecisionEngine:
         )
 
 
-class LLMDecisionEngine:
+class LLMPlanner:
     def __init__(self, client: OpenAICompatibleChatClient) -> None:
         self.client = client
 
@@ -72,11 +72,11 @@ class LLMDecisionEngine:
             )
 
 
-def build_default_decision_engine() -> DecisionEngine:
+def build_default_planner() -> Planner:
     client = build_default_llm_client()
     if client is None:
-        return UnavailableDecisionEngine()
-    return LLMDecisionEngine(client=client)
+        return UnavailablePlanner()
+    return LLMPlanner(client=client)
 
 
 def build_decision_messages(context: DecisionContext) -> list[dict[str, str]]:
