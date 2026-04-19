@@ -22,7 +22,8 @@
 - Avoid introducing heavy dependencies until they remove real complexity.
 - Keep file edits minimal and scoped.
 - Do not update `README.md` during normal code changes unless the user explicitly asks for documentation updates.
-- Do not add or update unit tests unless the user explicitly asks for test work.
+- Do not add, update, inspect, or run unit tests unless the user explicitly asks for test work.
+- The project may not have a `tests/` directory during MVP work; focus on `src/autopatch_j` business logic.
 - Prefer generic LLM naming in custom classes and modules. Avoid provider-specific names such as OpenAI unless referring to a third-party SDK/API compatibility surface.
 - Environment variables should not use the `AUTOPATCH_` prefix.
 - Patch generation and patch application must remain separate concerns.
@@ -42,7 +43,7 @@
 
 ## Verification defaults
 
-- For Python code, prefer lightweight syntax/import checks unless the user explicitly asks to run or update tests.
+- For Python code, prefer lightweight syntax/import checks against `src` unless the user explicitly asks to run or update tests.
 - Smoke-test the CLI whenever command behavior changes.
 
 ## Git workflow pitfalls
