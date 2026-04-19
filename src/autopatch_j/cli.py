@@ -38,8 +38,12 @@ from autopatch_j.project import (
 )
 from autopatch_j.planner import AgentDecision, DecisionContext, build_default_planner
 from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
-from autopatch_j.scanners import ScanResult, build_java_scanner
-from autopatch_j.scanners.catalog import ScannerCatalogEntry, build_scanner_catalog
+from autopatch_j.scanners import (
+    ScanResult,
+    ScannerCatalogEntry,
+    build_java_scanner,
+    build_scanner_catalog,
+)
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools import ToolExecutionResult, build_tool_registry
 from autopatch_j.tools.edit import EditPreview

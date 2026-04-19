@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from autopatch_j.scanners import Finding, JavaScanner, ScanResult, build_java_scanner
-from autopatch_j.scanners.semgrep import normalize_semgrep_payload, select_targets
+from autopatch_j.scanners import JavaScanner, ScanResult, build_java_scanner
 from autopatch_j.tools.base import Tool, ToolExecutionResult
 
 
@@ -43,13 +42,3 @@ def scan_java(
 ) -> ScanResult:
     active_scanner = scanner or build_java_scanner()
     return active_scanner.scan(repo_root, scope)
-
-
-__all__ = [
-    "Finding",
-    "ScanResult",
-    "ScanJavaTool",
-    "normalize_semgrep_payload",
-    "scan_java",
-    "select_targets",
-]
