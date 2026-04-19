@@ -258,7 +258,7 @@ class ScanToolTests(unittest.TestCase):
             "results": [
                 {
                     "check_id": (
-                        "Users.example.AutoPatch-J.autopatch_j.rules.semgrep."
+                        "Users.example.AutoPatch-J.runtime.semgrep.rules."
                         "autopatch-j.java.correctness.nullable-equals"
                     ),
                     "path": "src/main/java/demo/App.java",

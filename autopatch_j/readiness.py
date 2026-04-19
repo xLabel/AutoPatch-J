@@ -73,21 +73,12 @@ def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> Readine
                     f"Using semgrep binary from {source} at {semgrep_path}."
                 ),
             )
-        if scanner.binary_path:
-            return ReadinessCheck(
-                name="scanner",
-                status="error",
-                message=(
-                    f"Scanner configured as {scanner.label}, but the configured semgrep binary "
-                    f"is missing or not executable: {scanner.binary_path}"
-                ),
-            )
         return ReadinessCheck(
             name="scanner",
             status="error",
             message=(
-                f"Scanner configured as {scanner.label}, but semgrep is not available on PATH. "
-                "Set AUTOPATCH_SEMGREP_BIN or install a local runtime binary."
+                f"Scanner configured as {scanner.label}, but the Semgrep runtime binary "
+                "is missing or not executable under runtime/semgrep/bin/<platform>/."
             ),
         )
 

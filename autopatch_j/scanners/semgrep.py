@@ -3,22 +3,19 @@ from __future__ import annotations
 import json
 import os
 import platform
-import shutil
 import subprocess
 import sys
-from importlib.resources import files
 from pathlib import Path
 
 from autopatch_j.scanners.model import Finding, ScanResult
 
-DEFAULT_SEMGREP_RULE_RESOURCE = "rules/semgrep/java.yml"
+DEFAULT_SEMGREP_RULE_PATH = Path("runtime") / "semgrep" / "rules" / "java.yml"
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
 
 
 class SemgrepScanner:
-    def __init__(self, config: str | None = None, binary_path: str | None = None) -> None:
-        self.config = config or default_semgrep_config()
-        self.binary_path = binary_path
+    def __init__(self) -> None:
+        self.config = default_semgrep_config()
 
     @property
     def label(self) -> str:
@@ -77,33 +74,17 @@ class SemgrepScanner:
         return resolved[0] if resolved is not None else None
 
     def resolve_binary_with_source(self, repo_root: Path | None = None) -> tuple[str, str] | None:
-        if self.binary_path:
-            resolved = resolve_explicit_binary(self.binary_path, repo_root)
-            if resolved is not None:
-                return resolved, "configured binary"
-            return None
-
+        del repo_root
         runtime_binary = resolve_repo_runtime_binary()
         if runtime_binary is not None:
             return runtime_binary, "local runtime"
-
-        venv_binary = resolve_repo_venv_binary()
-        if venv_binary is not None:
-            return venv_binary, "project virtualenv"
-
-        path_binary = shutil.which("semgrep")
-        if path_binary:
-            return path_binary, "PATH"
         return None
 
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
-        if self.binary_path:
-            message = (
-                "Configured semgrep binary was not found or is not executable: "
-                f"{self.binary_path}"
-            )
-        else:
-            message = "semgrep is not installed or not available on PATH."
+        message = (
+            "Semgrep runtime binary is missing or not executable. Expected: "
+            f"{repo_runtime_binary_path()}"
+        )
         return ScanResult(
             engine="semgrep",
             scope=scope,
@@ -115,24 +96,8 @@ class SemgrepScanner:
         )
 
 
-def resolve_explicit_binary(binary_path: str, repo_root: Path | None = None) -> str | None:
-    candidate = Path(binary_path).expanduser()
-    if not candidate.is_absolute():
-        base_dir = repo_root if repo_root is not None else Path.cwd()
-        candidate = base_dir / candidate
-    try:
-        resolved = candidate.resolve()
-    except OSError:
-        return None
-    if not resolved.exists() or not resolved.is_file():
-        return None
-    if not os.access(resolved, os.X_OK):
-        return None
-    return str(resolved)
-
-
 def default_semgrep_config() -> str:
-    return str(files("autopatch_j").joinpath(DEFAULT_SEMGREP_RULE_RESOURCE))
+    return str(repo_runtime_rules_path())
 
 
 def is_default_semgrep_config(config: str) -> bool:
@@ -143,14 +108,7 @@ def is_default_semgrep_config(config: str) -> bool:
 
 
 def resolve_repo_runtime_binary() -> str | None:
-    candidate = repo_root_from_module() / "runtime" / "semgrep" / "bin" / platform_tag() / semgrep_binary_name()
-    return resolve_existing_executable(candidate)
-
-
-def resolve_repo_venv_binary() -> str | None:
-    bin_dir = "Scripts" if os.name == "nt" else "bin"
-    candidate = repo_root_from_module() / ".venv" / bin_dir / semgrep_binary_name()
-    return resolve_existing_executable(candidate)
+    return resolve_existing_executable(repo_runtime_binary_path())
 
 
 def resolve_existing_executable(candidate: Path) -> str | None:
@@ -167,6 +125,14 @@ def resolve_existing_executable(candidate: Path) -> str | None:
 
 def repo_root_from_module() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def repo_runtime_binary_path() -> Path:
+    return repo_root_from_module() / "runtime" / "semgrep" / "bin" / platform_tag() / semgrep_binary_name()
+
+
+def repo_runtime_rules_path() -> Path:
+    return repo_root_from_module() / DEFAULT_SEMGREP_RULE_PATH
 
 
 def semgrep_binary_name() -> str:

@@ -17,11 +17,9 @@ class ToolCommandTests(unittest.TestCase):
             initialize_project(repo_root)
 
             with patch.dict(os.environ, {}, clear=True):
-                with patch("autopatch_j.scanners.semgrep.shutil.which", return_value=None):
-                    with patch("autopatch_j.scanners.semgrep.resolve_repo_runtime_binary", return_value=None):
-                        with patch("autopatch_j.scanners.semgrep.resolve_repo_venv_binary", return_value=None):
-                            cli = AutoPatchCLI(repo_root)
-                            output = cli.handle_command("/tools")
+                with patch("autopatch_j.scanners.semgrep.resolve_repo_runtime_binary", return_value=None):
+                    cli = AutoPatchCLI(repo_root)
+                    output = cli.handle_command("/tools")
 
         self.assertIn("Tool readiness:", output)
         self.assertIn("- scanner: error", output)

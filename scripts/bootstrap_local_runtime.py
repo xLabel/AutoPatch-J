@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
+import shutil
 import shlex
 import subprocess
 import sys
@@ -59,6 +61,26 @@ def venv_semgrep(venv_dir: Path) -> Path:
     return venv_bin_dir(venv_dir) / name
 
 
+def semgrep_binary_name() -> str:
+    return "semgrep.exe" if os.name == "nt" else "semgrep"
+
+
+def platform_tag() -> str:
+    machine = platform.machine().lower()
+    arch = "arm64" if machine in {"arm64", "aarch64"} else "x64"
+    if sys.platform.startswith("darwin"):
+        return f"darwin-{arch}"
+    if sys.platform.startswith("linux"):
+        return f"linux-{arch}"
+    if sys.platform.startswith("win"):
+        return f"windows-{arch}"
+    return f"{sys.platform}-{arch}"
+
+
+def runtime_semgrep(repo_root: Path) -> Path:
+    return repo_root / "runtime" / "semgrep" / "bin" / platform_tag() / semgrep_binary_name()
+
+
 def ensure_venv(venv_dir: Path, dry_run: bool) -> None:
     if venv_dir.exists():
         return
@@ -76,6 +98,17 @@ def run_command(command: list[str], cwd: Path, dry_run: bool) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
+def install_runtime_semgrep(source: Path, target: Path, dry_run: bool) -> None:
+    print(f"+ copy {source} -> {target}")
+    if dry_run:
+        return
+    if not source.exists():
+        raise FileNotFoundError(f"Semgrep executable was not installed: {source}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    target.chmod(target.stat().st_mode | 0o111)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     repo_root = repo_root_from_script()
@@ -86,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     python_bin = venv_python(venv_dir)
     pip_bin = venv_pip(venv_dir)
     semgrep_bin = venv_semgrep(venv_dir)
+    runtime_semgrep_bin = runtime_semgrep(repo_root)
 
     run_command(
         [str(python_bin), "-m", "pip", "install", "--upgrade", "pip", "setuptools>=68", "wheel"],
@@ -99,6 +133,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not args.skip_semgrep:
         run_command([str(pip_bin), "install", "semgrep"], cwd=repo_root, dry_run=args.dry_run)
+        install_runtime_semgrep(semgrep_bin, runtime_semgrep_bin, dry_run=args.dry_run)
 
     print()
     print("Bootstrap complete.")
@@ -108,9 +143,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.skip_semgrep:
         print("- semgrep: skipped by --skip-semgrep")
     else:
-        print(f"- semgrep bin: {semgrep_bin}")
-        print("- scanner lookup:")
-        print(f"  AutoPatch-J will detect {semgrep_bin.relative_to(repo_root)} automatically.")
+        print(f"- semgrep source: {semgrep_bin}")
+        print(f"- semgrep runtime: {runtime_semgrep_bin}")
         print("  Run /tools in the CLI to confirm scanner readiness.")
     return 0
 

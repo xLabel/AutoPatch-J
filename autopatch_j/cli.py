@@ -898,12 +898,8 @@ class AutoPatchCLI:
 
     def rebuild_scanner(self) -> None:
         scanner_name = self.project_config.scanner_name if self.project_config else None
-        semgrep_config = self.project_config.semgrep_config if self.project_config else None
-        semgrep_bin = self.project_config.semgrep_bin if self.project_config else None
         self.scanner = build_java_scanner(
             scanner_name=scanner_name,
-            semgrep_config=semgrep_config,
-            semgrep_bin=semgrep_bin,
         )
 
 

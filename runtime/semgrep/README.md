@@ -8,6 +8,12 @@ Place the executable at:
 runtime/semgrep/bin/<platform>/semgrep
 ```
 
+Place the Java rule bundle at:
+
+```text
+runtime/semgrep/rules/java.yml
+```
+
 Supported platform tags are generated from the host OS and CPU architecture, for example:
 
 ```text
@@ -18,11 +24,8 @@ linux-x64
 windows-x64
 ```
 
-The scanner lookup order is:
-
-1. explicit `AUTOPATCH_SEMGREP_BIN`
-2. `runtime/semgrep/bin/<platform>/semgrep`
-3. `.venv/bin/semgrep`
-4. `semgrep` from `PATH`
+The scanner lookup is intentionally strict: AutoPatch-J only executes the binary under
+`runtime/semgrep/bin/<platform>/`. It does not inspect environment overrides, `.venv`,
+or the shell `PATH`.
 
 Semgrep cache, settings, and logs are still written under the target repository's `.autopatch/runtime/semgrep`.

@@ -30,7 +30,7 @@ Project-local runtime bootstrap:
 python3 scripts/bootstrap_local_runtime.py
 ```
 
-That creates a local `.venv`, installs the Python dependencies declared by this project, installs `semgrep` into `.venv/bin/semgrep`, and leaves your global shell `PATH` untouched.
+That creates a local `.venv`, installs the Python dependencies declared by this project, installs `semgrep`, and creates the runtime launcher under `runtime/semgrep/bin/<platform>/semgrep`. The global shell `PATH` is not used.
 
 Inside the shell:
 
@@ -56,11 +56,10 @@ Inside the shell:
 - selected `@mention` files are truncated into code snippets and injected into decision/draft prompts
 - run `/reindex` after the repository adds, deletes, or renames files so `@mention` candidates stay fresh
 - scanner execution now goes through a Java scanner adapter; current supported backend: `semgrep`
-- default Semgrep config is the packaged Java rule set at `autopatch_j/rules/semgrep/java.yml`
+- default Semgrep config is the local Java rule set at `runtime/semgrep/rules/java.yml`
 - set `AUTOPATCH_SCANNER=semgrep` to select the current backend explicitly
-- set `AUTOPATCH_SEMGREP_CONFIG` only when an internal rule bundle must override the packaged default
-- set `AUTOPATCH_SEMGREP_BIN` to point to a repo-local or absolute Semgrep binary without touching shell `PATH`
-- without `AUTOPATCH_SEMGREP_BIN`, AutoPatch-J looks for `runtime/semgrep/bin/<platform>/semgrep`, then `.venv/bin/semgrep`, then `semgrep` from `PATH`
+- AutoPatch-J only executes Semgrep from `runtime/semgrep/bin/<platform>/semgrep`
+- environment overrides, `.venv/bin/semgrep`, and shell `PATH` are intentionally ignored
 - semgrep subprocess state, settings, logs, and cache are localized under `.autopatch/runtime/semgrep` instead of `~/.semgrep`
 - use `/tools` to inspect local scanner and validator readiness
 - natural-language scan decisions go through the LLM planner; there is no rule-based scan fallback
@@ -73,12 +72,12 @@ Inside the shell:
 - run `/status` for project readiness plus current work summary
 - run `/tools` to inspect whether the current machine is ready for:
   - repository initialization
-  - scanner execution through the repo runtime, `.venv`, `PATH`, or an explicit binary path
+  - scanner execution through `runtime/semgrep/bin/<platform>/semgrep`
   - Tree-sitter Java syntax validation through Python modules
   - LLM planning
   - LLM patch drafting
 
-The scan wrapper does not mutate shell `PATH`. If no Semgrep binary is available, the CLI returns a clear error and keeps session state intact.
+The scan wrapper does not read shell `PATH`. If the runtime Semgrep launcher is missing, the CLI returns a clear error and keeps session state intact.
 
 Tree-sitter validation is a Python dependency, not an npm dependency. The project declares:
 

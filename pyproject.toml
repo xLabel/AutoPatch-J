@@ -21,6 +21,3 @@ autopatch-j = "autopatch_j.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["autopatch_j*"]
-
-[tool.setuptools.package-data]
-autopatch_j = ["rules/semgrep/*.yml"]
