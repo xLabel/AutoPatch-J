@@ -23,13 +23,6 @@ from autopatch_j.edit_drafter import (
     build_default_edit_drafter,
 )
 from autopatch_j.indexer import IndexEntry, summarize_index
-from autopatch_j.intent import (
-    has_apply_intent,
-    has_findings_review_intent,
-    has_patch_intent,
-    has_pending_review_intent,
-    has_scan_intent,
-)
 from autopatch_j.mentions import (
     MentionResolution,
     ParsedPrompt,
@@ -163,36 +156,6 @@ class AutoPatchCLI:
 
         self.update_session_from_prompt(parsed)
         mention_context = build_mention_context_text(self.repo_root, parsed)
-
-        if has_apply_intent(parsed.clean_text):
-            response = self.handle_prompt_apply()
-            save_session(self.repo_root, self.session)
-            return response
-
-        prompt_review_response = self.handle_prompt_review(parsed)
-        if prompt_review_response is not None:
-            save_session(self.repo_root, self.session)
-            return self.render_prompt_response(parsed, prompt_review_response)
-
-        prompt_patch_response = self.handle_prompt_patch(parsed)
-        if prompt_patch_response is not None:
-            save_session(self.repo_root, self.session)
-            return self.render_prompt_response(parsed, prompt_patch_response)
-
-        if has_scan_intent(parsed.clean_text):
-            preview = build_context_preview(self.repo_root, parsed)
-            decision = self.planner.decide(
-                DecisionContext(
-                    user_text=parsed.clean_text,
-                    scoped_paths=self.effective_scope(parsed),
-                    has_active_findings=self.session.active_findings_id is not None,
-                    mention_context=mention_context,
-                )
-            )
-
-            response = self.handle_agent_decision(parsed, preview, decision)
-            save_session(self.repo_root, self.session)
-            return response
 
         preview = build_context_preview(self.repo_root, parsed)
         decision = self.planner.decide(
@@ -480,11 +443,6 @@ class AutoPatchCLI:
 
         return format_rescan_validation(result)
 
-    def handle_prompt_apply(self) -> str:
-        if self.session.pending_edit is None:
-            return "No pending edit to apply."
-        return self.handle_apply_pending()
-
     def handle_agent_decision(
         self,
         parsed: ParsedPrompt,
@@ -533,56 +491,6 @@ class AutoPatchCLI:
             selected: tuple[int, object] | str = (finding_index, result.findings[finding_index - 1])
         else:
             selected = self.select_patch_finding(parsed, result)
-        if isinstance(selected, str):
-            return selected
-
-        finding_position, _ = selected
-        mention_context = build_mention_context_text(self.repo_root, parsed)
-        return self.draft_fix_for_finding(
-            result,
-            artifact_id,
-            finding_position,
-            user_request=parsed.clean_text,
-            mention_context=mention_context,
-        )
-
-    def handle_prompt_review(self, parsed: ParsedPrompt) -> str | None:
-        if has_pending_review_intent(parsed.clean_text):
-            return self.handle_show_pending()
-        if not has_findings_review_intent(parsed.clean_text):
-            return None
-        if self.session.active_findings_id is None and has_scan_intent(parsed.clean_text):
-            return None
-        return self.handle_show_findings(None)
-
-    def handle_prompt_patch(self, parsed: ParsedPrompt) -> str | None:
-        if not has_patch_intent(parsed.clean_text):
-            return None
-        if self.session.pending_edit is not None:
-            return (
-                "A pending patch already exists. Apply it first, or describe how "
-                "you want AutoPatch-J to revise the patch."
-            )
-
-        artifact_id = self.session.active_findings_id
-        if not artifact_id:
-            if has_scan_intent(parsed.clean_text):
-                return None
-            return (
-                "No active findings are available. Scan the repository first, "
-                "then ask AutoPatch-J to draft a patch."
-            )
-        if self.edit_drafter is None:
-            return (
-                "Edit drafter is disabled. Set LLM_API_KEY or OPENAI_API_KEY "
-                "to enable patch drafting."
-            )
-
-        result = load_scan_result(self.repo_root, artifact_id)
-        if result is None:
-            return f"Findings artifact not found: {artifact_id}"
-
-        selected = self.select_patch_finding(parsed, result)
         if isinstance(selected, str):
             return selected
 
