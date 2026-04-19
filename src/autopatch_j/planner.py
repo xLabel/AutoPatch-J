@@ -17,7 +17,7 @@ class DecisionContext:
 
 @dataclass(slots=True)
 class AgentDecision:
-    action: Literal["respond", "scan", "draft_patch"]
+    action: Literal["answer", "scan", "patch"]
     message: str
     tool_name: str | None = None
     tool_args: dict[str, object] = field(default_factory=dict)
@@ -40,7 +40,7 @@ class UnavailablePlanner:
     def decide(self, context: DecisionContext) -> AgentDecision:
         del context
         return AgentDecision(
-            action="respond",
+            action="answer",
             message=(
                 "LLM planner is unavailable. Set LLM_API_KEY or OPENAI_API_KEY "
                 "to enable natural-language agent actions."
@@ -67,7 +67,7 @@ class LLMPlanner:
             return parse_llm_decision_response(response, context)
         except Exception as exc:
             return AgentDecision(
-                action="respond",
+                action="answer",
                 message=f"LLM planner failed after retries: {exc}",
             )
 
@@ -104,15 +104,15 @@ def parse_llm_decision_response(
                 tool_name="scan_java",
                 tool_args={"scope": [str(item) for item in scope]},
             )
-        if tool_call.name == "draft_patch":
+        if tool_call.name == "patch":
             return AgentDecision(
-                action="draft_patch",
-                message="LLM planner chose to draft a patch.",
+                action="patch",
+                message="LLM planner chose to generate a patch.",
                 tool_args=dict(tool_call.arguments),
             )
 
     return AgentDecision(
-        action="respond",
+        action="answer",
         message=response.content or "LLM planner returned no action.",
     )
 
@@ -185,7 +185,7 @@ def render_decision_prompt(context: DecisionContext) -> str:
 DECISION_INSTRUCTIONS = (
     "You are AutoPatch-J's planner. Choose one action for the current user turn. "
     "Call scan when the user asks to scan, inspect findings, or look for Java code problems. "
-    "Call draft_patch when the user asks to generate or revise a patch from active findings. "
+    "Call patch when the user asks to generate or revise a patch from active findings. "
     "If scoped paths are provided, keep scan limited to those paths. "
     "If neither tool is needed, reply with concise plain text. "
     "Do not reveal chain-of-thought."
@@ -215,7 +215,7 @@ AGENT_ACTION_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "draft_patch",
+            "name": "patch",
             "description": "Draft one minimal patch from the active findings.",
             "parameters": {
                 "type": "object",

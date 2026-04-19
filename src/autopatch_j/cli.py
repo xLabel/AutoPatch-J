@@ -496,7 +496,7 @@ class AutoPatchCLI:
             result = self.extract_scan_result(execution)
             self.apply_scan_result(result)
             return f"{preview}\n\n{format_scan_result(result)}"
-        if decision.action == "draft_patch":
+        if decision.action == "patch":
             body = self.handle_planned_patch(parsed, decision)
             return self.render_prompt_response(parsed, body)
         return f"{preview}\n\n{decision.message}"
