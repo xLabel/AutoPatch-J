@@ -1,6 +1,6 @@
 # Semgrep Runtime
 
-AutoPatch-J can run a Semgrep binary from this repository without modifying the user's shell `PATH`.
+AutoPatch-J runs Semgrep from this repository-local runtime directory.
 
 Place the executable at:
 
@@ -25,7 +25,7 @@ windows-x64
 ```
 
 The scanner lookup is intentionally strict: AutoPatch-J only executes the binary under
-`runtime/semgrep/bin/<platform>/`. It does not inspect environment overrides, `.venv`,
-or the shell `PATH`.
+`runtime/semgrep/bin/<platform>/`. It does not inspect environment overrides, virtualenv
+executables, or the shell `PATH`.
 
 Semgrep cache, settings, and logs are still written under the target repository's `.autopatch/runtime/semgrep`.

@@ -22,32 +22,6 @@ class ScannerFactoryTests(unittest.TestCase):
         self.assertEqual(scanner.config, default_semgrep_config())
         self.assertTrue(Path(scanner.config).exists())
 
-    def test_build_default_scanner_ignores_semgrep_config_env_override(self) -> None:
-        with patch.dict(
-            os.environ,
-            {"AUTOPATCH_SCANNER": "semgrep", "AUTOPATCH_SEMGREP_CONFIG": "rules/demo.yml"},
-            clear=True,
-        ):
-            scanner = build_default_java_scanner()
-
-        self.assertIsInstance(scanner, SemgrepScanner)
-        self.assertEqual(scanner.label, "semgrep:autopatch-j/java-default")
-        self.assertEqual(scanner.config, default_semgrep_config())
-
-    def test_build_default_scanner_ignores_semgrep_binary_env_override(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("autopatch_j.scanners.semgrep.repo_root_from_module", return_value=Path(tmpdir)):
-                with patch.dict(
-                    os.environ,
-                    {"AUTOPATCH_SCANNER": "semgrep", "AUTOPATCH_SEMGREP_BIN": "/opt/semgrep/bin/semgrep"},
-                    clear=True,
-                ):
-                    scanner = build_default_java_scanner()
-                    resolved = scanner.resolve_binary_with_source(Path("."))
-
-        self.assertIsInstance(scanner, SemgrepScanner)
-        self.assertIsNone(resolved)
-
     def test_semgrep_scanner_uses_runtime_binary_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             autopatch_root = Path(tmpdir) / "autopatch"

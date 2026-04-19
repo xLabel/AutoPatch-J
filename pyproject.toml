@@ -20,4 +20,5 @@ dependencies = [
 autopatch-j = "autopatch_j.cli:main"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["autopatch_j*"]

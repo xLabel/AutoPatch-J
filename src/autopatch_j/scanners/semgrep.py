@@ -124,7 +124,10 @@ def resolve_existing_executable(candidate: Path) -> str | None:
 
 
 def repo_root_from_module() -> Path:
-    return Path(__file__).resolve().parents[2]
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").exists() and (candidate / "runtime" / "semgrep").exists():
+            return candidate
+    return Path(__file__).resolve().parents[3]
 
 
 def repo_runtime_binary_path() -> Path:

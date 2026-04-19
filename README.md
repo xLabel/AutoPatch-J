@@ -21,16 +21,17 @@ Current checkpoint:
 ## Run
 
 ```bash
-python3 -m autopatch_j
+python3 scripts/bootstrap_local_runtime.py
+.venv/bin/python -m autopatch_j
 ```
 
-Project-local runtime bootstrap:
+The bootstrap creates a local `.venv`, installs AutoPatch-J in editable mode, installs the Python dependencies declared by this project, installs `semgrep`, and creates the runtime launcher under `runtime/semgrep/bin/<platform>/semgrep`.
+
+## Test
 
 ```bash
-python3 scripts/bootstrap_local_runtime.py
+python3 -m unittest discover -s tests -t . -v
 ```
-
-That creates a local `.venv`, installs the Python dependencies declared by this project, installs `semgrep`, and creates the runtime launcher under `runtime/semgrep/bin/<platform>/semgrep`. The global shell `PATH` is not used.
 
 Inside the shell:
 
@@ -57,9 +58,8 @@ Inside the shell:
 - run `/reindex` after the repository adds, deletes, or renames files so `@mention` candidates stay fresh
 - scanner execution now goes through a Java scanner adapter; current supported backend: `semgrep`
 - default Semgrep config is the local Java rule set at `runtime/semgrep/rules/java.yml`
-- set `AUTOPATCH_SCANNER=semgrep` to select the current backend explicitly
 - AutoPatch-J only executes Semgrep from `runtime/semgrep/bin/<platform>/semgrep`
-- environment overrides, `.venv/bin/semgrep`, and shell `PATH` are intentionally ignored
+- environment overrides, virtualenv executables, and shell `PATH` are intentionally ignored for scanner execution
 - semgrep subprocess state, settings, logs, and cache are localized under `.autopatch/runtime/semgrep` instead of `~/.semgrep`
 - use `/tools` to inspect local scanner and validator readiness
 - natural-language scan decisions go through the LLM planner; there is no rule-based scan fallback
@@ -77,7 +77,7 @@ Inside the shell:
   - LLM planning
   - LLM patch drafting
 
-The scan wrapper does not read shell `PATH`. If the runtime Semgrep launcher is missing, the CLI returns a clear error and keeps session state intact.
+If the runtime Semgrep launcher is missing, the CLI returns a clear error and keeps session state intact.
 
 Tree-sitter validation is a Python dependency, not an npm dependency. The project declares:
 
