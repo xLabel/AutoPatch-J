@@ -45,7 +45,6 @@ from autopatch_j.project import (
     load_project_config,
     load_project,
     refresh_project_index,
-    save_project_config,
 )
 from autopatch_j.scanners import ScanResult, build_java_scanner
 from autopatch_j.session import PendingEdit, ProjectConfig, SessionState, save_session
@@ -54,28 +53,10 @@ from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 from autopatch_j.validators.rescan import RescanValidationResult, validate_post_apply_rescan
 
 HELP_TEXT = """Commands:
-  /init [path]   Initialize the current repository for AutoPatch-J
-  /env          Inspect runtime prerequisites and feature availability
-  /scanner      Show the current scanner configuration
-  /scanner semgrep [config] [--bin <path>]
-                Persist project scanner selection, optional Semgrep config, and optional binary path
-  /scanner reset
-                Clear project scanner overrides and fall back to env/defaults
-  /draft-edit <file_path> <instruction>
-                 Ask the model to draft one search-replace edit for a file
-  /draft-fix <finding_index> [artifact_id]
-                 Ask the model to draft one search-replace edit for a finding
-  /preview-edit <file_path> <old_string> <new_string>
-                 Preview a search-replace edit and store it as pending
-  /show-pending  Show the current pending edit and diff
-  /apply-pending Apply the current pending edit to the working tree
-  /clear-pending Drop the current pending edit without writing files
-  /show-findings [artifact_id]
-                 Show a saved scan artifact, or the current active findings if omitted
-  /show-validation [artifact_id]
-                 Show a saved post-apply validation artifact, or the latest one if omitted
+  /init         Initialize the current repository for AutoPatch-J
+  /status       Show project readiness and current work summary
+  /tools        Show local scanner and validator readiness
   /reindex       Refresh repository index for @mention and scope lookup
-  /status        Show current session state
   /help          Show this message
   /quit          Exit the CLI
 
@@ -117,7 +98,7 @@ class AutoPatchCLI:
         if self.repo_root is not None:
             print(f"Loaded project: {self.repo_root}")
         else:
-            print("No project initialized yet. Run /init . to start.")
+            print("No project initialized yet. Run /init to start.")
 
         while True:
             try:
@@ -173,7 +154,7 @@ class AutoPatchCLI:
             return self.handle_command(raw)
 
         if self.repo_root is None:
-            return "No active project. Run /init [path] before entering prompts."
+            return "No active project. Run /init before entering prompts."
 
         parsed = parse_prompt(raw, self.index)
         if not self.resolve_mentions_interactively(parsed):
@@ -247,39 +228,23 @@ class AutoPatchCLI:
         command = parts[0]
         if command == "/help":
             return HELP_TEXT
-        if command == "/draft-edit":
-            return self.handle_draft_edit(parts)
-        if command == "/draft-fix":
-            return self.handle_draft_fix(parts)
-        if command == "/preview-edit":
-            return self.handle_preview_edit(parts)
-        if command == "/show-pending":
-            return self.handle_show_pending()
-        if command == "/apply-pending":
-            return self.handle_apply_pending()
-        if command == "/clear-pending":
-            return self.handle_clear_pending()
-        if command == "/show-findings":
-            artifact_id = parts[1] if len(parts) > 1 else None
-            return self.handle_show_findings(artifact_id)
-        if command == "/show-validation":
-            artifact_id = parts[1] if len(parts) > 1 else None
-            return self.handle_show_validation(artifact_id)
-        if command == "/env":
-            return self.handle_env()
-        if command == "/scanner":
-            return self.handle_scanner(parts)
+        if command == "/tools":
+            return self.handle_tools()
         if command == "/reindex":
             return self.handle_reindex()
         if command == "/status":
             return self.format_status()
         if command == "/init":
-            target = Path(parts[1]) if len(parts) > 1 else self.cwd
-            return self.handle_init(target)
+            if len(parts) != 1:
+                return (
+                    "/init only initializes the current directory in v1. "
+                    "Please cd into the target repository first, then run /init."
+                )
+            return self.handle_init()
         return f"Unknown command: {command}\n\n{HELP_TEXT}"
 
-    def handle_init(self, target: Path) -> str:
-        session, index, summary = initialize_project((self.cwd / target).resolve() if not target.is_absolute() else target)
+    def handle_init(self) -> str:
+        session, index, summary = initialize_project(self.cwd)
         self.repo_root = Path(summary.repo_root)
         self.session = session
         self.index = index
@@ -290,155 +255,69 @@ class AutoPatchCLI:
 
     def handle_reindex(self) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
+            return "No active project. Run /init to create AutoPatch-J state."
 
         self.index, summary = refresh_project_index(self.repo_root)
         return format_reindex_summary(summary)
 
-    def handle_env(self) -> str:
-        report = build_doctor_report(
+    def build_readiness_report(self) -> DoctorReport:
+        return build_doctor_report(
             repo_root=self.repo_root,
             scanner=self.scanner,
             decision_engine_label=self.decision_engine.label,
             edit_drafter_label=self.edit_drafter.label if self.edit_drafter else None,
         )
-        return format_doctor_report(report)
 
-    def handle_scanner(self, parts: list[str]) -> str:
-        if len(parts) == 1:
-            return format_scanner_summary(self.scanner, self.project_config)
-        if self.repo_root is None or self.project_config is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
-        if len(parts) == 2 and parts[1] == "reset":
-            self.project_config.scanner_name = None
-            self.project_config.semgrep_config = None
-            self.project_config.semgrep_bin = None
-            save_project_config(self.repo_root, self.project_config)
-            self.rebuild_scanner()
-            self.tool_registry = ToolRegistry(scanner=self.scanner)
-            return (
-                "Scanner config reset to env/default.\n"
-                f"{format_scanner_summary(self.scanner, self.project_config)}"
-            )
-        if parts[1] != "semgrep":
-            return (
-                "Usage:\n"
-                "  /scanner\n"
-                "  /scanner semgrep [config] [--bin <path>]\n"
-                "  /scanner reset"
-            )
-        args = parts[2:]
-        semgrep_config = "p/java"
-        semgrep_bin = self.project_config.semgrep_bin
-        if args and args[0] != "--bin":
-            semgrep_config = args[0]
-            args = args[1:]
-        if args:
-            if len(args) != 2 or args[0] != "--bin":
-                return (
-                    "Usage:\n"
-                    "  /scanner\n"
-                    "  /scanner semgrep [config] [--bin <path>]\n"
-                    "  /scanner reset"
-                )
-            semgrep_bin = args[1]
-        self.project_config.scanner_name = "semgrep"
-        self.project_config.semgrep_config = semgrep_config
-        self.project_config.semgrep_bin = semgrep_bin
-        save_project_config(self.repo_root, self.project_config)
-        self.rebuild_scanner()
-        self.tool_registry = ToolRegistry(scanner=self.scanner)
-        return (
-            "Scanner config updated.\n"
-            f"{format_scanner_summary(self.scanner, self.project_config)}"
-        )
+    def handle_tools(self) -> str:
+        return format_tools_report(self.build_readiness_report())
 
     def format_status(self) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
+            return (
+                "AutoPatch-J status:\n"
+                "- project: not initialized\n"
+                "- next: run /init from the Java repository root\n\n"
+                f"{format_tools_report(self.build_readiness_report())}"
+            )
 
         summary = summarize_index(self.index)
-        active_scope = ", ".join(self.session.active_scope) if self.session.active_scope else "(none)"
-        recent_mentions = ", ".join(self.session.recent_mentions) if self.session.recent_mentions else "(none)"
-        pending_edit = self.session.pending_edit.file_path if self.session.pending_edit else "(none)"
+        active_findings = self.format_active_findings_status()
+        pending_patch = (
+            f"{self.session.pending_edit.file_path} "
+            f"({self.session.pending_edit.validation_status})"
+            if self.session.pending_edit
+            else "(none)"
+        )
+        last_validation = self.format_last_validation_status()
         return (
-            f"Repo root: {self.repo_root}\n"
-            f"Scanner: {self.scanner.label}\n"
-            f"Decision engine: {self.decision_engine.label}\n"
-            f"Edit drafter: {self.edit_drafter.label if self.edit_drafter else '(disabled)'}\n"
-            f"Indexed entries: {summary['entries']} "
-            f"(files: {summary['files']}, dirs: {summary['directories']}, java: {summary['java_files']})\n"
-            f"Active scope: {active_scope}\n"
-            f"Recent mentions: {recent_mentions}\n"
-            f"Current goal: {self.session.current_goal or '(none)'}\n"
-            f"Active findings: {self.session.active_findings_id or '(none)'}\n"
-            f"Last validation: {self.session.last_validation_id or '(none)'}\n"
-            f"Pending edit: {pending_edit}"
+            "AutoPatch-J status:\n"
+            f"- project: {self.repo_root}\n"
+            f"- index: {summary['entries']} entries, {summary['java_files']} Java files\n"
+            f"- active findings: {active_findings}\n"
+            f"- pending patch: {pending_patch}\n"
+            f"- last validation: {last_validation}\n\n"
+            f"{format_tools_report(self.build_readiness_report())}"
         )
 
-    def handle_draft_edit(self, parts: list[str]) -> str:
-        if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
-        if self.edit_drafter is None:
-            return "Edit drafter is disabled. Set OPENAI_API_KEY to enable /draft-edit."
-        if len(parts) != 3:
-            return (
-                "Usage: /draft-edit <file_path> <instruction>\n"
-                "Wrap the instruction in quotes if it contains spaces."
-            )
-
-        file_path = parts[1]
-        instruction = parts[2]
-        target = (self.repo_root / file_path).resolve()
-        try:
-            target.relative_to(self.repo_root.resolve())
-        except ValueError:
-            return f"Target file is outside the repository: {file_path}"
-        if not target.exists() or not target.is_file():
-            return f"Target file does not exist: {file_path}"
-
-        file_content = read_text(target)
-        return self.draft_pending_edit(
-            file_path=file_path,
-            instruction=instruction,
-            file_content=file_content,
-        )
-
-    def handle_draft_fix(self, parts: list[str]) -> str:
-        if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
-        if self.edit_drafter is None:
-            return "Edit drafter is disabled. Set OPENAI_API_KEY to enable /draft-fix."
-        if len(parts) not in {2, 3}:
-            return (
-                "Usage: /draft-fix <finding_index> [artifact_id]\n"
-                "Use /show-findings to inspect the available finding list."
-            )
-
-        finding_index = parts[1]
-        if not finding_index.isdigit():
-            return f"finding_index must be a positive integer: {finding_index}"
-
-        artifact_id = parts[2] if len(parts) == 3 else self.session.active_findings_id
-        if not artifact_id:
-            return "No findings artifact is active."
-
-        result = load_scan_result(self.repo_root, artifact_id)
+    def format_active_findings_status(self) -> str:
+        if self.repo_root is None or self.session.active_findings_id is None:
+            return "(none)"
+        result = load_scan_result(self.repo_root, self.session.active_findings_id)
         if result is None:
-            return f"Findings artifact not found: {artifact_id}"
+            return "saved scan artifact is unavailable"
+        return f"{len(result.findings)} finding(s), status {result.status}"
 
-        finding_position = int(finding_index)
-        if finding_position < 1 or finding_position > len(result.findings):
-            return (
-                f"finding_index out of range: {finding_position}. "
-                f"Available findings: 1..{len(result.findings)}"
-            )
-
-        return self.draft_fix_for_finding(result, artifact_id, finding_position)
+    def format_last_validation_status(self) -> str:
+        if self.repo_root is None or self.session.last_validation_id is None:
+            return "(none)"
+        result = load_validation_result(self.repo_root, self.session.last_validation_id)
+        if result is None:
+            return "saved validation artifact is unavailable"
+        return result.status
 
     def handle_preview_edit(self, parts: list[str]) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
+            return "No active project. Run /init to create AutoPatch-J state."
         if len(parts) != 4:
             return (
                 "Usage: /preview-edit <file_path> <old_string> <new_string>\n"
@@ -527,7 +406,7 @@ class AutoPatchCLI:
 
     def handle_show_pending(self) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
+            return "No active project. Run /init to create AutoPatch-J state."
         pending = self.session.pending_edit
         if pending is None:
             return "No pending edit."
@@ -547,7 +426,7 @@ class AutoPatchCLI:
 
     def handle_apply_pending(self) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
+            return "No active project. Run /init to create AutoPatch-J state."
         pending = self.session.pending_edit
         if pending is None:
             return "No pending edit to apply."
@@ -577,7 +456,7 @@ class AutoPatchCLI:
 
     def handle_clear_pending(self) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
+            return "No active project. Run /init to create AutoPatch-J state."
         if self.session.pending_edit is None:
             return "No pending edit to clear."
         self.session.pending_edit = None
@@ -586,7 +465,7 @@ class AutoPatchCLI:
 
     def handle_show_findings(self, artifact_id: str | None) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
+            return "No active project. Run /init to create AutoPatch-J state."
 
         target_artifact = artifact_id or self.session.active_findings_id
         if not target_artifact:
@@ -600,7 +479,7 @@ class AutoPatchCLI:
 
     def handle_show_validation(self, artifact_id: str | None) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init [path] to create AutoPatch-J state."
+            return "No active project. Run /init to create AutoPatch-J state."
 
         target_artifact = artifact_id or self.session.last_validation_id
         if not target_artifact:
@@ -631,9 +510,8 @@ class AutoPatchCLI:
             return None
         if self.session.pending_edit is not None:
             return (
-                "A pending edit already exists. Review it with /show-pending, "
-                "apply it with /apply-pending, or drop it with /clear-pending "
-                "before drafting another patch."
+                "A pending patch already exists. Apply it first, or describe how "
+                "you want AutoPatch-J to revise the patch."
             )
 
         artifact_id = self.session.active_findings_id
@@ -999,23 +877,14 @@ def format_reindex_summary(summary: ProjectSummary) -> str:
     )
 
 
-def format_doctor_report(report: DoctorReport) -> str:
-    lines = ["Environment report:"]
+def format_tools_report(report: DoctorReport) -> str:
+    lines = ["Tool readiness:"]
     for check in report.checks:
+        if check.name == "project":
+            continue
         lines.append(f"- {check.name}: {check.status}")
         lines.append(f"  {check.message}")
     return "\n".join(lines)
-
-
-def format_scanner_summary(scanner: object, project_config: ProjectConfig | None) -> str:
-    return (
-        "Scanner config:\n"
-        f"- active: {getattr(scanner, 'label', '(unknown)')}\n"
-        f"- active semgrep bin: {getattr(scanner, 'binary_path', None) or '(PATH)'}\n"
-        f"- project scanner: {project_config.scanner_name if project_config and project_config.scanner_name else '(none)'}\n"
-        f"- project semgrep config: {project_config.semgrep_config if project_config and project_config.semgrep_config else '(none)'}\n"
-        f"- project semgrep bin: {project_config.semgrep_bin if project_config and project_config.semgrep_bin else '(none)'}"
-    )
 
 
 def format_scan_result(result: ScanResult) -> str:

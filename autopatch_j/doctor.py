@@ -42,7 +42,7 @@ def build_project_check(repo_root: Path | None) -> DoctorCheck:
         return DoctorCheck(
             name="project",
             status="unavailable",
-            message="No active project. Run /init [path] to initialize repository state.",
+            message="No active project. Run /init to initialize repository state.",
         )
     return DoctorCheck(
         name="project",
@@ -92,7 +92,7 @@ def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> DoctorC
             status="error",
             message=(
                 f"Scanner configured as {scanner.label}, but semgrep is not available on PATH. "
-                "Set AUTOPATCH_SEMGREP_BIN or configure `/scanner semgrep ... --bin <path>`."
+                "Set AUTOPATCH_SEMGREP_BIN or install a local runtime binary."
             ),
         )
 
@@ -133,7 +133,7 @@ def build_openai_decision_check(decision_engine_label: str) -> DoctorCheck:
         return DoctorCheck(
             name="openai_decision_engine",
             status="unavailable",
-            message="OPENAI_API_KEY is not set. Decision engine falls back to rule-based routing.",
+            message="OPENAI_API_KEY is not set. LLM decision making is unavailable.",
         )
     return DoctorCheck(
         name="openai_decision_engine",
@@ -148,7 +148,7 @@ def build_openai_drafter_check(edit_drafter_label: str | None) -> DoctorCheck:
         return DoctorCheck(
             name="openai_edit_drafter",
             status="unavailable",
-            message="OPENAI_API_KEY is not set. /draft-edit and /draft-fix stay disabled.",
+            message="OPENAI_API_KEY is not set. Patch drafting is unavailable.",
         )
     return DoctorCheck(
         name="openai_edit_drafter",

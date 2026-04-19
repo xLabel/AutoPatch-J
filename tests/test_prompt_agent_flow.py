@@ -207,7 +207,7 @@ class PromptAgentFlowTests(unittest.TestCase):
             initialize_project(repo_root)
 
             cli = AutoPatchCLI(repo_root)
-            cli.handle_command('/preview-edit notes.txt "call();" "safeCall();"')
+            cli.handle_preview_edit(["/preview-edit", "notes.txt", "call();", "safeCall();"])
 
             output = cli.handle_line("应用这个patch")
 
@@ -260,7 +260,7 @@ class PromptAgentFlowTests(unittest.TestCase):
             initialize_project(repo_root)
 
             cli = AutoPatchCLI(repo_root)
-            cli.handle_command('/preview-edit notes.txt "call();" "safeCall();"')
+            cli.handle_preview_edit(["/preview-edit", "notes.txt", "call();", "safeCall();"])
 
             output = cli.handle_line("看看 patch")
 

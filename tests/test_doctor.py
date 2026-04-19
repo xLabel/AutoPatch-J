@@ -86,7 +86,7 @@ class DoctorReportTests(unittest.TestCase):
         self.assertIn("configured binary", checks["scanner"].message)
         self.assertIn("tools/semgrep", checks["scanner"].message)
 
-    def test_env_command_formats_report_for_cli(self) -> None:
+    def test_status_command_includes_tool_readiness(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             initialize_project(repo_root)
@@ -95,24 +95,28 @@ class DoctorReportTests(unittest.TestCase):
             with patch.dict(os.environ, {}, clear=True):
                 with patch("autopatch_j.doctor.shutil.which", return_value=None):
                     with patch("autopatch_j.doctor.importlib.util.find_spec", return_value=None):
-                        output = cli.handle_command("/env")
+                        output = cli.handle_command("/status")
 
-        self.assertIn("Environment report:", output)
-        self.assertIn("- project: ok", output)
+        self.assertIn("AutoPatch-J status:", output)
+        self.assertIn("Tool readiness:", output)
+        self.assertIn(f"- project: {repo_root.resolve()}", output)
         self.assertIn("- scanner: error", output)
         self.assertIn("Set AUTOPATCH_SEMGREP_BIN", output)
         self.assertIn("- openai_decision_engine: unavailable", output)
 
-    def test_doctor_command_is_no_longer_supported(self) -> None:
+    def test_removed_diagnostic_commands_are_not_supported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             initialize_project(repo_root)
             cli = AutoPatchCLI(repo_root)
 
-            output = cli.handle_command("/doctor")
+            doctor_output = cli.handle_command("/doctor")
+            env_output = cli.handle_command("/env")
 
-        self.assertIn("Unknown command: /doctor", output)
-        self.assertIn("/env", output)
+        self.assertIn("Unknown command: /doctor", doctor_output)
+        self.assertIn("/status", doctor_output)
+        self.assertNotIn("/env", doctor_output)
+        self.assertIn("Unknown command: /env", env_output)
 
 
 if __name__ == "__main__":

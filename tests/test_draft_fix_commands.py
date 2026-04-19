@@ -27,8 +27,8 @@ class CapturingEditDrafter:
         )
 
 
-class DraftFixCommandTests(unittest.TestCase):
-    def test_draft_fix_uses_active_findings_artifact(self) -> None:
+class DraftFixFlowTests(unittest.TestCase):
+    def test_prompt_draft_fix_uses_active_findings_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             source = (
@@ -71,7 +71,7 @@ class DraftFixCommandTests(unittest.TestCase):
             drafter = CapturingEditDrafter()
             cli.edit_drafter = drafter
 
-            output = cli.handle_command("/draft-fix 1")
+            output = cli.handle_line("生成 patch")
 
             self.assertIn("Draft fix context:", output)
             self.assertIn("Pending edit updated from draft.", output)
@@ -86,7 +86,7 @@ class DraftFixCommandTests(unittest.TestCase):
             self.assertIn("Avoid direct string equality on nullable values", instruction)
             self.assertIn("user.getName().equals", file_content)
 
-    def test_draft_fix_validates_index(self) -> None:
+    def test_prompt_draft_fix_requires_active_findings(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             initialize_project(repo_root)
@@ -94,21 +94,46 @@ class DraftFixCommandTests(unittest.TestCase):
             cli = AutoPatchCLI(repo_root)
             cli.edit_drafter = CapturingEditDrafter()
 
-            output = cli.handle_command("/draft-fix 1")
-            self.assertEqual(output, "No findings artifact is active.")
+            output = cli.handle_line("生成 patch")
+            self.assertIn("No active findings are available.", output)
 
-    def test_draft_fix_requires_configured_drafter(self) -> None:
+    def test_prompt_draft_fix_requires_configured_drafter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
+            (repo_root / "Demo.java").write_text("class Demo { void run() {} }\n", encoding="utf-8")
             initialize_project(repo_root)
+            artifact_id = save_scan_result(
+                repo_root,
+                ScanResult(
+                    engine="semgrep",
+                    scope=["Demo.java"],
+                    targets=["Demo.java"],
+                    status="ok",
+                    message="Semgrep completed with 1 finding(s).",
+                    summary={"total": 1, "error": 1},
+                    findings=[
+                        Finding(
+                            check_id="java.lang.correctness.demo",
+                            path="Demo.java",
+                            start_line=1,
+                            end_line=1,
+                            severity="error",
+                            message="Demo finding",
+                            rule="CWE-000",
+                            snippet="class Demo { void run() {} }",
+                        )
+                    ],
+                ),
+            )
 
             cli = AutoPatchCLI(repo_root)
+            cli.session.active_findings_id = artifact_id
             cli.edit_drafter = None
 
-            output = cli.handle_command("/draft-fix 1")
+            output = cli.handle_line("修复第1个问题")
             self.assertEqual(
                 output,
-                "Edit drafter is disabled. Set OPENAI_API_KEY to enable /draft-fix.",
+                "Edit drafter is disabled. Set OPENAI_API_KEY to enable patch drafting.",
             )
 
 

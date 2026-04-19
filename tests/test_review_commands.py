@@ -16,8 +16,8 @@ class ReviewCommandTests(unittest.TestCase):
             initialize_project(repo_root)
 
             cli = AutoPatchCLI(repo_root)
-            preview_output = cli.handle_command(
-                '/preview-edit notes.txt "call();" "safeCall();"'
+            preview_output = cli.handle_preview_edit(
+                ["/preview-edit", "notes.txt", "call();", "safeCall();"]
             )
 
             self.assertIn("Pending edit updated.", preview_output)
@@ -26,14 +26,14 @@ class ReviewCommandTests(unittest.TestCase):
             assert cli.session.pending_edit is not None
             self.assertIn("--- a/notes.txt", cli.session.pending_edit.diff)
 
-            show_output = cli.handle_command("/show-pending")
+            show_output = cli.handle_show_pending()
             self.assertIn("Pending edit:", show_output)
             self.assertIn("safeCall();", show_output)
             self.assertIn("validation status: skipped", show_output)
             self.assertIn("rationale: (none)", show_output)
             self.assertIn("source artifact: (none)", show_output)
 
-            apply_output = cli.handle_command("/apply-pending")
+            apply_output = cli.handle_apply_pending()
             self.assertIn("Pending edit applied.", apply_output)
             self.assertIn("Post-apply ReScan:", apply_output)
             self.assertIn("status: skipped", apply_output)
@@ -41,7 +41,7 @@ class ReviewCommandTests(unittest.TestCase):
             self.assertIsNotNone(cli.session.last_validation_id)
             self.assertIn("safeCall();", (repo_root / "notes.txt").read_text(encoding="utf-8"))
 
-            validation_output = cli.handle_command("/show-validation")
+            validation_output = cli.handle_show_validation(None)
             self.assertIn("Post-apply ReScan:", validation_output)
             self.assertIn("status: skipped", validation_output)
 
@@ -59,8 +59,8 @@ class ReviewCommandTests(unittest.TestCase):
             initialize_project(repo_root)
 
             cli = AutoPatchCLI(repo_root)
-            preview_output = cli.handle_command(
-                '/preview-edit Demo.java "call();" "safeCall();"'
+            preview_output = cli.handle_preview_edit(
+                ["/preview-edit", "Demo.java", "call();", "safeCall();"]
             )
 
             self.assertIn("Pending edit updated.", preview_output)
@@ -68,7 +68,7 @@ class ReviewCommandTests(unittest.TestCase):
             assert cli.session.pending_edit is not None
             self.assertEqual(cli.session.pending_edit.validation_status, "unavailable")
 
-            apply_output = cli.handle_command("/apply-pending")
+            apply_output = cli.handle_apply_pending()
             self.assertIn("Pending edit was not applied.", apply_output)
             self.assertIn("Current validation status: unavailable", apply_output)
             self.assertIn("call();", (repo_root / "Demo.java").read_text(encoding="utf-8"))
@@ -80,10 +80,10 @@ class ReviewCommandTests(unittest.TestCase):
             initialize_project(repo_root)
 
             cli = AutoPatchCLI(repo_root)
-            cli.handle_command('/preview-edit Demo.java "call();" "safeCall();"')
+            cli.handle_preview_edit(["/preview-edit", "Demo.java", "call();", "safeCall();"])
             self.assertIsNotNone(cli.session.pending_edit)
 
-            output = cli.handle_command('/preview-edit Demo.java "missing();" "safeCall();"')
+            output = cli.handle_preview_edit(["/preview-edit", "Demo.java", "missing();", "safeCall();"])
 
             self.assertIn("Pending edit cleared because preview failed.", output)
             self.assertIsNone(cli.session.pending_edit)

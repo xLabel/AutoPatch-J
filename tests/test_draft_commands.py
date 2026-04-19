@@ -62,8 +62,8 @@ class RepairingFakeEditDrafter:
         )
 
 
-class DraftCommandTests(unittest.TestCase):
-    def test_draft_edit_command_stores_pending_edit(self) -> None:
+class DraftEditFlowTests(unittest.TestCase):
+    def test_draft_pending_edit_stores_pending_edit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             (repo_root / "notes.txt").write_text("call();\n", encoding="utf-8")
@@ -72,7 +72,11 @@ class DraftCommandTests(unittest.TestCase):
             cli = AutoPatchCLI(repo_root)
             cli.edit_drafter = FakeEditDrafter()
 
-            output = cli.handle_command('/draft-edit notes.txt "replace call"')
+            output = cli.draft_pending_edit(
+                file_path="notes.txt",
+                instruction="replace call",
+                file_content=(repo_root / "notes.txt").read_text(encoding="utf-8"),
+            )
 
             self.assertIn("Drafted edit:", output)
             self.assertIn("Minimal replacement.", output)
@@ -82,7 +86,7 @@ class DraftCommandTests(unittest.TestCase):
             self.assertEqual(cli.session.pending_edit.rationale, "Minimal replacement.")
             self.assertIsNone(cli.session.pending_edit.source_artifact_id)
 
-    def test_draft_edit_retries_once_after_preview_failure(self) -> None:
+    def test_draft_pending_edit_retries_once_after_preview_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             (repo_root / "notes.txt").write_text("call();\n", encoding="utf-8")
@@ -92,7 +96,11 @@ class DraftCommandTests(unittest.TestCase):
             drafter = RepairingFakeEditDrafter()
             cli.edit_drafter = drafter
 
-            output = cli.handle_command('/draft-edit notes.txt "replace call"')
+            output = cli.draft_pending_edit(
+                file_path="notes.txt",
+                instruction="replace call",
+                file_content=(repo_root / "notes.txt").read_text(encoding="utf-8"),
+            )
 
             self.assertIn("Pending edit updated from draft.", output)
             self.assertIn("Applied one repair retry after:", output)
@@ -104,7 +112,7 @@ class DraftCommandTests(unittest.TestCase):
             assert cli.session.pending_edit is not None
             self.assertEqual(cli.session.pending_edit.old_string, "call();")
 
-    def test_draft_edit_requires_configured_drafter(self) -> None:
+    def test_draft_edit_command_is_not_public_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             (repo_root / "notes.txt").write_text("call();\n", encoding="utf-8")
@@ -115,10 +123,8 @@ class DraftCommandTests(unittest.TestCase):
 
             output = cli.handle_command('/draft-edit notes.txt "replace call"')
 
-            self.assertEqual(
-                output,
-                "Edit drafter is disabled. Set OPENAI_API_KEY to enable /draft-edit.",
-            )
+            self.assertIn("Unknown command: /draft-edit", output)
+            self.assertNotIn("/draft-edit", output.split("\n\n", 1)[1])
 
 
 if __name__ == "__main__":
