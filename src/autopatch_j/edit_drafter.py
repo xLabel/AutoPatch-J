@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Protocol
 
-from autopatch_j.llm import LLMResponse, OpenAICompatibleChatClient, build_default_llm_client
+from autopatch_j.llm import ChatCompletionClient, LLMResponse, build_default_llm_client
 
 
 @dataclass(slots=True)
@@ -37,7 +37,7 @@ class RepairingEditDrafter(EditDrafter, Protocol):
 
 
 class LLMEditDrafter:
-    def __init__(self, client: OpenAICompatibleChatClient) -> None:
+    def __init__(self, client: ChatCompletionClient) -> None:
         self.client = client
 
     @property

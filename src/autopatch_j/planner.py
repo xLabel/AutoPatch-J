@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
-from autopatch_j.llm import LLMResponse, OpenAICompatibleChatClient, build_default_llm_client
+from autopatch_j.llm import ChatCompletionClient, LLMResponse, build_default_llm_client
 
 
 @dataclass(slots=True)
@@ -49,7 +49,7 @@ class UnavailablePlanner:
 
 
 class LLMPlanner:
-    def __init__(self, client: OpenAICompatibleChatClient) -> None:
+    def __init__(self, client: ChatCompletionClient) -> None:
         self.client = client
 
     @property

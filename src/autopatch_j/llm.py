@@ -24,7 +24,7 @@ class LLMResponse:
     raw: dict[str, Any] | None = None
 
 
-class OpenAICompatibleChatClient:
+class ChatCompletionClient:
     def __init__(
         self,
         api_key: str,
@@ -43,7 +43,7 @@ class OpenAICompatibleChatClient:
 
     @property
     def label(self) -> str:
-        return f"openai-compatible:{self.model}"
+        return f"chat-completions:{self.model}"
 
     def complete(
         self,
@@ -148,7 +148,7 @@ class OpenAICompatibleChatClient:
         )
 
 
-def build_default_llm_client() -> OpenAICompatibleChatClient | None:
+def build_default_llm_client() -> ChatCompletionClient | None:
     api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
@@ -162,7 +162,7 @@ def build_default_llm_client() -> OpenAICompatibleChatClient | None:
         or os.getenv("OPENAI_BASE_URL")
         or "https://api.openai.com/v1"
     )
-    return OpenAICompatibleChatClient(
+    return ChatCompletionClient(
         api_key=api_key,
         model=model,
         base_url=base_url,
