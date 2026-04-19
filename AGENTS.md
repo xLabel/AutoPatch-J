@@ -6,6 +6,7 @@
 2. Commit messages should be clear and, by default, written in Chinese unless a term is best kept in English.
 3. Before each commit, run the smallest relevant verification for the changed slice.
 4. Do not bundle unrelated refactors into the same commit.
+5. When preparing a commit, run `git add` and `git commit` sequentially. Do not parallelize them, or they may race on `.git/index.lock`.
 
 ## Project direction
 
@@ -37,3 +38,8 @@
 
 - For Python code, prefer focused `unittest` coverage for the changed slice.
 - Smoke-test the CLI whenever command behavior changes.
+
+## Git workflow pitfalls
+
+- Avoid running `git add` and `git commit` in parallel. They both need to update git index state and can contend on `.git/index.lock`.
+- If a commit step fails with an index lock message, first confirm whether the lock file has already disappeared. Retry the command sequentially before considering any cleanup.
