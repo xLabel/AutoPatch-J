@@ -16,7 +16,7 @@ Current checkpoint:
 - prompt-driven pending patch apply confirmation
 - Semgrep wrapper with normalized findings artifacts
 - pending edit review/apply gate
-- optional OpenAI `Responses API` decision engine
+- OpenAI-compatible LLM planner with streaming tool-call aggregation
 
 ## Run
 
@@ -63,7 +63,7 @@ Inside the shell:
 - without `AUTOPATCH_SEMGREP_BIN`, AutoPatch-J looks for `runtime/semgrep/bin/<platform>/semgrep`, then `.venv/bin/semgrep`, then `semgrep` from `PATH`
 - semgrep subprocess state, settings, logs, and cache are localized under `.autopatch/runtime/semgrep` instead of `~/.semgrep`
 - use `/tools` to inspect local scanner and validator readiness
-- current fallback routing is keyword-based; if `OPENAI_API_KEY` is present, scan decisions can go through OpenAI
+- natural-language scan decisions go through the LLM planner; there is no rule-based scan fallback
 - prompt-level review requests such as `列出问题` reuse the current findings artifact instead of forcing a re-scan
 - after findings are loaded, prompt-level patch requests such as `修复第1个问题` can draft a pending edit
 - if multiple findings are active, AutoPatch-J asks for a finding index or a narrower `@mention`
@@ -75,8 +75,8 @@ Inside the shell:
   - repository initialization
   - scanner execution through the repo runtime, `.venv`, `PATH`, or an explicit binary path
   - Tree-sitter Java syntax validation through Python modules
-  - OpenAI decision routing
-  - OpenAI patch drafting
+  - LLM planning
+  - LLM patch drafting
 
 The scan wrapper does not mutate shell `PATH`. If no Semgrep binary is available, the CLI returns a clear error and keeps session state intact.
 
@@ -107,11 +107,14 @@ The bootstrap script installs those packages into the project-local `.venv`.
 - Java edits require Tree-sitter validation before apply; if `tree_sitter` or `tree_sitter_java` is missing, preview still works but apply is blocked
 - after apply, AutoPatch-J records a post-apply ReScan validation artifact
 
-## Decision engine
+## Decision Engine
 
-- default: rule-based routing
-- if `OPENAI_API_KEY` is present, AutoPatch-J switches to an OpenAI `Responses API` decision engine
-- the same API key also enables the OpenAI edit drafter used by prompt-level patch drafting
+- default without an LLM key: natural-language agent actions are unavailable
+- with an OpenAI-compatible endpoint, the LLM planner chooses `scan`, `draft_patch`, or `respond`
+- planner calls use streaming so reading and routing do not feel frozen
+- patch drafting uses non-streaming JSON mode because the full JSON object must be parsed before preview
 - optional environment variables:
-  - `AUTOPATCH_OPENAI_MODEL`
-  - `OPENAI_BASE_URL`
+  - `AUTOPATCH_LLM_API_KEY`
+  - `AUTOPATCH_LLM_BASE_URL`
+  - `AUTOPATCH_LLM_MODEL`
+  - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are accepted as compatibility aliases

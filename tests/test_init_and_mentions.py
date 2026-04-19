@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from autopatch_j.cli import AutoPatchCLI
-from autopatch_j.decision_engine import DecisionContext, RuleBasedDecisionEngine
 from autopatch_j.intent import has_scan_intent
 from autopatch_j.mentions import build_mention_completions, parse_prompt
 from autopatch_j.project import discover_repo_root, initialize_project, refresh_project_index
@@ -283,46 +282,6 @@ class ScanToolTests(unittest.TestCase):
             result.findings[0].check_id,
             "autopatch-j.java.correctness.nullable-equals",
         )
-
-
-class DecisionEngineTests(unittest.TestCase):
-    def test_rule_engine_calls_scan_tool_for_scan_intent(self) -> None:
-        engine = RuleBasedDecisionEngine()
-        decision = engine.decide(
-            DecisionContext(
-                user_text="扫描整个仓库的问题",
-                scoped_paths=[],
-                has_active_findings=False,
-            )
-        )
-
-        self.assertEqual(decision.action, "tool_call")
-        self.assertEqual(decision.tool_name, "scan_java")
-        self.assertEqual(decision.tool_args["scope"], ["."])
-
-    def test_rule_engine_keeps_existing_scope_when_present(self) -> None:
-        engine = RuleBasedDecisionEngine()
-        decision = engine.decide(
-            DecisionContext(
-                user_text="scan this file",
-                scoped_paths=["src/main/java/demo/App.java"],
-                has_active_findings=False,
-            )
-        )
-
-        self.assertEqual(decision.tool_args["scope"], ["src/main/java/demo/App.java"])
-
-    def test_rule_engine_returns_plain_response_without_scan_intent(self) -> None:
-        engine = RuleBasedDecisionEngine()
-        decision = engine.decide(
-            DecisionContext(
-                user_text="explain this class",
-                scoped_paths=["src/main/java/demo/App.java"],
-                has_active_findings=False,
-            )
-        )
-
-        self.assertEqual(decision.action, "respond")
 
 
 if __name__ == "__main__":

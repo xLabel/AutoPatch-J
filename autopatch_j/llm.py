@@ -155,7 +155,6 @@ def build_default_llm_client() -> OpenAICompatibleChatClient | None:
 
     model = (
         os.getenv("AUTOPATCH_LLM_MODEL")
-        or os.getenv("AUTOPATCH_OPENAI_MODEL")
         or "gpt-5.4-mini"
     )
     base_url = (

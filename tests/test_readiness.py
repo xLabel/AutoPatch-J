@@ -22,7 +22,7 @@ class ReadinessReportTests(unittest.TestCase):
                             report = build_readiness_report(
                                 repo_root=None,
                                 scanner=SemgrepScanner(),
-                                decision_engine_label="rule-based",
+                                decision_engine_label="llm:unavailable",
                                 edit_drafter_label=None,
                             )
 
@@ -30,8 +30,8 @@ class ReadinessReportTests(unittest.TestCase):
         self.assertEqual(checks["project"].status, "unavailable")
         self.assertEqual(checks["scanner"].status, "error")
         self.assertEqual(checks["java_syntax_validator"].status, "unavailable")
-        self.assertEqual(checks["openai_decision_engine"].status, "unavailable")
-        self.assertEqual(checks["openai_edit_drafter"].status, "unavailable")
+        self.assertEqual(checks["llm_planner"].status, "unavailable")
+        self.assertEqual(checks["llm_patch_drafter"].status, "unavailable")
 
     def test_readiness_report_marks_ready_runtime_dependencies(self) -> None:
         fake_spec = object()
@@ -41,14 +41,14 @@ class ReadinessReportTests(unittest.TestCase):
                 return fake_spec
             return None
 
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
+        with patch.dict(os.environ, {"AUTOPATCH_LLM_API_KEY": "test-key"}, clear=True):
             with patch("autopatch_j.scanners.semgrep.shutil.which", return_value="/usr/local/bin/semgrep"):
                 with patch("autopatch_j.readiness.importlib.util.find_spec", side_effect=fake_find_spec):
                     report = build_readiness_report(
                         repo_root=Path("/tmp/demo"),
                         scanner=SemgrepScanner(config="rules/demo.yml"),
-                        decision_engine_label="openai:gpt-5.4-mini",
-                        edit_drafter_label="openai:gpt-5.4-mini",
+                        decision_engine_label="openai-compatible:deepseek-chat",
+                        edit_drafter_label="openai-compatible:deepseek-chat",
                     )
 
         checks = {check.name: check for check in report.checks}
@@ -56,8 +56,8 @@ class ReadinessReportTests(unittest.TestCase):
         self.assertEqual(checks["scanner"].status, "ok")
         self.assertIn("rules/demo.yml", checks["scanner"].message)
         self.assertEqual(checks["java_syntax_validator"].status, "ok")
-        self.assertEqual(checks["openai_decision_engine"].status, "ok")
-        self.assertEqual(checks["openai_edit_drafter"].status, "ok")
+        self.assertEqual(checks["llm_planner"].status, "ok")
+        self.assertEqual(checks["llm_patch_drafter"].status, "ok")
 
     def test_readiness_report_accepts_configured_semgrep_binary(self) -> None:
         fake_spec = object()
@@ -79,7 +79,7 @@ class ReadinessReportTests(unittest.TestCase):
                     report = build_readiness_report(
                         repo_root=repo_root,
                         scanner=SemgrepScanner(binary_path=str(binary.relative_to(repo_root))),
-                        decision_engine_label="rule-based",
+                        decision_engine_label="llm:unavailable",
                         edit_drafter_label=None,
                     )
 
@@ -106,7 +106,7 @@ class ReadinessReportTests(unittest.TestCase):
         self.assertIn(f"- project: {repo_root.resolve()}", output)
         self.assertIn("- scanner: error", output)
         self.assertIn("Set AUTOPATCH_SEMGREP_BIN", output)
-        self.assertIn("- openai_decision_engine: unavailable", output)
+        self.assertIn("- llm_planner: unavailable", output)
 
     def test_removed_diagnostic_commands_are_not_supported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

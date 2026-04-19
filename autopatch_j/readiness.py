@@ -30,8 +30,8 @@ def build_readiness_report(
         build_project_check(repo_root),
         build_scanner_check(repo_root, scanner),
         build_tree_sitter_check(),
-        build_openai_decision_check(decision_engine_label),
-        build_openai_drafter_check(edit_drafter_label),
+        build_llm_decision_check(decision_engine_label),
+        build_llm_drafter_check(edit_drafter_label),
     ]
     return ReadinessReport(checks=checks)
 
@@ -122,31 +122,41 @@ def build_tree_sitter_check() -> ReadinessCheck:
     )
 
 
-def build_openai_decision_check(decision_engine_label: str) -> ReadinessCheck:
-    api_key = os.getenv("OPENAI_API_KEY")
+def has_llm_api_key() -> bool:
+    return bool(os.getenv("AUTOPATCH_LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
+
+
+def build_llm_decision_check(decision_engine_label: str) -> ReadinessCheck:
+    api_key = has_llm_api_key()
     if not api_key:
         return ReadinessCheck(
-            name="openai_decision_engine",
+            name="llm_planner",
             status="unavailable",
-            message="OPENAI_API_KEY is not set. LLM decision making is unavailable.",
+            message=(
+                "No LLM API key is set. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "to enable natural-language agent planning."
+            ),
         )
     return ReadinessCheck(
-        name="openai_decision_engine",
+        name="llm_planner",
         status="ok",
-        message=f"OpenAI decision engine is enabled: {decision_engine_label}.",
+        message=f"LLM planner is enabled: {decision_engine_label}.",
     )
 
 
-def build_openai_drafter_check(edit_drafter_label: str | None) -> ReadinessCheck:
-    api_key = os.getenv("OPENAI_API_KEY")
+def build_llm_drafter_check(edit_drafter_label: str | None) -> ReadinessCheck:
+    api_key = has_llm_api_key()
     if not api_key:
         return ReadinessCheck(
-            name="openai_edit_drafter",
+            name="llm_patch_drafter",
             status="unavailable",
-            message="OPENAI_API_KEY is not set. Patch drafting is unavailable.",
+            message=(
+                "No LLM API key is set. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "to enable patch drafting."
+            ),
         )
     return ReadinessCheck(
-        name="openai_edit_drafter",
+        name="llm_patch_drafter",
         status="ok",
-        message=f"OpenAI edit drafter is enabled: {edit_drafter_label or 'openai'}.",
+        message=f"LLM patch drafter is enabled: {edit_drafter_label or 'configured LLM'}.",
     )

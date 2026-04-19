@@ -189,7 +189,7 @@ class AutoPatchCLI:
                 )
             )
 
-            if decision.action == "tool_call":
+            if decision.action == "scan":
                 execution = self.run_tool(decision)
                 result = self.extract_scan_result(execution)
                 self.apply_scan_result(result)
@@ -209,7 +209,7 @@ class AutoPatchCLI:
             )
         )
 
-        if decision.action == "tool_call":
+        if decision.action == "scan":
             execution = self.run_tool(decision)
             result = self.extract_scan_result(execution)
             self.apply_scan_result(result)
