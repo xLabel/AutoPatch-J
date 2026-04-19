@@ -42,6 +42,7 @@ class SemgrepScanner:
             capture_output=True,
             text=True,
             check=False,
+            env=build_semgrep_subprocess_env(repo_root),
         )
 
         if completed.returncode not in {0, 1}:
@@ -97,6 +98,38 @@ def resolve_explicit_binary(binary_path: str, repo_root: Path | None = None) -> 
     if not os.access(resolved, os.X_OK):
         return None
     return str(resolved)
+
+
+def build_semgrep_subprocess_env(repo_root: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    runtime_root = repo_root / ".autopatch" / "runtime" / "semgrep"
+    config_home = runtime_root / "config"
+    cache_home = runtime_root / "cache"
+    user_data_dir = config_home / ".semgrep"
+    config_home.mkdir(parents=True, exist_ok=True)
+    cache_home.mkdir(parents=True, exist_ok=True)
+    user_data_dir.mkdir(parents=True, exist_ok=True)
+
+    env.setdefault("XDG_CONFIG_HOME", str(config_home))
+    env.setdefault("XDG_CACHE_HOME", str(cache_home))
+    env.setdefault("SEMGREP_LOG_FILE", str(user_data_dir / "semgrep.log"))
+    env.setdefault("SEMGREP_SETTINGS_FILE", str(user_data_dir / "settings.yml"))
+    env.setdefault("SEMGREP_VERSION_CACHE_PATH", str(cache_home / "semgrep_version"))
+    env.setdefault("SEMGREP_SEND_METRICS", "off")
+    env.setdefault("SEMGREP_ENABLE_VERSION_CHECK", "0")
+
+    cert_file = detect_certifi_bundle()
+    if cert_file is not None:
+        env.setdefault("SSL_CERT_FILE", cert_file)
+    return env
+
+
+def detect_certifi_bundle() -> str | None:
+    try:
+        import certifi
+    except ImportError:
+        return None
+    return certifi.where()
 
 
 def select_targets(repo_root: Path, scope: list[str]) -> list[str]:

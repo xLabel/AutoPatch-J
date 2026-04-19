@@ -62,6 +62,35 @@ class ScannerFactoryTests(unittest.TestCase):
         command = run_mock.call_args.args[0]
         self.assertEqual(command[0], str(binary.resolve()))
         self.assertEqual(command[1:4], ["scan", "--json", "--config"])
+        runtime_env = run_mock.call_args.kwargs["env"]
+        self.assertEqual(runtime_env["SEMGREP_SEND_METRICS"], "off")
+        self.assertEqual(runtime_env["SEMGREP_ENABLE_VERSION_CHECK"], "0")
+
+    def test_semgrep_scanner_localizes_runtime_state_inside_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "src").mkdir()
+            (repo_root / "src" / "Demo.java").write_text("class Demo {}\n", encoding="utf-8")
+            binary = repo_root / "tools" / "semgrep"
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_text("#!/bin/sh\n", encoding="utf-8")
+            binary.chmod(0o755)
+            scanner = SemgrepScanner(config="rules/demo.yml", binary_path="tools/semgrep")
+
+            with patch("autopatch_j.scanners.semgrep.detect_certifi_bundle", return_value="/tmp/cert.pem"):
+                with patch("autopatch_j.scanners.semgrep.subprocess.run") as run_mock:
+                    run_mock.return_value.stdout = '{"results": []}'
+                    run_mock.return_value.stderr = ""
+                    run_mock.return_value.returncode = 0
+                    scanner.scan(repo_root, ["src"])
+
+                    runtime_env = run_mock.call_args.kwargs["env"]
+                    self.assertEqual(runtime_env["SSL_CERT_FILE"], "/tmp/cert.pem")
+                    self.assertTrue(runtime_env["XDG_CONFIG_HOME"].startswith(str(repo_root)))
+                    self.assertTrue(runtime_env["XDG_CACHE_HOME"].startswith(str(repo_root)))
+                    self.assertTrue(runtime_env["SEMGREP_LOG_FILE"].startswith(str(repo_root)))
+                    self.assertTrue(runtime_env["SEMGREP_SETTINGS_FILE"].startswith(str(repo_root)))
+                    self.assertTrue((repo_root / ".autopatch" / "runtime" / "semgrep").exists())
 
     def test_unsupported_scanner_returns_controlled_error(self) -> None:
         with patch.dict(os.environ, {"AUTOPATCH_SCANNER": "spotbugs"}, clear=True):

@@ -24,6 +24,14 @@ Current checkpoint:
 python3 -m autopatch_j
 ```
 
+Project-local runtime bootstrap:
+
+```bash
+python3 scripts/bootstrap_local_runtime.py
+```
+
+That creates a local `.venv`, installs the Python dependencies declared by this project, installs `semgrep` into `.venv/bin/semgrep`, and leaves your global shell `PATH` untouched.
+
 Inside the shell:
 
 ```text
@@ -61,6 +69,7 @@ Inside the shell:
 - set `AUTOPATCH_SCANNER=semgrep` to select the current backend explicitly
 - set `AUTOPATCH_SEMGREP_CONFIG` to override the default Semgrep config (`p/java`)
 - set `AUTOPATCH_SEMGREP_BIN` to point to a repo-local or absolute Semgrep binary without touching shell `PATH`
+- semgrep subprocess state, settings, logs, and cache are localized under `.autopatch/runtime/semgrep` instead of `~/.semgrep`
 - use `/scanner` to inspect the active scanner and project-level overrides
 - use `/scanner semgrep [config] [--bin <path>]` to persist the scanner choice, config, and optional binary path into the project
 - use `/scanner reset` to clear project overrides and fall back to env/defaults
@@ -84,6 +93,8 @@ Tree-sitter validation is a Python dependency, not an npm dependency. The projec
 
 - `tree-sitter`
 - `tree-sitter-java`
+
+The bootstrap script installs those packages into the project-local `.venv`.
 
 ## Demo fixture
 
