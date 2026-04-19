@@ -1,1 +1,55 @@
-"""Tool implementations for AutoPatch-J."""
+from __future__ import annotations
+
+from autopatch_j.scanners import JavaScanner
+from autopatch_j.tools.base import Tool, ToolExecutionResult
+from autopatch_j.tools.edit_tool import (
+    ApplySearchReplaceTool,
+    EditPreview,
+    PreviewSearchReplaceTool,
+    SearchReplaceEdit,
+    apply_search_replace,
+    preview_search_replace,
+)
+from autopatch_j.tools.registry import ToolRegistry
+from autopatch_j.tools.scan_java import ScanJavaTool, scan_java
+
+
+def build_tools(scanner: JavaScanner | None = None) -> list[Tool]:
+    return [
+        ScanJavaTool(scanner=scanner),
+        PreviewSearchReplaceTool(),
+        ApplySearchReplaceTool(),
+    ]
+
+
+ALL_TOOLS = build_tools()
+
+
+def get_tool(name: str, tools: list[Tool] | None = None) -> Tool | None:
+    for tool in tools or ALL_TOOLS:
+        if tool.name == name:
+            return tool
+    return None
+
+
+def build_tool_registry(scanner: JavaScanner | None = None) -> ToolRegistry:
+    return ToolRegistry(build_tools(scanner=scanner))
+
+
+__all__ = [
+    "ALL_TOOLS",
+    "ApplySearchReplaceTool",
+    "EditPreview",
+    "PreviewSearchReplaceTool",
+    "ScanJavaTool",
+    "SearchReplaceEdit",
+    "Tool",
+    "ToolExecutionResult",
+    "ToolRegistry",
+    "apply_search_replace",
+    "build_tool_registry",
+    "build_tools",
+    "get_tool",
+    "preview_search_replace",
+    "scan_java",
+]

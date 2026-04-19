@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
 
+from autopatch_j.tools.base import Tool
 from autopatch_j.validators.java_syntax import SyntaxValidationResult, SyntaxValidator, TreeSitterJavaValidator
 
 
@@ -22,6 +23,58 @@ class EditPreview:
     occurrences: int
     diff: str
     validation: SyntaxValidationResult
+
+
+class PreviewSearchReplaceTool(Tool):
+    name = "preview_search_replace"
+    description = "Preview a single search-replace edit and validate Java syntax when possible."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "file_path": {"type": "string"},
+            "old_string": {"type": "string"},
+            "new_string": {"type": "string"},
+        },
+        "required": ["file_path", "old_string", "new_string"],
+    }
+
+    def execute(
+        self,
+        repo_root: Path,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+    ) -> EditPreview:
+        return preview_search_replace(
+            repo_root,
+            SearchReplaceEdit(
+                file_path=file_path,
+                old_string=old_string,
+                new_string=new_string,
+            ),
+        )
+
+
+class ApplySearchReplaceTool(Tool):
+    name = "apply_search_replace"
+    description = "Apply a single search-replace edit after preview validation passes."
+    parameters = PreviewSearchReplaceTool.parameters
+
+    def execute(
+        self,
+        repo_root: Path,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+    ) -> EditPreview:
+        return apply_search_replace(
+            repo_root,
+            SearchReplaceEdit(
+                file_path=file_path,
+                old_string=old_string,
+                new_string=new_string,
+            ),
+        )
 
 
 def preview_search_replace(

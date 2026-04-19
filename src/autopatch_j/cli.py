@@ -41,8 +41,8 @@ from autopatch_j.readiness import ReadinessReport, build_readiness_report as bui
 from autopatch_j.scanners import ScanResult, build_java_scanner
 from autopatch_j.scanners.catalog import ScannerCatalogEntry, build_scanner_catalog
 from autopatch_j.session import PendingEdit, SessionState, save_session
+from autopatch_j.tools import ToolExecutionResult, build_tool_registry
 from autopatch_j.tools.edit_tool import EditPreview
-from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 from autopatch_j.validators.rescan import RescanValidationResult, validate_post_apply_rescan
 
 HELP_TEXT = """Commands:
@@ -82,7 +82,7 @@ class AutoPatchCLI:
             if self.session.repo_root is None:
                 self.session.repo_root = str(self.repo_root)
         self.rebuild_scanner()
-        self.tool_registry = ToolRegistry(scanner=self.scanner)
+        self.tool_registry = build_tool_registry(scanner=self.scanner)
 
     def run(self) -> int:
         self.configure_readline()
@@ -203,7 +203,7 @@ class AutoPatchCLI:
         self.session = session
         self.index = index
         self.rebuild_scanner()
-        self.tool_registry = ToolRegistry(scanner=self.scanner)
+        self.tool_registry = build_tool_registry(scanner=self.scanner)
         return format_init_summary(summary)
 
     def handle_reindex(self) -> str:

@@ -1,9 +1,33 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from autopatch_j.scanners import Finding, JavaScanner, ScanResult, build_java_scanner
 from autopatch_j.scanners.semgrep import normalize_semgrep_payload, select_targets
+from autopatch_j.tools.base import Tool
+
+
+@dataclass(slots=True)
+class ScanJavaTool(Tool):
+    scanner: JavaScanner | None = None
+
+    name = "scan_java"
+    description = "Run the Java static scanner for the selected repository scope."
+    parameters = {
+        "type": "object",
+        "properties": {
+            "scope": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Repository-relative files or directories. Use ['.'] for the whole repo.",
+            }
+        },
+        "required": ["scope"],
+    }
+
+    def execute(self, repo_root: Path, scope: list[str] | None = None) -> ScanResult:
+        return scan_java(repo_root, scope or ["."], scanner=self.scanner)
 
 
 def scan_java(
@@ -18,6 +42,7 @@ def scan_java(
 __all__ = [
     "Finding",
     "ScanResult",
+    "ScanJavaTool",
     "normalize_semgrep_payload",
     "scan_java",
     "select_targets",
