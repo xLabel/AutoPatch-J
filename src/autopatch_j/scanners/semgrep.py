@@ -7,13 +7,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from autopatch_j.scanners.model import Finding, ScanResult
+from autopatch_j.scanners.base import Finding, ScanResult
 
 DEFAULT_SEMGREP_RULE_PATH = Path("runtime") / "semgrep" / "rules" / "java.yml"
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
 
 
 class SemgrepScanner:
+    name = "Semgrep"
+
     def __init__(self) -> None:
         self.config = default_semgrep_config()
 

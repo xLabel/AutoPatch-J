@@ -36,7 +36,7 @@ def build_semgrep_entry(repo_root: Path | None) -> ScannerCatalogEntry:
     resolved = scanner.resolve_binary_with_source(repo_root)
     if resolved is None:
         return ScannerCatalogEntry(
-            name="Semgrep",
+            name=scanner.name,
             selected=True,
             status="selected, runtime missing",
             message="已默认选中；runtime/semgrep/bin/<platform>/semgrep 缺失或不可执行。",
@@ -44,7 +44,7 @@ def build_semgrep_entry(repo_root: Path | None) -> ScannerCatalogEntry:
 
     semgrep_path, _source = resolved
     return ScannerCatalogEntry(
-        name="Semgrep",
+        name=scanner.name,
         selected=True,
         status="selected, ready",
         message=f"已默认选中；使用 {semgrep_path}",
