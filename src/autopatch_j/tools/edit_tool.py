@@ -5,7 +5,7 @@ from difflib import unified_diff
 from pathlib import Path
 
 from autopatch_j.tools.base import Tool
-from autopatch_j.validators.java_syntax import SyntaxValidationResult, SyntaxValidator, TreeSitterJavaValidator
+from autopatch_j.validators import SyntaxValidationResult, SyntaxValidator, TreeSitterJavaValidator
 
 
 @dataclass(slots=True)

@@ -43,7 +43,11 @@ from autopatch_j.scanners.catalog import ScannerCatalogEntry, build_scanner_cata
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools import ToolExecutionResult, build_tool_registry
 from autopatch_j.tools.edit_tool import EditPreview
-from autopatch_j.validators.rescan import RescanValidationResult, validate_post_apply_rescan
+from autopatch_j.validators import (
+    RescanValidationResult,
+    SyntaxValidationResult,
+    validate_post_apply_rescan,
+)
 
 HELP_TEXT = """Commands:
   /init         Initialize the current repository for AutoPatch-J
@@ -808,8 +812,6 @@ class AutoPatchCLI:
         return format_rescan_validation(validation)
 
     def build_default_preview_validation(self) -> object:
-        from autopatch_j.validators.java_syntax import SyntaxValidationResult
-
         return SyntaxValidationResult(
             status="skipped",
             message="Syntax validation result was unavailable for this tool execution.",

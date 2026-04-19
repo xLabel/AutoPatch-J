@@ -6,7 +6,7 @@ from pathlib import Path
 
 from autopatch_j.scanners import ScanResult
 from autopatch_j.session import app_dir
-from autopatch_j.validators.rescan import RescanValidationResult
+from autopatch_j.validators import RescanValidationResult
 
 
 def save_scan_result(repo_root: Path, result: ScanResult) -> str:

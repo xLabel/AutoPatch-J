@@ -6,7 +6,6 @@ from typing import Callable
 
 from autopatch_j.scanners import ScanResult
 from autopatch_j.session import PendingEdit
-from autopatch_j.tools.scan_java import scan_java
 
 Scanner = Callable[[Path, list[str]], ScanResult]
 
@@ -61,7 +60,7 @@ class RescanValidationResult:
 def validate_post_apply_rescan(
     repo_root: Path,
     pending: PendingEdit,
-    scanner: Scanner = scan_java,
+    scanner: Scanner | None = None,
 ) -> tuple[RescanValidationResult, ScanResult | None]:
     if not pending.source_artifact_id or not pending.source_check_id:
         return (
@@ -85,6 +84,11 @@ def validate_post_apply_rescan(
             ),
             None,
         )
+
+    if scanner is None:
+        from autopatch_j.tools.scan_java import scan_java
+
+        scanner = scan_java
 
     rescan = scanner(repo_root, [pending.file_path])
     if rescan.status != "ok":
