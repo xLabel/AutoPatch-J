@@ -69,6 +69,7 @@ class SessionState:
     recent_mentions: list[str] = field(default_factory=list)
     current_goal: str | None = None
     active_findings_id: str | None = None
+    last_validation_id: str | None = None
     pending_edit: PendingEdit | None = None
 
     def to_dict(self) -> dict[str, object]:
@@ -78,6 +79,7 @@ class SessionState:
             "recent_mentions": list(self.recent_mentions),
             "current_goal": self.current_goal,
             "active_findings_id": self.active_findings_id,
+            "last_validation_id": self.last_validation_id,
             "pending_edit": self.pending_edit.to_dict() if self.pending_edit else None,
         }
 
@@ -90,6 +92,9 @@ class SessionState:
             current_goal=str(data["current_goal"]) if data.get("current_goal") else None,
             active_findings_id=(
                 str(data["active_findings_id"]) if data.get("active_findings_id") else None
+            ),
+            last_validation_id=(
+                str(data["last_validation_id"]) if data.get("last_validation_id") else None
             ),
             pending_edit=(
                 PendingEdit.from_dict(data["pending_edit"])

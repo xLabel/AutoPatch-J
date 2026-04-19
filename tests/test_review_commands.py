@@ -35,8 +35,15 @@ class ReviewCommandTests(unittest.TestCase):
 
             apply_output = cli.handle_command("/apply-pending")
             self.assertIn("Pending edit applied.", apply_output)
+            self.assertIn("Post-apply ReScan:", apply_output)
+            self.assertIn("status: skipped", apply_output)
             self.assertIsNone(cli.session.pending_edit)
+            self.assertIsNotNone(cli.session.last_validation_id)
             self.assertIn("safeCall();", (repo_root / "notes.txt").read_text(encoding="utf-8"))
+
+            validation_output = cli.handle_command("/show-validation")
+            self.assertIn("Post-apply ReScan:", validation_output)
+            self.assertIn("status: skipped", validation_output)
 
     def test_apply_pending_blocks_java_when_validator_is_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

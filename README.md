@@ -32,6 +32,7 @@ Inside the shell:
 /preview-edit Demo.java "call();" "safeCall();"
 /show-pending
 /apply-pending
+/show-validation
 ```
 
 The model/tool loop is not wired yet. This slice establishes the repository and scope primitives that later agent steps will build on.
@@ -53,6 +54,8 @@ The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns 
 - `/apply-pending` writes the pending edit to disk
 - `/clear-pending` drops the pending edit without changing files
 - Java edits require Tree-sitter validation before apply; if `tree_sitter` or `tree_sitter_java` is missing, preview still works but apply is blocked
+- after apply, AutoPatch-J records a post-apply ReScan validation artifact
+- `/show-validation` shows the latest post-apply validation result
 
 ## Decision engine
 

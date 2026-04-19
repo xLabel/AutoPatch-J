@@ -3,7 +3,12 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
-from autopatch_j.artifacts import load_scan_result, save_scan_result
+from autopatch_j.artifacts import (
+    load_scan_result,
+    load_validation_result,
+    save_scan_result,
+    save_validation_result,
+)
 from autopatch_j.context import build_context_preview
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
 from autopatch_j.edit_drafter import DraftedEdit, build_default_edit_drafter
@@ -14,6 +19,7 @@ from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools.edit_tool import EditPreview
 from autopatch_j.tools.scan_java import ScanResult, scan_java
 from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
+from autopatch_j.validators.rescan import RescanValidationResult, validate_post_apply_rescan
 
 HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
@@ -28,6 +34,8 @@ HELP_TEXT = """Commands:
   /clear-pending Drop the current pending edit without writing files
   /show-findings [artifact_id]
                  Show a saved scan artifact, or the current active findings if omitted
+  /show-validation [artifact_id]
+                 Show a saved post-apply validation artifact, or the latest one if omitted
   /status        Show current session state
   /help          Show this message
   /quit          Exit the CLI
@@ -134,6 +142,9 @@ class AutoPatchCLI:
         if command == "/show-findings":
             artifact_id = parts[1] if len(parts) > 1 else None
             return self.handle_show_findings(artifact_id)
+        if command == "/show-validation":
+            artifact_id = parts[1] if len(parts) > 1 else None
+            return self.handle_show_validation(artifact_id)
         if command == "/status":
             return self.format_status()
         if command == "/init":
@@ -166,6 +177,7 @@ class AutoPatchCLI:
             f"Recent mentions: {recent_mentions}\n"
             f"Current goal: {self.session.current_goal or '(none)'}\n"
             f"Active findings: {self.session.active_findings_id or '(none)'}\n"
+            f"Last validation: {self.session.last_validation_id or '(none)'}\n"
             f"Pending edit: {pending_edit}"
         )
 
@@ -391,10 +403,14 @@ class AutoPatchCLI:
         )
         preview = self.extract_edit_preview(execution, pending.file_path)
         if preview.status == "ok":
+            rescan_output = self.run_post_apply_rescan(pending)
             self.session.pending_edit = None
             self.session.current_goal = "pending_edit_applied"
             save_session(self.repo_root, self.session)
-            return format_edit_preview(preview, prefix="Pending edit applied.")
+            return (
+                f"{format_edit_preview(preview, prefix='Pending edit applied.')}\n\n"
+                f"{rescan_output}"
+            )
 
         save_session(self.repo_root, self.session)
         return format_edit_preview(preview, prefix="Pending edit was not applied.")
@@ -421,6 +437,20 @@ class AutoPatchCLI:
             return f"Findings artifact not found: {target_artifact}"
 
         return format_scan_result(result)
+
+    def handle_show_validation(self, artifact_id: str | None) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+
+        target_artifact = artifact_id or self.session.last_validation_id
+        if not target_artifact:
+            return "No validation artifact is active."
+
+        result = load_validation_result(self.repo_root, target_artifact)
+        if result is None:
+            return f"Validation artifact not found: {target_artifact}"
+
+        return format_rescan_validation(result)
 
     def resolve_mentions_interactively(self, parsed: ParsedPrompt) -> bool:
         for resolution in parsed.mentions:
@@ -509,6 +539,7 @@ class AutoPatchCLI:
             message=execution.message,
             occurrences=0,
             diff="",
+            validation=self.build_default_preview_validation(),
         )
 
     def apply_scan_result(self, result: ScanResult) -> None:
@@ -521,6 +552,24 @@ class AutoPatchCLI:
             return
 
         self.session.active_findings_id = None
+
+    def run_post_apply_rescan(self, pending: PendingEdit) -> str:
+        validation, rescan = validate_post_apply_rescan(self.repo_root, pending, scanner=scan_java)
+        if rescan is not None:
+            rescan_artifact_id = save_scan_result(self.repo_root, rescan)
+            validation.rescan_artifact_id = rescan_artifact_id
+
+        validation_id = save_validation_result(self.repo_root, validation)
+        self.session.last_validation_id = validation_id
+        return format_rescan_validation(validation)
+
+    def build_default_preview_validation(self) -> object:
+        from autopatch_j.validators.java_syntax import SyntaxValidationResult
+
+        return SyntaxValidationResult(
+            status="skipped",
+            message="Syntax validation result was unavailable for this tool execution.",
+        )
 
 
 def format_init_summary(summary: ProjectSummary) -> str:
@@ -575,6 +624,21 @@ def format_edit_preview(preview: EditPreview, prefix: str) -> str:
     ]
     if preview.diff:
         lines.append(preview.diff)
+    return "\n".join(lines)
+
+
+def format_rescan_validation(result: RescanValidationResult) -> str:
+    lines = [
+        "Post-apply ReScan:",
+        f"- status: {result.status}",
+        f"- message: {result.message}",
+        f"- source artifact: {result.source_artifact_id or '(none)'}",
+        f"- source finding index: {result.source_finding_index or '(none)'}",
+        f"- source check_id: {result.source_check_id or '(none)'}",
+        f"- source path: {result.source_path or '(none)'}",
+        f"- remaining matches: {result.remaining_matches}",
+        f"- rescan artifact: {result.rescan_artifact_id or '(none)'}",
+    ]
     return "\n".join(lines)
 
 
