@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import shlex
 from pathlib import Path
+from typing import cast
 
 try:
     import readline
@@ -18,7 +19,11 @@ from autopatch_j.artifacts import (
 from autopatch_j.context import build_context_preview, build_mention_context_text
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
 from autopatch_j.doctor import DoctorReport, build_doctor_report
-from autopatch_j.edit_drafter import DraftedEdit, build_default_edit_drafter
+from autopatch_j.edit_drafter import (
+    DraftedEdit,
+    RepairingEditDrafter,
+    build_default_edit_drafter,
+)
 from autopatch_j.indexer import IndexEntry, summarize_index
 from autopatch_j.intent import (
     has_apply_intent,
@@ -378,12 +383,11 @@ class AutoPatchCLI:
             return f"Target file does not exist: {file_path}"
 
         file_content = read_text(target)
-        try:
-            drafted = self.edit_drafter.draft_edit(file_path, instruction, file_content)
-        except Exception as exc:
-            return f"Draft edit failed: {exc}"
-
-        return self.store_pending_from_draft(drafted)
+        return self.draft_pending_edit(
+            file_path=file_path,
+            instruction=instruction,
+            file_content=file_content,
+        )
 
     def handle_draft_fix(self, parts: list[str]) -> str:
         if self.repo_root is None:
@@ -446,30 +450,25 @@ class AutoPatchCLI:
     def store_pending_from_draft(
         self,
         drafted: DraftedEdit,
+        preview: EditPreview | None = None,
+        retry_note: str | None = None,
         source_artifact_id: str | None = None,
         source_finding_index: int | None = None,
         source_check_id: str | None = None,
     ) -> str:
-        execution = self.tool_registry.execute(
-            repo_root=self.repo_root,
-            tool_name="preview_search_replace",
-            tool_args={
-                "file_path": drafted.file_path,
-                "old_string": drafted.old_string,
-                "new_string": drafted.new_string,
-            },
-        )
-        preview = self.extract_edit_preview(execution, drafted.file_path)
+        resolved_preview = preview or self.preview_drafted_edit(drafted)
         header = [
             "Drafted edit:",
             f"- file: {drafted.file_path}",
             f"- rationale: {drafted.rationale or '(none)'}",
         ]
+        if retry_note:
+            header.append(f"- retry: {retry_note}")
         body = self.store_pending_from_preview(
             file_path=drafted.file_path,
             old_string=drafted.old_string,
             new_string=drafted.new_string,
-            preview=preview,
+            preview=resolved_preview,
             prefix="Pending edit updated from draft.",
             rationale=drafted.rationale,
             source_artifact_id=source_artifact_id,
@@ -733,11 +732,6 @@ class AutoPatchCLI:
             user_request=user_request,
             mention_context=mention_context,
         )
-        try:
-            drafted = self.edit_drafter.draft_edit(finding.path, instruction, file_content)
-        except Exception as exc:
-            return f"Draft fix failed: {exc}"
-
         header = [
             "Draft fix context:",
             f"- artifact: {artifact_id}",
@@ -746,13 +740,57 @@ class AutoPatchCLI:
             f"- severity: {finding.severity}",
             f"- message: {finding.message}",
         ]
-        body = self.store_pending_from_draft(
-            drafted,
+        body = self.draft_pending_edit(
+            file_path=finding.path,
+            instruction=instruction,
+            file_content=file_content,
             source_artifact_id=artifact_id,
             source_finding_index=finding_position,
             source_check_id=finding.check_id,
         )
         return "\n".join(header + ["", body])
+
+    def draft_pending_edit(
+        self,
+        file_path: str,
+        instruction: str,
+        file_content: str,
+        source_artifact_id: str | None = None,
+        source_finding_index: int | None = None,
+        source_check_id: str | None = None,
+    ) -> str:
+        assert self.edit_drafter is not None
+        try:
+            drafted = self.edit_drafter.draft_edit(file_path, instruction, file_content)
+        except Exception as exc:
+            return f"Draft edit failed: {exc}"
+
+        preview = self.preview_drafted_edit(drafted)
+        retry_note: str | None = None
+        repairing_drafter = self.repairing_edit_drafter()
+        if repairing_drafter is not None and self.should_retry_draft(preview, drafted.file_path):
+            retry_feedback = self.build_draft_retry_feedback(preview, drafted.file_path)
+            retry_note = f"Applied one repair retry after: {retry_feedback}"
+            try:
+                drafted = repairing_drafter.redraft_edit(
+                    file_path=file_path,
+                    instruction=instruction,
+                    file_content=file_content,
+                    previous_edit=drafted,
+                    feedback=retry_feedback,
+                )
+                preview = self.preview_drafted_edit(drafted)
+            except Exception as exc:
+                retry_note = f"{retry_note}\n- retry error: {exc}"
+
+        return self.store_pending_from_draft(
+            drafted,
+            preview=preview,
+            retry_note=retry_note,
+            source_artifact_id=source_artifact_id,
+            source_finding_index=source_finding_index,
+            source_check_id=source_check_id,
+        )
 
     def render_prompt_response(self, parsed: ParsedPrompt, body: str) -> str:
         if not parsed.mentions:
@@ -849,6 +887,40 @@ class AutoPatchCLI:
             diff="",
             validation=self.build_default_preview_validation(),
         )
+
+    def preview_drafted_edit(self, drafted: DraftedEdit) -> EditPreview:
+        execution = self.tool_registry.execute(
+            repo_root=self.repo_root,
+            tool_name="preview_search_replace",
+            tool_args={
+                "file_path": drafted.file_path,
+                "old_string": drafted.old_string,
+                "new_string": drafted.new_string,
+            },
+        )
+        return self.extract_edit_preview(execution, drafted.file_path)
+
+    def repairing_edit_drafter(self) -> RepairingEditDrafter | None:
+        if self.edit_drafter is None or not hasattr(self.edit_drafter, "redraft_edit"):
+            return None
+        return cast(RepairingEditDrafter, self.edit_drafter)
+
+    def should_retry_draft(self, preview: EditPreview, file_path: str) -> bool:
+        if preview.status != "ok":
+            return True
+        return Path(file_path).suffix.lower() == ".java" and preview.validation.status == "error"
+
+    def build_draft_retry_feedback(self, preview: EditPreview, file_path: str) -> str:
+        lines = [
+            f"preview_status: {preview.status}",
+            f"preview_message: {preview.message}",
+        ]
+        if preview.occurrences:
+            lines.append(f"matched_occurrences: {preview.occurrences}")
+        if Path(file_path).suffix.lower() == ".java":
+            lines.append(f"validation_status: {preview.validation.status}")
+            lines.append(f"validation_message: {preview.validation.message}")
+        return "\n".join(lines)
 
     def apply_scan_result(self, result: ScanResult) -> None:
         if result.status == "ok":

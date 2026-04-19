@@ -82,6 +82,7 @@ The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns 
 
 - `/draft-fix` asks the model to draft one minimal search-replace edit for a selected finding
 - `/draft-edit` asks the model to propose one minimal search-replace edit for a target file
+- if the first draft misses the unique match or introduces Java syntax errors, AutoPatch-J feeds the preview result back once and retries one corrected draft
 - `/preview-edit` only previews a `search-replace` edit and stores it as pending
 - `/show-pending` shows the current pending diff
 - prompt `看看 patch` also shows the current pending diff

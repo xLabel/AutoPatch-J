@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
+from typing import Protocol
 
 from autopatch_j.openai_responses import OpenAIResponsesClient
 
@@ -13,6 +14,27 @@ class DraftedEdit:
     old_string: str
     new_string: str
     rationale: str
+
+
+class EditDrafter(Protocol):
+    def draft_edit(self, file_path: str, instruction: str, file_content: str) -> DraftedEdit:
+        """Return one minimal search-replace draft for the target file."""
+
+    @property
+    def label(self) -> str:
+        """A short label for status output."""
+
+
+class RepairingEditDrafter(EditDrafter, Protocol):
+    def redraft_edit(
+        self,
+        file_path: str,
+        instruction: str,
+        file_content: str,
+        previous_edit: DraftedEdit,
+        feedback: str,
+    ) -> DraftedEdit:
+        """Return a corrected draft after preview or syntax feedback."""
 
 
 class OpenAIEditDrafter:
@@ -29,6 +51,25 @@ class OpenAIEditDrafter:
             file_path=file_path,
             instruction=instruction,
             file_content=file_content,
+        )
+        response = self.client.create_response(payload)
+        return parse_edit_draft_response(response, expected_file_path=file_path)
+
+    def redraft_edit(
+        self,
+        file_path: str,
+        instruction: str,
+        file_content: str,
+        previous_edit: DraftedEdit,
+        feedback: str,
+    ) -> DraftedEdit:
+        payload = build_edit_draft_payload(
+            model=self.client.model,
+            file_path=file_path,
+            instruction=instruction,
+            file_content=file_content,
+            previous_edit=previous_edit,
+            feedback=feedback,
         )
         response = self.client.create_response(payload)
         return parse_edit_draft_response(response, expected_file_path=file_path)
@@ -51,6 +92,8 @@ def build_edit_draft_payload(
     file_path: str,
     instruction: str,
     file_content: str,
+    previous_edit: DraftedEdit | None = None,
+    feedback: str | None = None,
 ) -> dict[str, object]:
     return {
         "model": model,
@@ -61,7 +104,13 @@ def build_edit_draft_payload(
                 "content": [
                     {
                         "type": "input_text",
-                        "text": render_edit_draft_prompt(file_path, instruction, file_content),
+                        "text": render_edit_draft_prompt(
+                            file_path=file_path,
+                            instruction=instruction,
+                            file_content=file_content,
+                            previous_edit=previous_edit,
+                            feedback=feedback,
+                        ),
                     }
                 ],
             }
@@ -124,8 +173,14 @@ def extract_response_text(response: dict[str, object]) -> str:
     return "\n".join(texts).strip()
 
 
-def render_edit_draft_prompt(file_path: str, instruction: str, file_content: str) -> str:
-    return (
+def render_edit_draft_prompt(
+    file_path: str,
+    instruction: str,
+    file_content: str,
+    previous_edit: DraftedEdit | None = None,
+    feedback: str | None = None,
+) -> str:
+    prompt = (
         f"Target file:\n{file_path}\n\n"
         f"Instruction:\n{instruction}\n\n"
         "Current file content:\n"
@@ -133,13 +188,37 @@ def render_edit_draft_prompt(file_path: str, instruction: str, file_content: str
         f"{file_content}\n"
         "```\n"
     )
+    if previous_edit is None and not feedback:
+        return prompt
+
+    previous = previous_edit or DraftedEdit(
+        file_path=file_path,
+        old_string="",
+        new_string="",
+        rationale="",
+    )
+    return (
+        f"{prompt}\n"
+        "Previous draft:\n"
+        "```json\n"
+        "{\n"
+        f'  "file_path": {json.dumps(previous.file_path)},\n'
+        f'  "old_string": {json.dumps(previous.old_string)},\n'
+        f'  "new_string": {json.dumps(previous.new_string)},\n'
+        f'  "rationale": {json.dumps(previous.rationale)}\n'
+        "}\n"
+        "```\n\n"
+        "Repair feedback:\n"
+        f"{feedback or '(none)'}\n"
+    )
 
 
 EDIT_DRAFT_INSTRUCTIONS = (
     "You are generating a minimal search-replace edit for AutoPatch-J. "
     "Return exactly one edit for the given target file. "
     "The old_string must match a unique span from the current file content. "
-    "Keep the change as small as possible and avoid introducing new dependencies."
+    "Keep the change as small as possible and avoid introducing new dependencies. "
+    "If previous draft feedback is provided, correct that failed draft instead of repeating it."
 )
 
 

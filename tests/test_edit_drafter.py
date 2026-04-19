@@ -5,10 +5,12 @@ import unittest
 from unittest.mock import patch
 
 from autopatch_j.edit_drafter import (
+    DraftedEdit,
     OpenAIEditDrafter,
     build_default_edit_drafter,
     build_edit_draft_payload,
     parse_edit_draft_response,
+    render_edit_draft_prompt,
 )
 
 
@@ -106,6 +108,25 @@ class EditDrafterTests(unittest.TestCase):
 
         self.assertEqual(drafted.new_string, "safeCall();")
         self.assertEqual(len(client.payloads), 1)
+
+    def test_render_prompt_includes_previous_draft_feedback(self) -> None:
+        prompt = render_edit_draft_prompt(
+            file_path="Demo.java",
+            instruction="guard string compare",
+            file_content="call();",
+            previous_edit=DraftedEdit(
+                file_path="Demo.java",
+                old_string="missing();",
+                new_string="safeCall();",
+                rationale="first try",
+            ),
+            feedback="preview_status: missing",
+        )
+
+        self.assertIn("Previous draft:", prompt)
+        self.assertIn('"old_string": "missing();"', prompt)
+        self.assertIn("Repair feedback:", prompt)
+        self.assertIn("preview_status: missing", prompt)
 
     def test_build_default_edit_drafter_returns_none_without_api_key(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
