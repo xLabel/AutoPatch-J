@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autopatch-j"
+version = "0.1.0"
+description = "Minimal AI coding patch agent for Java repositories"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "weijianguan" }
+]
+dependencies = []
+
+[project.scripts]
+autopatch-j = "autopatch_j.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["autopatch_j*"]

@@ -201,6 +201,9 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# AutoPatch-J local state
+.autopatch/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
