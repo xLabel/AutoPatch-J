@@ -189,15 +189,9 @@ class AutoPatchCLI:
                 )
             )
 
-            if decision.action == "scan":
-                execution = self.run_tool(decision)
-                result = self.extract_scan_result(execution)
-                self.apply_scan_result(result)
-                save_session(self.repo_root, self.session)
-                return f"{preview}\n\n{format_scan_result(result)}"
-
+            response = self.handle_agent_decision(parsed, preview, decision)
             save_session(self.repo_root, self.session)
-            return f"{preview}\n\n{decision.message}"
+            return response
 
         preview = build_context_preview(self.repo_root, parsed)
         decision = self.decision_engine.decide(
@@ -209,15 +203,9 @@ class AutoPatchCLI:
             )
         )
 
-        if decision.action == "scan":
-            execution = self.run_tool(decision)
-            result = self.extract_scan_result(execution)
-            self.apply_scan_result(result)
-            save_session(self.repo_root, self.session)
-            return f"{preview}\n\n{format_scan_result(result)}"
-
+        response = self.handle_agent_decision(parsed, preview, decision)
         save_session(self.repo_root, self.session)
-        return f"{preview}\n\n{decision.message}"
+        return response
 
     def handle_command(self, raw: str) -> str:
         try:
@@ -495,6 +483,67 @@ class AutoPatchCLI:
         if self.session.pending_edit is None:
             return "No pending edit to apply."
         return self.handle_apply_pending()
+
+    def handle_agent_decision(
+        self,
+        parsed: ParsedPrompt,
+        preview: str,
+        decision: AgentDecision,
+    ) -> str:
+        if decision.action == "scan":
+            execution = self.run_tool(decision)
+            result = self.extract_scan_result(execution)
+            self.apply_scan_result(result)
+            return f"{preview}\n\n{format_scan_result(result)}"
+        if decision.action == "draft_patch":
+            body = self.handle_planned_patch(parsed, decision)
+            return self.render_prompt_response(parsed, body)
+        return f"{preview}\n\n{decision.message}"
+
+    def handle_planned_patch(self, parsed: ParsedPrompt, decision: AgentDecision) -> str:
+        if self.session.pending_edit is not None:
+            return (
+                "A pending patch already exists. Apply it first, or describe how "
+                "you want AutoPatch-J to revise the patch."
+            )
+        artifact_id = self.session.active_findings_id
+        if not artifact_id:
+            return (
+                "No active findings are available. Scan the repository first, "
+                "then ask AutoPatch-J to draft a patch."
+            )
+        if self.edit_drafter is None:
+            return (
+                "Edit drafter is disabled. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "to enable patch drafting."
+            )
+
+        result = load_scan_result(self.repo_root, artifact_id)
+        if result is None:
+            return f"Findings artifact not found: {artifact_id}"
+
+        finding_index = extract_planned_finding_index(decision.tool_args)
+        if finding_index is not None:
+            if finding_index < 1 or finding_index > len(result.findings):
+                return (
+                    f"Requested finding index is out of range: {finding_index}. "
+                    f"Available findings: 1..{len(result.findings)}"
+                )
+            selected: tuple[int, object] | str = (finding_index, result.findings[finding_index - 1])
+        else:
+            selected = self.select_patch_finding(parsed, result)
+        if isinstance(selected, str):
+            return selected
+
+        finding_position, _ = selected
+        mention_context = build_mention_context_text(self.repo_root, parsed)
+        return self.draft_fix_for_finding(
+            result,
+            artifact_id,
+            finding_position,
+            user_request=parsed.clean_text,
+            mention_context=mention_context,
+        )
 
     def handle_prompt_review(self, parsed: ParsedPrompt) -> str | None:
         if has_pending_review_intent(parsed.clean_text):
@@ -1001,6 +1050,17 @@ def extract_requested_finding_index(text: str) -> int | None:
     if match is None:
         return None
     return CHINESE_FINDING_INDEX.get(match.group(1))
+
+
+def extract_planned_finding_index(tool_args: dict[str, object]) -> int | None:
+    raw_index = tool_args.get("finding_index")
+    if raw_index is None:
+        return None
+    try:
+        index = int(raw_index)
+    except (TypeError, ValueError):
+        return None
+    return index if index > 0 else None
 
 
 def read_text(path: Path) -> str:

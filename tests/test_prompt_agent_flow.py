@@ -6,8 +6,10 @@ from pathlib import Path
 
 from autopatch_j.artifacts import save_scan_result
 from autopatch_j.cli import AutoPatchCLI
+from autopatch_j.decision_engine import AgentDecision, DecisionContext
 from autopatch_j.edit_drafter import DraftedEdit
 from autopatch_j.project import initialize_project
+from autopatch_j.tools.registry import ToolRegistry
 from autopatch_j.tools.scan_java import Finding, ScanResult
 
 
@@ -36,7 +38,107 @@ class PromptAwareEditDrafter:
         raise AssertionError(f"Unexpected file path for draft_edit: {file_path}")
 
 
+class FixedDecisionEngine:
+    label = "fixed-decision-engine"
+
+    def __init__(self, decision: AgentDecision) -> None:
+        self.decision = decision
+        self.contexts: list[DecisionContext] = []
+
+    def decide(self, context: DecisionContext) -> AgentDecision:
+        self.contexts.append(context)
+        return self.decision
+
+
+class FakeScanner:
+    label = "fake-scanner"
+
+    def scan(self, repo_root: Path, scope: list[str]) -> ScanResult:
+        del repo_root
+        return ScanResult(
+            engine="fake-scanner",
+            scope=list(scope),
+            targets=list(scope),
+            status="ok",
+            message="fake scan completed",
+            summary={"total": 0},
+            findings=[],
+        )
+
+
 class PromptAgentFlowTests(unittest.TestCase):
+    def test_prompt_uses_planner_scan_action_without_keyword_router(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            initialize_project(repo_root)
+
+            cli = AutoPatchCLI(repo_root)
+            cli.decision_engine = FixedDecisionEngine(
+                AgentDecision(
+                    action="scan",
+                    message="scan",
+                    tool_name="scan_java",
+                    tool_args={"scope": ["."]},
+                )
+            )
+            cli.scanner = FakeScanner()
+            cli.tool_registry = ToolRegistry(scanner=cli.scanner)
+
+            output = cli.handle_line("帮我看一下")
+
+            self.assertIn("Scan result:", output)
+            self.assertIn("fake scan completed", output)
+            self.assertIsNotNone(cli.session.active_findings_id)
+
+    def test_prompt_uses_planner_draft_patch_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "Demo.java").write_text(
+                "class Demo { void run() { call(); } }\n",
+                encoding="utf-8",
+            )
+            initialize_project(repo_root)
+            artifact_id = save_scan_result(
+                repo_root,
+                ScanResult(
+                    engine="semgrep",
+                    scope=["Demo.java"],
+                    targets=["Demo.java"],
+                    status="ok",
+                    message="Semgrep completed with 1 finding(s).",
+                    summary={"total": 1, "error": 1},
+                    findings=[
+                        Finding(
+                            check_id="java.lang.correctness.demo",
+                            path="Demo.java",
+                            start_line=1,
+                            end_line=1,
+                            severity="error",
+                            message="Replace risky call",
+                            rule="CWE-000",
+                            snippet="call();",
+                        )
+                    ],
+                ),
+            )
+
+            cli = AutoPatchCLI(repo_root)
+            cli.session.active_findings_id = artifact_id
+            cli.edit_drafter = PromptAwareEditDrafter()
+            cli.decision_engine = FixedDecisionEngine(
+                AgentDecision(
+                    action="draft_patch",
+                    message="draft",
+                    tool_args={"finding_index": 1},
+                )
+            )
+
+            output = cli.handle_line("按刚才的扫描结果处理")
+
+            self.assertIn("Draft fix context:", output)
+            self.assertIn("Pending edit updated from draft.", output)
+            self.assertIsNotNone(cli.session.pending_edit)
+
     def test_prompt_can_draft_fix_from_requested_finding_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)

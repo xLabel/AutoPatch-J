@@ -341,4 +341,6 @@ def should_retry_without_stream_options(
         body = exc.read().decode("utf-8", errors="replace").lower()
     except OSError:
         return True
+    finally:
+        exc.close()
     return "stream_options" in body or "include_usage" in body or "unknown" in body
