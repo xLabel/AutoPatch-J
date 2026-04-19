@@ -78,6 +78,17 @@ Inside the shell:
 
 The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns a clear error and keeps session state intact.
 
+## Demo fixture
+
+- a runnable sample repository lives at `examples/demo-repo`
+- inside that sample repo, use `/scanner semgrep demo-semgrep.yml` so the findings stay deterministic
+- the sample contains two Java findings, which makes it easy to demonstrate:
+  - whole-repo scan
+  - `@mention` narrowing
+  - one-finding patch drafting
+  - pending diff review
+  - apply + ReScan validation
+
 ## Edit review gate
 
 - `/draft-fix` asks the model to draft one minimal search-replace edit for a selected finding

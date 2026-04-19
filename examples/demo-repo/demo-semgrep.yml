@@ -1,0 +1,12 @@
+rules:
+  - id: autopatch-j.demo.nullable-receiver-equals
+    languages:
+      - java
+    severity: ERROR
+    message: Move the string literal to the left side to avoid nullable receiver.equals(...).
+    metadata:
+      cwe: CWE-476
+    patterns:
+      - pattern: $RECV.equals($ARG)
+      - pattern-not: |
+          "...".equals($ARG)
