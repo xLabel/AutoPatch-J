@@ -3,7 +3,7 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
-from autopatch_j.artifacts import save_scan_result
+from autopatch_j.artifacts import load_scan_result, save_scan_result
 from autopatch_j.context import build_context_preview
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, RuleBasedDecisionEngine
 from autopatch_j.indexer import IndexEntry, summarize_index
@@ -15,6 +15,8 @@ from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 
 HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
+  /show-findings [artifact_id]
+                 Show a saved scan artifact, or the current active findings if omitted
   /status        Show current session state
   /help          Show this message
   /quit          Exit the CLI
@@ -105,6 +107,9 @@ class AutoPatchCLI:
         command = parts[0]
         if command == "/help":
             return HELP_TEXT
+        if command == "/show-findings":
+            artifact_id = parts[1] if len(parts) > 1 else None
+            return self.handle_show_findings(artifact_id)
         if command == "/status":
             return self.format_status()
         if command == "/init":
@@ -135,6 +140,20 @@ class AutoPatchCLI:
             f"Current goal: {self.session.current_goal or '(none)'}\n"
             f"Active findings: {self.session.active_findings_id or '(none)'}"
         )
+
+    def handle_show_findings(self, artifact_id: str | None) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+
+        target_artifact = artifact_id or self.session.active_findings_id
+        if not target_artifact:
+            return "No findings artifact is active."
+
+        result = load_scan_result(self.repo_root, target_artifact)
+        if result is None:
+            return f"Findings artifact not found: {target_artifact}"
+
+        return format_scan_result(result)
 
     def resolve_mentions_interactively(self, parsed: ParsedPrompt) -> bool:
         for resolution in parsed.mentions:

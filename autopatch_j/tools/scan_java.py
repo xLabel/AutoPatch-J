@@ -30,6 +30,19 @@ class Finding:
             "snippet": self.snippet,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "Finding":
+        return cls(
+            check_id=str(data.get("check_id", "")),
+            path=str(data.get("path", "")),
+            start_line=int(data.get("start_line", 0)),
+            end_line=int(data.get("end_line", 0)),
+            severity=str(data.get("severity", "")),
+            message=str(data.get("message", "")),
+            rule=str(data.get("rule", "")),
+            snippet=str(data.get("snippet", "")),
+        )
+
 
 @dataclass(slots=True)
 class ScanResult:
@@ -51,6 +64,27 @@ class ScanResult:
             "summary": dict(self.summary),
             "findings": [finding.to_dict() for finding in self.findings],
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "ScanResult":
+        findings_raw = data.get("findings", [])
+        findings = [
+            Finding.from_dict(item)
+            for item in findings_raw
+            if isinstance(item, dict)
+        ]
+        summary = data.get("summary", {})
+        if not isinstance(summary, dict):
+            summary = {}
+        return cls(
+            engine=str(data.get("engine", "")),
+            scope=[str(item) for item in data.get("scope", [])],
+            targets=[str(item) for item in data.get("targets", [])],
+            status=str(data.get("status", "")),
+            message=str(data.get("message", "")),
+            summary={str(key): int(value) for key, value in summary.items()},
+            findings=findings,
+        )
 
 
 def scan_java(repo_root: Path, scope: list[str], config: str = "p/java") -> ScanResult:

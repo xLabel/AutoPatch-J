@@ -15,6 +15,14 @@ def save_scan_result(repo_root: Path, result: ScanResult) -> str:
     return artifact_id
 
 
+def load_scan_result(repo_root: Path, artifact_id: str) -> ScanResult | None:
+    target = app_dir(repo_root) / "findings" / f"{artifact_id}.json"
+    if not target.exists():
+        return None
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    return ScanResult.from_dict(payload)
+
+
 def build_artifact_id(prefix: str) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     return f"{prefix}-{timestamp}"
