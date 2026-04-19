@@ -9,7 +9,9 @@ Current checkpoint:
 - `.autopatch/` local state
 - repository indexing
 - `@mention` path resolution with interactive disambiguation
-- rule-based scan routing
+- prompt-driven scan routing
+- prompt-driven patch drafting from active findings
+- prompt-driven pending patch apply confirmation
 - Semgrep wrapper with normalized findings artifacts
 - pending edit review/apply gate
 - optional OpenAI `Responses API` decision engine
@@ -27,21 +29,24 @@ Inside the shell:
 @src/main/java/com/foo/UserService.java scan this file
 /status
 /show-findings
+修复第1个问题
+@src/main/java/com/foo/UserService.java 生成 patch
 /draft-fix 1
 /draft-edit Demo.java "guard string compare"
 /preview-edit Demo.java "call();" "safeCall();"
 /show-pending
+应用这个patch
 /apply-pending
 /show-validation
 ```
-
-The model/tool loop is not wired yet. This slice establishes the repository and scope primitives that later agent steps will build on.
 
 ## Scan behavior
 
 - if the prompt contains scan intent and includes `@mention`, AutoPatch-J scans that scope
 - if the prompt contains scan intent without `@mention`, AutoPatch-J scans the whole repository
-- current routing is keyword-based; it will be replaced by LLM tool decisions later
+- current fallback routing is keyword-based; if `OPENAI_API_KEY` is present, scan decisions can go through OpenAI
+- after findings are loaded, prompt-level patch requests such as `修复第1个问题` can draft a pending edit
+- if multiple findings are active, AutoPatch-J asks for a finding index or a narrower `@mention`
 
 The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns a clear error and keeps session state intact.
 
@@ -53,6 +58,7 @@ The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns 
 - `/show-pending` shows the current pending diff
 - `/apply-pending` writes the pending edit to disk
 - `/clear-pending` drops the pending edit without changing files
+- prompt `应用这个patch` also applies the current pending edit
 - Java edits require Tree-sitter validation before apply; if `tree_sitter` or `tree_sitter_java` is missing, preview still works but apply is blocked
 - after apply, AutoPatch-J records a post-apply ReScan validation artifact
 - `/show-validation` shows the latest post-apply validation result

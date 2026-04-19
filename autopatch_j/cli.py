@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from autopatch_j.context import build_context_preview
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
 from autopatch_j.edit_drafter import DraftedEdit, build_default_edit_drafter
 from autopatch_j.indexer import IndexEntry, summarize_index
+from autopatch_j.intent import has_apply_intent, has_patch_intent, has_scan_intent
 from autopatch_j.mentions import MentionResolution, ParsedPrompt, parse_prompt
 from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
 from autopatch_j.session import PendingEdit, SessionState, save_session
@@ -43,6 +45,10 @@ HELP_TEXT = """Commands:
 Prompt rules:
   - Use @path or @filename to bind scope, for example:
       @src/main/java/com/foo/UserService.java scan this file
+  - After findings are ready, you can say:
+      修复第1个问题
+      @src/main/java/com/foo/UserService.java 生成 patch
+      应用这个patch
   - Ambiguous mentions will show candidate paths for selection.
 """
 
@@ -99,6 +105,37 @@ class AutoPatchCLI:
             return "Prompt cancelled."
 
         self.update_session_from_prompt(parsed)
+
+        if has_apply_intent(parsed.clean_text):
+            response = self.handle_prompt_apply()
+            save_session(self.repo_root, self.session)
+            return response
+
+        prompt_patch_response = self.handle_prompt_patch(parsed)
+        if prompt_patch_response is not None:
+            save_session(self.repo_root, self.session)
+            return self.render_prompt_response(parsed, prompt_patch_response)
+
+        if has_scan_intent(parsed.clean_text):
+            preview = build_context_preview(self.repo_root, parsed)
+            decision = self.decision_engine.decide(
+                DecisionContext(
+                    user_text=parsed.clean_text,
+                    scoped_paths=self.effective_scope(parsed),
+                    has_active_findings=self.session.active_findings_id is not None,
+                )
+            )
+
+            if decision.action == "tool_call":
+                execution = self.run_tool(decision)
+                result = self.extract_scan_result(execution)
+                self.apply_scan_result(result)
+                save_session(self.repo_root, self.session)
+                return f"{preview}\n\n{format_scan_result(result)}"
+
+            save_session(self.repo_root, self.session)
+            return f"{preview}\n\n{decision.message}"
+
         preview = build_context_preview(self.repo_root, parsed)
         decision = self.decision_engine.decide(
             DecisionContext(
@@ -240,37 +277,7 @@ class AutoPatchCLI:
                 f"Available findings: 1..{len(result.findings)}"
             )
 
-        finding = result.findings[finding_position - 1]
-        target = (self.repo_root / finding.path).resolve()
-        try:
-            target.relative_to(self.repo_root.resolve())
-        except ValueError:
-            return f"Finding path is outside the repository: {finding.path}"
-        if not target.exists() or not target.is_file():
-            return f"Finding file does not exist: {finding.path}"
-
-        file_content = read_text(target)
-        instruction = build_finding_instruction(finding)
-        try:
-            drafted = self.edit_drafter.draft_edit(finding.path, instruction, file_content)
-        except Exception as exc:
-            return f"Draft fix failed: {exc}"
-
-        header = [
-            "Draft fix context:",
-            f"- artifact: {artifact_id}",
-            f"- finding index: {finding_position}",
-            f"- rule: {finding.check_id}",
-            f"- severity: {finding.severity}",
-            f"- message: {finding.message}",
-        ]
-        body = self.store_pending_from_draft(
-            drafted,
-            source_artifact_id=artifact_id,
-            source_finding_index=finding_position,
-            source_check_id=finding.check_id,
-        )
-        return "\n".join(header + ["", body])
+        return self.draft_fix_for_finding(result, artifact_id, finding_position)
 
     def handle_preview_edit(self, parts: list[str]) -> str:
         if self.repo_root is None:
@@ -358,6 +365,7 @@ class AutoPatchCLI:
                 source_finding_index=source_finding_index,
                 source_check_id=source_check_id,
             )
+            self.session.current_goal = "review_pending_edit"
             save_session(self.repo_root, self.session)
             return format_edit_preview(preview, prefix=prefix)
 
@@ -451,6 +459,146 @@ class AutoPatchCLI:
             return f"Validation artifact not found: {target_artifact}"
 
         return format_rescan_validation(result)
+
+    def handle_prompt_apply(self) -> str:
+        if self.session.pending_edit is None:
+            return "No pending edit to apply."
+        return self.handle_apply_pending()
+
+    def handle_prompt_patch(self, parsed: ParsedPrompt) -> str | None:
+        if not has_patch_intent(parsed.clean_text):
+            return None
+        if self.session.pending_edit is not None:
+            return (
+                "A pending edit already exists. Review it with /show-pending, "
+                "apply it with /apply-pending, or drop it with /clear-pending "
+                "before drafting another patch."
+            )
+
+        artifact_id = self.session.active_findings_id
+        if not artifact_id:
+            if has_scan_intent(parsed.clean_text):
+                return None
+            return (
+                "No active findings are available. Scan the repository first, "
+                "then ask AutoPatch-J to draft a patch."
+            )
+        if self.edit_drafter is None:
+            return "Edit drafter is disabled. Set OPENAI_API_KEY to enable patch drafting."
+
+        result = load_scan_result(self.repo_root, artifact_id)
+        if result is None:
+            return f"Findings artifact not found: {artifact_id}"
+
+        selected = self.select_patch_finding(parsed, result)
+        if isinstance(selected, str):
+            return selected
+
+        finding_position, _ = selected
+        return self.draft_fix_for_finding(result, artifact_id, finding_position)
+
+    def select_patch_finding(
+        self,
+        parsed: ParsedPrompt,
+        result: ScanResult,
+    ) -> tuple[int, object] | str:
+        requested_index = extract_requested_finding_index(parsed.clean_text)
+        if requested_index is not None:
+            if requested_index < 1 or requested_index > len(result.findings):
+                return (
+                    f"Requested finding index is out of range: {requested_index}. "
+                    f"Available findings: 1..{len(result.findings)}"
+                )
+            return requested_index, result.findings[requested_index - 1]
+
+        scoped_candidates = [
+            (index, finding)
+            for index, finding in enumerate(result.findings, start=1)
+            if self.finding_matches_prompt_scope(parsed, finding.path)
+        ]
+        if parsed.mentions:
+            if not scoped_candidates:
+                return "No active findings matched the current @mention scope."
+            if len(scoped_candidates) == 1:
+                return scoped_candidates[0]
+            return format_finding_candidates(
+                scoped_candidates,
+                prefix=(
+                    "Multiple active findings matched the current @mention scope. "
+                    "Specify one with a number such as '修复第2个问题'."
+                ),
+            )
+
+        if len(result.findings) == 1:
+            return 1, result.findings[0]
+
+        return format_finding_candidates(
+            list(enumerate(result.findings, start=1)),
+            prefix=(
+                "Multiple active findings are available. Specify one with a number "
+                "such as '修复第2个问题', or narrow the scope with @mention."
+            ),
+        )
+
+    def finding_matches_prompt_scope(self, parsed: ParsedPrompt, finding_path: str) -> bool:
+        if not parsed.mentions:
+            return True
+
+        for resolution in parsed.mentions:
+            entry = resolution.selected
+            if entry is None:
+                continue
+            if entry.kind == "file" and finding_path == entry.path:
+                return True
+            if entry.kind == "dir":
+                prefix = f"{entry.path.rstrip('/')}/"
+                if finding_path == entry.path or finding_path.startswith(prefix):
+                    return True
+        return False
+
+    def draft_fix_for_finding(
+        self,
+        result: ScanResult,
+        artifact_id: str,
+        finding_position: int,
+    ) -> str:
+        finding = result.findings[finding_position - 1]
+        target = (self.repo_root / finding.path).resolve()
+        try:
+            target.relative_to(self.repo_root.resolve())
+        except ValueError:
+            return f"Finding path is outside the repository: {finding.path}"
+        if not target.exists() or not target.is_file():
+            return f"Finding file does not exist: {finding.path}"
+
+        file_content = read_text(target)
+        instruction = build_finding_instruction(finding)
+        try:
+            drafted = self.edit_drafter.draft_edit(finding.path, instruction, file_content)
+        except Exception as exc:
+            return f"Draft fix failed: {exc}"
+
+        header = [
+            "Draft fix context:",
+            f"- artifact: {artifact_id}",
+            f"- finding index: {finding_position}",
+            f"- rule: {finding.check_id}",
+            f"- severity: {finding.severity}",
+            f"- message: {finding.message}",
+        ]
+        body = self.store_pending_from_draft(
+            drafted,
+            source_artifact_id=artifact_id,
+            source_finding_index=finding_position,
+            source_check_id=finding.check_id,
+        )
+        return "\n".join(header + ["", body])
+
+    def render_prompt_response(self, parsed: ParsedPrompt, body: str) -> str:
+        if not parsed.mentions:
+            return body
+        preview = build_context_preview(self.repo_root, parsed)
+        return f"{preview}\n\n{body}"
 
     def resolve_mentions_interactively(self, parsed: ParsedPrompt) -> bool:
         for resolution in parsed.mentions:
@@ -609,6 +757,9 @@ def format_scan_result(result: ScanResult) -> str:
             f"  {idx}. {finding.path}:{finding.start_line} [{finding.severity}] "
             f"{finding.check_id} - {finding.message}"
         )
+    header.append("Next:")
+    header.append("  - Say '修复第1个问题' to draft a patch for one finding.")
+    header.append("  - Say '@path 生成 patch' to narrow the draft to one file.")
     return "\n".join(header)
 
 
@@ -640,6 +791,57 @@ def format_rescan_validation(result: RescanValidationResult) -> str:
         f"- rescan artifact: {result.rescan_artifact_id or '(none)'}",
     ]
     return "\n".join(lines)
+
+
+def format_finding_candidates(
+    candidates: list[tuple[int, object]],
+    prefix: str,
+    max_items: int = 10,
+) -> str:
+    lines = [prefix, "Candidates:"]
+    for index, finding in candidates[:max_items]:
+        lines.append(
+            f"  {index}. {getattr(finding, 'path', '')}:{getattr(finding, 'start_line', 0)} "
+            f"[{getattr(finding, 'severity', '')}] {getattr(finding, 'check_id', '')} "
+            f"- {getattr(finding, 'message', '')}"
+        )
+    if len(candidates) > max_items:
+        lines.append(f"  ... and {len(candidates) - max_items} more")
+    return "\n".join(lines)
+
+
+FINDING_INDEX_PATTERNS = (
+    re.compile(r"第\s*(\d+)\s*个"),
+    re.compile(r"\b(\d+)\b"),
+)
+
+CHINESE_FINDING_INDEX = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+    "十": 10,
+}
+
+CHINESE_FINDING_INDEX_PATTERN = re.compile(r"第\s*([一二两三四五六七八九十])\s*个")
+
+
+def extract_requested_finding_index(text: str) -> int | None:
+    for pattern in FINDING_INDEX_PATTERNS:
+        match = pattern.search(text)
+        if match is not None:
+            return int(match.group(1))
+
+    match = CHINESE_FINDING_INDEX_PATTERN.search(text)
+    if match is None:
+        return None
+    return CHINESE_FINDING_INDEX.get(match.group(1))
 
 
 def read_text(path: Path) -> str:
