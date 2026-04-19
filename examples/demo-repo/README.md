@@ -3,8 +3,8 @@ Demo fixture for AutoPatch-J.
 Suggested shell session:
 
 ```text
-/init .
-/scanner semgrep demo-semgrep.yml
+/init
+/tools
 扫描整个仓库的问题
 列出问题
 @src/main/java/demo/UserService.java 生成 patch

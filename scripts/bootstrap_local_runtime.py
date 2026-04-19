@@ -109,10 +109,9 @@ def main(argv: list[str] | None = None) -> int:
         print("- semgrep: skipped by --skip-semgrep")
     else:
         print(f"- semgrep bin: {semgrep_bin}")
-        print("- next scanner command:")
-        print(f"  /scanner semgrep p/java --bin {semgrep_bin.relative_to(repo_root)}")
-        print("- demo scanner command:")
-        print(f"  /scanner semgrep examples/demo-repo/demo-semgrep.yml --bin {semgrep_bin.relative_to(repo_root)}")
+        print("- scanner lookup:")
+        print(f"  AutoPatch-J will detect {semgrep_bin.relative_to(repo_root)} automatically.")
+        print("  Run /tools in the CLI to confirm scanner readiness.")
     return 0
 
 

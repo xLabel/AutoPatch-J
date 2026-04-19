@@ -1,0 +1,47 @@
+rules:
+  - id: autopatch-j.java.security.runtime-exec
+    languages:
+      - java
+    severity: WARNING
+    message: Avoid passing untrusted input to Runtime.exec; prefer a constrained ProcessBuilder or a fixed command allowlist.
+    pattern: Runtime.getRuntime().exec($CMD)
+    metadata:
+      cwe: "CWE-78"
+      category: security
+
+  - id: autopatch-j.java.security.hardcoded-secret
+    languages:
+      - java
+    severity: ERROR
+    message: Hardcoded secret-like string detected; move it to a managed secret source.
+    patterns:
+      - pattern-either:
+          - pattern: String $KEY = "$VALUE";
+          - pattern: private static final String $KEY = "$VALUE";
+          - pattern: public static final String $KEY = "$VALUE";
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(password|passwd|secret|token|api[_-]?key|access[_-]?key).*
+    metadata:
+      cwe: "CWE-798"
+      category: security
+
+  - id: autopatch-j.java.correctness.nullable-equals
+    languages:
+      - java
+    severity: WARNING
+    message: Calling equals on a possibly nullable receiver can throw NullPointerException; prefer constant-first equals or an explicit null guard.
+    pattern: $VALUE.equals($EXPECTED)
+    metadata:
+      cwe: "CWE-476"
+      category: correctness
+
+  - id: autopatch-j.java.security.weak-md5
+    languages:
+      - java
+    severity: WARNING
+    message: MD5 is not suitable for security-sensitive hashing; use a stronger algorithm when security matters.
+    pattern: MessageDigest.getInstance("MD5")
+    metadata:
+      cwe: "CWE-327"
+      category: security

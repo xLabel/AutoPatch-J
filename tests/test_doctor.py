@@ -15,14 +15,16 @@ from autopatch_j.scanners import SemgrepScanner
 class DoctorReportTests(unittest.TestCase):
     def test_doctor_report_explains_missing_runtime_dependencies(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            with patch("autopatch_j.doctor.shutil.which", return_value=None):
-                with patch("autopatch_j.doctor.importlib.util.find_spec", return_value=None):
-                    report = build_doctor_report(
-                        repo_root=None,
-                        scanner=SemgrepScanner(),
-                        decision_engine_label="rule-based",
-                        edit_drafter_label=None,
-                    )
+            with patch("autopatch_j.scanners.semgrep.shutil.which", return_value=None):
+                with patch("autopatch_j.scanners.semgrep.resolve_repo_runtime_binary", return_value=None):
+                    with patch("autopatch_j.scanners.semgrep.resolve_repo_venv_binary", return_value=None):
+                        with patch("autopatch_j.doctor.importlib.util.find_spec", return_value=None):
+                            report = build_doctor_report(
+                                repo_root=None,
+                                scanner=SemgrepScanner(),
+                                decision_engine_label="rule-based",
+                                edit_drafter_label=None,
+                            )
 
         checks = {check.name: check for check in report.checks}
         self.assertEqual(checks["project"].status, "unavailable")
@@ -40,7 +42,7 @@ class DoctorReportTests(unittest.TestCase):
             return None
 
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}, clear=True):
-            with patch("autopatch_j.doctor.shutil.which", return_value="/usr/local/bin/semgrep"):
+            with patch("autopatch_j.scanners.semgrep.shutil.which", return_value="/usr/local/bin/semgrep"):
                 with patch("autopatch_j.doctor.importlib.util.find_spec", side_effect=fake_find_spec):
                     report = build_doctor_report(
                         repo_root=Path("/tmp/demo"),
@@ -67,7 +69,7 @@ class DoctorReportTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
-            binary = repo_root / "tools" / "semgrep"
+            binary = repo_root / "runtime" / "semgrep" / "bin" / "test-platform" / "semgrep"
             binary.parent.mkdir(parents=True, exist_ok=True)
             binary.write_text("#!/bin/sh\n", encoding="utf-8")
             binary.chmod(0o755)
@@ -76,7 +78,7 @@ class DoctorReportTests(unittest.TestCase):
                 with patch("autopatch_j.doctor.importlib.util.find_spec", side_effect=fake_find_spec):
                     report = build_doctor_report(
                         repo_root=repo_root,
-                        scanner=SemgrepScanner(binary_path="tools/semgrep"),
+                        scanner=SemgrepScanner(binary_path=str(binary.relative_to(repo_root))),
                         decision_engine_label="rule-based",
                         edit_drafter_label=None,
                     )
@@ -84,7 +86,7 @@ class DoctorReportTests(unittest.TestCase):
         checks = {check.name: check for check in report.checks}
         self.assertEqual(checks["scanner"].status, "ok")
         self.assertIn("configured binary", checks["scanner"].message)
-        self.assertIn("tools/semgrep", checks["scanner"].message)
+        self.assertIn("runtime/semgrep", checks["scanner"].message)
 
     def test_status_command_includes_tool_readiness(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -93,9 +95,11 @@ class DoctorReportTests(unittest.TestCase):
             cli = AutoPatchCLI(repo_root)
 
             with patch.dict(os.environ, {}, clear=True):
-                with patch("autopatch_j.doctor.shutil.which", return_value=None):
-                    with patch("autopatch_j.doctor.importlib.util.find_spec", return_value=None):
-                        output = cli.handle_command("/status")
+                with patch("autopatch_j.scanners.semgrep.shutil.which", return_value=None):
+                    with patch("autopatch_j.scanners.semgrep.resolve_repo_runtime_binary", return_value=None):
+                        with patch("autopatch_j.scanners.semgrep.resolve_repo_venv_binary", return_value=None):
+                            with patch("autopatch_j.doctor.importlib.util.find_spec", return_value=None):
+                                output = cli.handle_command("/status")
 
         self.assertIn("AutoPatch-J status:", output)
         self.assertIn("Tool readiness:", output)

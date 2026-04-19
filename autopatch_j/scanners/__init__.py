@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from autopatch_j.scanners.model import Finding, JavaScanner, ScanResult
-from autopatch_j.scanners.semgrep import SemgrepScanner
+from autopatch_j.scanners.semgrep import SemgrepScanner, default_semgrep_config
 
 
 class UnsupportedJavaScanner:
@@ -39,7 +39,7 @@ def build_java_scanner(
 ) -> JavaScanner:
     configured_name = (scanner_name or os.getenv("AUTOPATCH_SCANNER", "semgrep")).strip().lower() or "semgrep"
     if configured_name == "semgrep":
-        config = semgrep_config or os.getenv("AUTOPATCH_SEMGREP_CONFIG", "p/java")
+        config = semgrep_config or os.getenv("AUTOPATCH_SEMGREP_CONFIG") or default_semgrep_config()
         binary_path = semgrep_bin or os.getenv("AUTOPATCH_SEMGREP_BIN")
         return SemgrepScanner(config=config, binary_path=binary_path)
     return UnsupportedJavaScanner(configured_name)

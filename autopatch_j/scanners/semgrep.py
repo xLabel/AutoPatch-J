@@ -2,21 +2,33 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
+import sys
+from importlib.resources import files
 from pathlib import Path
 
 from autopatch_j.scanners.model import Finding, ScanResult
 
+DEFAULT_SEMGREP_RULE_RESOURCE = "rules/semgrep/java.yml"
+DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
+
 
 class SemgrepScanner:
-    def __init__(self, config: str = "p/java", binary_path: str | None = None) -> None:
-        self.config = config
+    def __init__(self, config: str | None = None, binary_path: str | None = None) -> None:
+        self.config = config or default_semgrep_config()
         self.binary_path = binary_path
 
     @property
     def label(self) -> str:
-        return f"semgrep:{self.config}"
+        return f"semgrep:{self.config_label}"
+
+    @property
+    def config_label(self) -> str:
+        if is_default_semgrep_config(self.config):
+            return DEFAULT_SEMGREP_CONFIG_LABEL
+        return self.config
 
     def scan(self, repo_root: Path, scope: list[str]) -> ScanResult:
         targets = select_targets(repo_root, scope)
@@ -61,9 +73,28 @@ class SemgrepScanner:
         return normalize_semgrep_payload(payload, scope=list(scope), targets=targets)
 
     def resolve_binary(self, repo_root: Path | None = None) -> str | None:
+        resolved = self.resolve_binary_with_source(repo_root)
+        return resolved[0] if resolved is not None else None
+
+    def resolve_binary_with_source(self, repo_root: Path | None = None) -> tuple[str, str] | None:
         if self.binary_path:
-            return resolve_explicit_binary(self.binary_path, repo_root)
-        return shutil.which("semgrep")
+            resolved = resolve_explicit_binary(self.binary_path, repo_root)
+            if resolved is not None:
+                return resolved, "configured binary"
+            return None
+
+        runtime_binary = resolve_repo_runtime_binary()
+        if runtime_binary is not None:
+            return runtime_binary, "local runtime"
+
+        venv_binary = resolve_repo_venv_binary()
+        if venv_binary is not None:
+            return venv_binary, "project virtualenv"
+
+        path_binary = shutil.which("semgrep")
+        if path_binary:
+            return path_binary, "PATH"
+        return None
 
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
         if self.binary_path:
@@ -98,6 +129,61 @@ def resolve_explicit_binary(binary_path: str, repo_root: Path | None = None) -> 
     if not os.access(resolved, os.X_OK):
         return None
     return str(resolved)
+
+
+def default_semgrep_config() -> str:
+    return str(files("autopatch_j").joinpath(DEFAULT_SEMGREP_RULE_RESOURCE))
+
+
+def is_default_semgrep_config(config: str) -> bool:
+    try:
+        return Path(config).resolve() == Path(default_semgrep_config()).resolve()
+    except OSError:
+        return False
+
+
+def resolve_repo_runtime_binary() -> str | None:
+    candidate = repo_root_from_module() / "runtime" / "semgrep" / "bin" / platform_tag() / semgrep_binary_name()
+    return resolve_existing_executable(candidate)
+
+
+def resolve_repo_venv_binary() -> str | None:
+    bin_dir = "Scripts" if os.name == "nt" else "bin"
+    candidate = repo_root_from_module() / ".venv" / bin_dir / semgrep_binary_name()
+    return resolve_existing_executable(candidate)
+
+
+def resolve_existing_executable(candidate: Path) -> str | None:
+    try:
+        resolved = candidate.expanduser().resolve()
+    except OSError:
+        return None
+    if not resolved.exists() or not resolved.is_file():
+        return None
+    if not os.access(resolved, os.X_OK):
+        return None
+    return str(resolved)
+
+
+def repo_root_from_module() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def semgrep_binary_name() -> str:
+    return "semgrep.exe" if os.name == "nt" else "semgrep"
+
+
+def platform_tag() -> str:
+    system = sys.platform
+    machine = platform.machine().lower()
+    arch = "arm64" if machine in {"arm64", "aarch64"} else "x64"
+    if system.startswith("darwin"):
+        return f"darwin-{arch}"
+    if system.startswith("linux"):
+        return f"linux-{arch}"
+    if system.startswith("win"):
+        return f"windows-{arch}"
+    return f"{system}-{arch}"
 
 
 def build_semgrep_subprocess_env(repo_root: Path) -> dict[str, str]:
@@ -168,7 +254,7 @@ def normalize_semgrep_payload(
         severity_counts[severity] = severity_counts.get(severity, 0) + 1
         findings.append(
             Finding(
-                check_id=str(item.get("check_id", "")),
+                check_id=normalize_check_id(str(item.get("check_id", ""))),
                 path=str(item.get("path", "")),
                 start_line=int(_nested_number(item, "start", "line")),
                 end_line=int(_nested_number(item, "end", "line")),
@@ -203,6 +289,14 @@ def extract_rule(extra: dict[str, object]) -> str:
     if owasp:
         return str(owasp)
     return ""
+
+
+def normalize_check_id(raw_check_id: str) -> str:
+    for marker in ("autopatch-j.",):
+        marker_index = raw_check_id.find(marker)
+        if marker_index >= 0:
+            return raw_check_id[marker_index:]
+    return raw_check_id
 
 
 def _nested_number(payload: dict[str, object], *keys: str) -> int:

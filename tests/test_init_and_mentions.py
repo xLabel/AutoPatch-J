@@ -254,6 +254,36 @@ class ScanToolTests(unittest.TestCase):
         self.assertEqual(result.findings[0].severity, "error")
         self.assertEqual(result.findings[0].rule, "CWE-476")
 
+    def test_normalize_semgrep_payload_strips_local_rule_path_prefix(self) -> None:
+        payload = {
+            "results": [
+                {
+                    "check_id": (
+                        "Users.example.AutoPatch-J.autopatch_j.rules.semgrep."
+                        "autopatch-j.java.correctness.nullable-equals"
+                    ),
+                    "path": "src/main/java/demo/App.java",
+                    "start": {"line": 12},
+                    "end": {"line": 12},
+                    "extra": {
+                        "severity": "WARNING",
+                        "message": "Avoid nullable receiver.equals(...)",
+                    },
+                }
+            ]
+        }
+
+        result = normalize_semgrep_payload(
+            payload,
+            scope=["src/main/java/demo/App.java"],
+            targets=["src/main/java/demo/App.java"],
+        )
+
+        self.assertEqual(
+            result.findings[0].check_id,
+            "autopatch-j.java.correctness.nullable-equals",
+        )
+
 
 class DecisionEngineTests(unittest.TestCase):
     def test_rule_engine_calls_scan_tool_for_scan_intent(self) -> None:

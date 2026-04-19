@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import os
-import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -60,22 +59,18 @@ def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> DoctorC
                 "Unsupported Java scanner configured. "
                 f"Current scanner: {scanner.label}. Supported scanner: semgrep."
             ),
-        )
+    )
 
     if isinstance(scanner, SemgrepScanner):
-        semgrep_path = scanner.resolve_binary(repo_root)
-        if semgrep_path:
-            source = (
-                f"configured binary at {semgrep_path}"
-                if scanner.binary_path
-                else f"PATH at {semgrep_path}"
-            )
+        resolved = scanner.resolve_binary_with_source(repo_root)
+        if resolved:
+            semgrep_path, source = resolved
             return DoctorCheck(
                 name="scanner",
                 status="ok",
                 message=(
                     f"Scanner ready: {scanner.label}. "
-                    f"Using semgrep binary from {source}."
+                    f"Using semgrep binary from {source} at {semgrep_path}."
                 ),
             )
         if scanner.binary_path:
