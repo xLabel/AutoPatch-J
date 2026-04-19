@@ -5,8 +5,8 @@ from pathlib import Path
 
 from autopatch_j.artifacts import save_scan_result
 from autopatch_j.context import build_context_preview
+from autopatch_j.decision_engine import AgentDecision, DecisionContext, RuleBasedDecisionEngine
 from autopatch_j.indexer import IndexEntry, summarize_index
-from autopatch_j.intent import has_scan_intent
 from autopatch_j.mentions import MentionResolution, ParsedPrompt, parse_prompt
 from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
 from autopatch_j.session import SessionState, save_session
@@ -31,6 +31,7 @@ class AutoPatchCLI:
         self.repo_root = discover_repo_root(self.cwd)
         self.session = SessionState()
         self.index: list[IndexEntry] = []
+        self.decision_engine = RuleBasedDecisionEngine()
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
             if self.session.repo_root is None:
@@ -75,19 +76,22 @@ class AutoPatchCLI:
 
         self.update_session_from_prompt(parsed)
         preview = build_context_preview(self.repo_root, parsed)
-        if has_scan_intent(parsed.clean_text):
-            scan_scope = self.effective_scan_scope(parsed)
-            result = scan_java(self.repo_root, scan_scope)
+        decision = self.decision_engine.decide(
+            DecisionContext(
+                user_text=parsed.clean_text,
+                scoped_paths=self.effective_scope(parsed),
+                has_active_findings=self.session.active_findings_id is not None,
+            )
+        )
+
+        if decision.action == "tool_call":
+            result = self.run_tool(decision)
             self.apply_scan_result(result)
             save_session(self.repo_root, self.session)
             return f"{preview}\n\n{format_scan_result(result)}"
 
         save_session(self.repo_root, self.session)
-        return (
-            f"{preview}\n\n"
-            "Scan tool is now wired through a rule-based router.\n"
-            "LLM-driven tool decisions will replace this router in the next slice."
-        )
+        return f"{preview}\n\n{decision.message}"
 
     def handle_command(self, raw: str) -> str:
         try:
@@ -178,15 +182,29 @@ class AutoPatchCLI:
             self.session.recent_mentions = deduped[:10]
         self.session.current_goal = parsed.clean_text or self.session.current_goal
 
-    def effective_scan_scope(self, parsed: ParsedPrompt) -> list[str]:
-        scoped_paths = [
+    def effective_scope(self, parsed: ParsedPrompt) -> list[str]:
+        return [
             resolution.selected.path
             for resolution in parsed.mentions
             if resolution.selected is not None
         ]
-        if scoped_paths:
-            return scoped_paths
-        return ["."]
+
+    def run_tool(self, decision: AgentDecision) -> ScanResult:
+        if decision.tool_name != "scan_java":
+            return ScanResult(
+                engine="autopatch-j",
+                scope=[],
+                targets=[],
+                status="error",
+                message=f"Unsupported tool: {decision.tool_name}",
+                summary={"total": 0},
+                findings=[],
+            )
+
+        scope = decision.tool_args.get("scope", [])
+        if not isinstance(scope, list):
+            scope = []
+        return scan_java(self.repo_root, [str(item) for item in scope])
 
     def apply_scan_result(self, result: ScanResult) -> None:
         if result.status == "ok":
