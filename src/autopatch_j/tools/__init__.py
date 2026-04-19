@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from autopatch_j.scanners import JavaScanner
 from autopatch_j.tools.base import Tool, ToolExecutionResult
-from autopatch_j.tools.edit_tool import ApplySearchReplaceTool, PreviewSearchReplaceTool
+from autopatch_j.tools.edit import ApplySearchReplaceTool, PreviewSearchReplaceTool
 from autopatch_j.tools.registry import ToolRegistry
 from autopatch_j.tools.scan_java import ScanJavaTool
 

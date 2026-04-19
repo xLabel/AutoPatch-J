@@ -5,7 +5,7 @@ from pathlib import Path
 
 from autopatch_j.scanners import Finding, JavaScanner, ScanResult, build_java_scanner
 from autopatch_j.scanners.semgrep import normalize_semgrep_payload, select_targets
-from autopatch_j.tools.base import Tool
+from autopatch_j.tools.base import Tool, ToolExecutionResult
 
 
 @dataclass(slots=True)
@@ -26,8 +26,14 @@ class ScanJavaTool(Tool):
         "required": ["scope"],
     }
 
-    def execute(self, repo_root: Path, scope: list[str] | None = None) -> ScanResult:
-        return scan_java(repo_root, scope or ["."], scanner=self.scanner)
+    def execute(self, repo_root: Path, scope: list[str] | None = None) -> ToolExecutionResult:
+        result = scan_java(repo_root, scope or ["."], scanner=self.scanner)
+        return ToolExecutionResult(
+            tool_name=self.name,
+            status=result.status,
+            message=result.message,
+            payload=result,
+        )
 
 
 def scan_java(

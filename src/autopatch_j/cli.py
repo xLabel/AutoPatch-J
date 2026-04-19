@@ -42,7 +42,7 @@ from autopatch_j.scanners import ScanResult, build_java_scanner
 from autopatch_j.scanners.catalog import ScannerCatalogEntry, build_scanner_catalog
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools import ToolExecutionResult, build_tool_registry
-from autopatch_j.tools.edit_tool import EditPreview
+from autopatch_j.tools.edit import EditPreview
 from autopatch_j.validators import (
     RescanValidationResult,
     SyntaxValidationResult,
