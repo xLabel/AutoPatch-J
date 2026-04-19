@@ -40,7 +40,7 @@ class ReadinessReportTests(unittest.TestCase):
                 return fake_spec
             return None
 
-        with patch.dict(os.environ, {"AUTOPATCH_LLM_API_KEY": "test-key"}, clear=True):
+        with patch.dict(os.environ, {"LLM_API_KEY": "test-key"}, clear=True):
             with patch(
                 "autopatch_j.scanners.semgrep.resolve_repo_runtime_binary",
                 return_value="/repo/runtime/semgrep/bin/test/semgrep",
@@ -49,8 +49,8 @@ class ReadinessReportTests(unittest.TestCase):
                     report = build_readiness_report(
                         repo_root=Path("/tmp/demo"),
                         scanner=SemgrepScanner(),
-                        planner_label="openai-compatible:deepseek-chat",
-                        edit_drafter_label="openai-compatible:deepseek-chat",
+                        planner_label="chat-completions:deepseek-chat",
+                        edit_drafter_label="chat-completions:deepseek-chat",
                     )
 
         checks = {check.name: check for check in report.checks}
@@ -103,7 +103,7 @@ class ReadinessReportTests(unittest.TestCase):
                         output = cli.handle_command("/status")
 
         self.assertIn("AutoPatch-J status:", output)
-        self.assertIn("Tool readiness:", output)
+        self.assertIn("Runtime readiness:", output)
         self.assertIn(f"- project: {repo_root.resolve()}", output)
         self.assertIn("- scanner: error", output)
         self.assertIn("runtime/semgrep/bin", output)

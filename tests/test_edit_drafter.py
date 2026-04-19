@@ -19,7 +19,7 @@ class FakeDraftClient:
     def __init__(self, response: LLMResponse) -> None:
         self.response = response
         self.model = "deepseek-chat"
-        self.label = "openai-compatible:deepseek-chat"
+        self.label = "chat-completions:deepseek-chat"
         self.calls: list[dict[str, object]] = []
 
     def complete(self, **payload: object) -> LLMResponse:

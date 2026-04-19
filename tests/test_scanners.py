@@ -95,7 +95,7 @@ class ScannerFactoryTests(unittest.TestCase):
         self.assertEqual(resolved, (str(binary.resolve()), "local runtime"))
 
     def test_unsupported_scanner_returns_controlled_error(self) -> None:
-        with patch.dict(os.environ, {"AUTOPATCH_SCANNER": "spotbugs"}, clear=True):
+        with patch.dict(os.environ, {"SCANNER": "spotbugs"}, clear=True):
             scanner = build_default_java_scanner()
 
         with tempfile.TemporaryDirectory() as tmpdir:

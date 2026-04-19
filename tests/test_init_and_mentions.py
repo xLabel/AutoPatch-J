@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from autopatch_j.cli import AutoPatchCLI
-from autopatch_j.intent import has_scan_intent
 from autopatch_j.mentions import build_mention_completions, parse_prompt
 from autopatch_j.project import discover_repo_root, initialize_project, refresh_project_index
 from autopatch_j.session import APP_DIR_NAME, SessionState, load_session
@@ -205,13 +204,6 @@ class SessionTests(unittest.TestCase):
             session = load_session(repo_root)
             self.assertIsInstance(session, SessionState)
             self.assertEqual(session.repo_root, str(repo_root.resolve()))
-
-
-class IntentTests(unittest.TestCase):
-    def test_has_scan_intent_detects_cn_and_en(self) -> None:
-        self.assertTrue(has_scan_intent("scan this repository"))
-        self.assertTrue(has_scan_intent("扫描整个仓库的问题"))
-        self.assertFalse(has_scan_intent("explain this class"))
 
 
 class ScanToolTests(unittest.TestCase):

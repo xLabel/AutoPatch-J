@@ -22,7 +22,7 @@ class FakeClient:
         self.response = response or LLMResponse()
         self.error = error
         self.model = "deepseek-chat"
-        self.label = "openai-compatible:deepseek-chat"
+        self.label = "chat-completions:deepseek-chat"
         self.calls: list[dict[str, object]] = []
 
     def complete(self, **payload: object) -> LLMResponse:
@@ -82,12 +82,12 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(decision.tool_name, "scan_java")
         self.assertEqual(decision.tool_args["scope"], ["src/main/java/demo/App.java"])
 
-    def test_parse_response_returns_draft_patch_action(self) -> None:
+    def test_parse_response_returns_patch_action(self) -> None:
         decision = parse_llm_decision_response(
             LLMResponse(
                 tool_calls=[
                     LLMToolCall(
-                        name="draft_patch",
+                        name="patch",
                         arguments={"finding_index": 2},
                     )
                 ]
@@ -99,7 +99,7 @@ class PlannerTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(decision.action, "draft_patch")
+        self.assertEqual(decision.action, "patch")
         self.assertEqual(decision.tool_args["finding_index"], 2)
 
     def test_parse_response_returns_text_message(self) -> None:
@@ -112,7 +112,7 @@ class PlannerTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(decision.action, "respond")
+        self.assertEqual(decision.action, "answer")
         self.assertEqual(decision.message, "No scan is needed.")
 
     def test_engine_calls_client_with_streaming_tools(self) -> None:
@@ -146,7 +146,7 @@ class PlannerTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(decision.action, "respond")
+        self.assertEqual(decision.action, "answer")
         self.assertIn("LLM planner failed", decision.message)
 
     def test_build_default_engine_is_unavailable_without_api_key(self) -> None:

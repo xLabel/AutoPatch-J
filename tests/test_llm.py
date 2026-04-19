@@ -8,7 +8,7 @@ from urllib import error
 from unittest.mock import patch
 
 from autopatch_j.llm import (
-    OpenAICompatibleChatClient,
+    ChatCompletionClient,
     build_default_llm_client,
     parse_chat_completion_response,
     parse_chat_completion_stream,
@@ -33,9 +33,9 @@ class FakeHTTPResponse:
         return iter([line.encode("utf-8") for line in self.lines])
 
 
-class OpenAICompatibleChatClientTests(unittest.TestCase):
+class ChatCompletionClientTests(unittest.TestCase):
     def test_build_payload_adds_stream_usage_when_streaming(self) -> None:
-        client = OpenAICompatibleChatClient(
+        client = ChatCompletionClient(
             api_key="key",
             model="deepseek-chat",
             base_url="https://llm.example/v1",
@@ -107,7 +107,7 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
         self.assertEqual(result.usage, {"total_tokens": 7})
 
     def test_client_retries_without_stream_options_when_provider_rejects_it(self) -> None:
-        client = OpenAICompatibleChatClient(
+        client = ChatCompletionClient(
             api_key="key",
             model="deepseek-chat",
             base_url="https://llm.example/v1",
@@ -140,9 +140,9 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "AUTOPATCH_LLM_API_KEY": "key",
-                "AUTOPATCH_LLM_MODEL": "deepseek-chat",
-                "AUTOPATCH_LLM_BASE_URL": "https://llm.example/v1",
+                "LLM_API_KEY": "key",
+                "LLM_MODEL": "deepseek-chat",
+                "LLM_BASE_URL": "https://llm.example/v1",
             },
             clear=True,
         ):
@@ -150,7 +150,7 @@ class OpenAICompatibleChatClientTests(unittest.TestCase):
 
         self.assertIsNotNone(client)
         assert client is not None
-        self.assertEqual(client.label, "openai-compatible:deepseek-chat")
+        self.assertEqual(client.label, "chat-completions:deepseek-chat")
         self.assertEqual(client.base_url, "https://llm.example/v1")
 
 

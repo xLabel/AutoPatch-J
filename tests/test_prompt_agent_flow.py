@@ -90,7 +90,7 @@ class PromptAgentFlowTests(unittest.TestCase):
             self.assertIn("fake scan completed", output)
             self.assertIsNotNone(cli.session.active_findings_id)
 
-    def test_prompt_uses_planner_draft_patch_action(self) -> None:
+    def test_prompt_uses_planner_patch_action(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             (repo_root / "Demo.java").write_text(
@@ -127,7 +127,7 @@ class PromptAgentFlowTests(unittest.TestCase):
             cli.edit_drafter = PromptAwareEditDrafter()
             cli.planner = FixedPlanner(
                 AgentDecision(
-                    action="draft_patch",
+                    action="patch",
                     message="draft",
                     tool_args={"finding_index": 1},
                 )
@@ -311,51 +311,13 @@ class PromptAgentFlowTests(unittest.TestCase):
             cli = AutoPatchCLI(repo_root)
             cli.handle_preview_edit(["/preview-edit", "notes.txt", "call();", "safeCall();"])
 
-            output = cli.handle_line("应用这个patch")
+            output = cli.handle_line("apply")
 
             self.assertIn("Pending edit applied.", output)
             self.assertIsNone(cli.session.pending_edit)
             self.assertIn("safeCall();", (repo_root / "notes.txt").read_text(encoding="utf-8"))
 
-    def test_prompt_can_show_active_findings_without_rescanning(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo_root = Path(tmpdir)
-            (repo_root / "Demo.java").write_text("class Demo { void run() { call(); } }\n", encoding="utf-8")
-            initialize_project(repo_root)
-            artifact_id = save_scan_result(
-                repo_root,
-                ScanResult(
-                    engine="semgrep",
-                    scope=["Demo.java"],
-                    targets=["Demo.java"],
-                    status="ok",
-                    message="Semgrep completed with 1 finding(s).",
-                    summary={"total": 1, "error": 1},
-                    findings=[
-                        Finding(
-                            check_id="java.lang.correctness.demo",
-                            path="Demo.java",
-                            start_line=1,
-                            end_line=1,
-                            severity="error",
-                            message="Replace risky call",
-                            rule="CWE-000",
-                            snippet="call();",
-                        )
-                    ],
-                ),
-            )
-
-            cli = AutoPatchCLI(repo_root)
-            cli.session.active_findings_id = artifact_id
-
-            output = cli.handle_line("列出问题")
-
-            self.assertIn("Scan result:", output)
-            self.assertIn("java.lang.correctness.demo", output)
-            self.assertNotIn("semgrep is not installed", output)
-
-    def test_prompt_can_show_pending_patch_without_redrafting(self) -> None:
+    def test_prompt_can_discard_pending_edit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             (repo_root / "notes.txt").write_text("call();\n", encoding="utf-8")
@@ -364,11 +326,11 @@ class PromptAgentFlowTests(unittest.TestCase):
             cli = AutoPatchCLI(repo_root)
             cli.handle_preview_edit(["/preview-edit", "notes.txt", "call();", "safeCall();"])
 
-            output = cli.handle_line("看看 patch")
+            output = cli.handle_line("discard")
 
-            self.assertIn("Pending edit:", output)
-            self.assertIn("safeCall();", output)
-            self.assertIsNotNone(cli.session.pending_edit)
+            self.assertIn("Pending patch discarded.", output)
+            self.assertIsNone(cli.session.pending_edit)
+            self.assertEqual("call();\n", (repo_root / "notes.txt").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

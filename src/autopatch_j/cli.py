@@ -62,8 +62,9 @@ Prompt rules:
       列出问题
       修复第1个问题
       @src/main/java/com/foo/UserService.java 生成 patch
-      看看 patch
-      应用这个patch
+  - After a patch is drafted, choose exactly one option:
+      apply
+      discard
   - Ambiguous mentions will show candidate paths for selection.
 """
 
@@ -149,6 +150,10 @@ class AutoPatchCLI:
 
         if self.repo_root is None:
             return "No active project. Run /init before entering prompts."
+
+        menu_response = self.handle_pending_menu_choice(raw)
+        if menu_response is not None:
+            return menu_response
 
         parsed = parse_prompt(raw, self.index)
         if not self.resolve_mentions_interactively(parsed):
@@ -350,11 +355,19 @@ class AutoPatchCLI:
             )
             self.session.current_goal = "review_pending_edit"
             save_session(self.repo_root, self.session)
-            return format_edit_preview(preview, prefix=prefix)
+            return append_pending_patch_menu(format_edit_preview(preview, prefix=prefix))
 
         self.session.pending_edit = None
         save_session(self.repo_root, self.session)
         return format_edit_preview(preview, prefix="Pending edit cleared because preview failed.")
+
+    def handle_pending_menu_choice(self, raw: str) -> str | None:
+        choice = raw.strip().lower()
+        if choice == "apply":
+            return self.handle_apply_pending()
+        if choice == "discard":
+            return self.handle_discard_pending()
+        return None
 
     def handle_show_pending(self) -> str:
         if self.repo_root is None:
@@ -373,7 +386,8 @@ class AutoPatchCLI:
             f"- source artifact: {pending.source_artifact_id or '(none)'}\n"
             f"- source finding index: {pending.source_finding_index or '(none)'}\n"
             f"- source check_id: {pending.source_check_id or '(none)'}\n"
-            f"{pending.diff}"
+            f"{pending.diff}\n"
+            f"{format_pending_patch_menu()}"
         )
 
     def handle_apply_pending(self) -> str:
@@ -406,14 +420,14 @@ class AutoPatchCLI:
         save_session(self.repo_root, self.session)
         return format_edit_preview(preview, prefix="Pending edit was not applied.")
 
-    def handle_clear_pending(self) -> str:
+    def handle_discard_pending(self) -> str:
         if self.repo_root is None:
             return "No active project. Run /init to create AutoPatch-J state."
         if self.session.pending_edit is None:
-            return "No pending edit to clear."
+            return "No pending edit to discard."
         self.session.pending_edit = None
         save_session(self.repo_root, self.session)
-        return "Pending edit cleared."
+        return "Pending patch discarded."
 
     def handle_show_findings(self, artifact_id: str | None) -> str:
         if self.repo_root is None:
@@ -898,6 +912,14 @@ def format_edit_preview(preview: EditPreview, prefix: str) -> str:
     if preview.diff:
         lines.append(preview.diff)
     return "\n".join(lines)
+
+
+def append_pending_patch_menu(body: str) -> str:
+    return f"{body}\n\n{format_pending_patch_menu()}"
+
+
+def format_pending_patch_menu() -> str:
+    return "Patch options:\n- apply\n- discard"
 
 
 def format_rescan_validation(result: RescanValidationResult) -> str:
