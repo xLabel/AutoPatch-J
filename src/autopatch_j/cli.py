@@ -515,7 +515,7 @@ class AutoPatchCLI:
             )
         if self.edit_drafter is None:
             return (
-                "Edit drafter is disabled. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "Edit drafter is disabled. Set LLM_API_KEY or OPENAI_API_KEY "
                 "to enable patch drafting."
             )
 
@@ -574,7 +574,7 @@ class AutoPatchCLI:
             )
         if self.edit_drafter is None:
             return (
-                "Edit drafter is disabled. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "Edit drafter is disabled. Set LLM_API_KEY or OPENAI_API_KEY "
                 "to enable patch drafting."
             )
 

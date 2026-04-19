@@ -114,7 +114,7 @@ def build_tree_sitter_check() -> ReadinessCheck:
 
 
 def has_llm_api_key() -> bool:
-    return bool(os.getenv("AUTOPATCH_LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
+    return bool(os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
 
 
 def build_llm_planner_check(planner_label: str) -> ReadinessCheck:
@@ -124,7 +124,7 @@ def build_llm_planner_check(planner_label: str) -> ReadinessCheck:
             name="llm_planner",
             status="unavailable",
             message=(
-                "No LLM API key is set. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "No LLM API key is set. Set LLM_API_KEY or OPENAI_API_KEY "
                 "to enable natural-language agent planning."
             ),
         )
@@ -142,7 +142,7 @@ def build_llm_drafter_check(edit_drafter_label: str | None) -> ReadinessCheck:
             name="llm_patch_drafter",
             status="unavailable",
             message=(
-                "No LLM API key is set. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "No LLM API key is set. Set LLM_API_KEY or OPENAI_API_KEY "
                 "to enable patch drafting."
             ),
         )

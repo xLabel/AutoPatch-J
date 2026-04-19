@@ -149,16 +149,16 @@ class OpenAICompatibleChatClient:
 
 
 def build_default_llm_client() -> OpenAICompatibleChatClient | None:
-    api_key = os.getenv("AUTOPATCH_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key:
         return None
 
     model = (
-        os.getenv("AUTOPATCH_LLM_MODEL")
+        os.getenv("LLM_MODEL")
         or "gpt-5.4-mini"
     )
     base_url = (
-        os.getenv("AUTOPATCH_LLM_BASE_URL")
+        os.getenv("LLM_BASE_URL")
         or os.getenv("OPENAI_BASE_URL")
         or "https://api.openai.com/v1"
     )

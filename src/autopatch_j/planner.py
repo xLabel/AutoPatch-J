@@ -42,7 +42,7 @@ class UnavailablePlanner:
         return AgentDecision(
             action="respond",
             message=(
-                "LLM planner is unavailable. Set AUTOPATCH_LLM_API_KEY or OPENAI_API_KEY "
+                "LLM planner is unavailable. Set LLM_API_KEY or OPENAI_API_KEY "
                 "to enable natural-language agent actions."
             ),
         )

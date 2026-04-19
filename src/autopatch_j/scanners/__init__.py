@@ -24,7 +24,7 @@ class UnsupportedJavaScanner:
             status="error",
             message=(
                 "Unsupported Java scanner. "
-                f"Configured AUTOPATCH_SCANNER={self.configured_name!r}. "
+                f"Configured SCANNER={self.configured_name!r}. "
                 "Currently supported: semgrep."
             ),
             summary={"total": 0},
@@ -35,7 +35,7 @@ class UnsupportedJavaScanner:
 def build_java_scanner(
     scanner_name: str | None = None,
 ) -> JavaScanner:
-    configured_name = (scanner_name or os.getenv("AUTOPATCH_SCANNER", "semgrep")).strip().lower() or "semgrep"
+    configured_name = (scanner_name or os.getenv("SCANNER", "semgrep")).strip().lower() or "semgrep"
     if configured_name == "semgrep":
         return SemgrepScanner()
     return UnsupportedJavaScanner(configured_name)
