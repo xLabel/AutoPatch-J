@@ -59,6 +59,26 @@ def load_project(repo_root: Path) -> tuple[SessionState, list[IndexEntry]]:
     return load_session(repo_root), load_index(index_file(repo_root))
 
 
+def refresh_project_index(repo_root: Path) -> tuple[list[IndexEntry], ProjectSummary]:
+    repo_root = repo_root.expanduser().resolve()
+    if not repo_root.exists() or not repo_root.is_dir():
+        raise ValueError(f"Project path does not exist or is not a directory: {repo_root}")
+
+    index = build_index(repo_root)
+    save_index(index_file(repo_root), index)
+    summary = summarize_index(index)
+    return (
+        index,
+        ProjectSummary(
+            repo_root=str(repo_root),
+            indexed_entries=summary["entries"],
+            indexed_files=summary["files"],
+            indexed_java_files=summary["java_files"],
+            indexed_directories=summary["directories"],
+        ),
+    )
+
+
 def discover_repo_root(start: Path) -> Path | None:
     start = start.expanduser().resolve()
     for candidate in (start, *start.parents):

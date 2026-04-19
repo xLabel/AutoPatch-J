@@ -32,7 +32,13 @@ from autopatch_j.mentions import (
     build_mention_completions,
     parse_prompt,
 )
-from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
+from autopatch_j.project import (
+    ProjectSummary,
+    discover_repo_root,
+    initialize_project,
+    load_project,
+    refresh_project_index,
+)
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools.edit_tool import EditPreview
 from autopatch_j.tools.scan_java import ScanResult, scan_java
@@ -54,6 +60,7 @@ HELP_TEXT = """Commands:
                  Show a saved scan artifact, or the current active findings if omitted
   /show-validation [artifact_id]
                  Show a saved post-apply validation artifact, or the latest one if omitted
+  /reindex       Refresh repository index for @mention and scope lookup
   /status        Show current session state
   /help          Show this message
   /quit          Exit the CLI
@@ -238,6 +245,8 @@ class AutoPatchCLI:
         if command == "/show-validation":
             artifact_id = parts[1] if len(parts) > 1 else None
             return self.handle_show_validation(artifact_id)
+        if command == "/reindex":
+            return self.handle_reindex()
         if command == "/status":
             return self.format_status()
         if command == "/init":
@@ -251,6 +260,13 @@ class AutoPatchCLI:
         self.session = session
         self.index = index
         return format_init_summary(summary)
+
+    def handle_reindex(self) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+
+        self.index, summary = refresh_project_index(self.repo_root)
+        return format_reindex_summary(summary)
 
     def format_status(self) -> str:
         if self.repo_root is None:
@@ -788,6 +804,17 @@ class AutoPatchCLI:
 def format_init_summary(summary: ProjectSummary) -> str:
     return (
         "Initialized project:\n"
+        f"- repo_root: {summary.repo_root}\n"
+        f"- indexed entries: {summary.indexed_entries}\n"
+        f"- indexed files: {summary.indexed_files}\n"
+        f"- indexed directories: {summary.indexed_directories}\n"
+        f"- indexed java files: {summary.indexed_java_files}"
+    )
+
+
+def format_reindex_summary(summary: ProjectSummary) -> str:
+    return (
+        "Reindexed project:\n"
         f"- repo_root: {summary.repo_root}\n"
         f"- indexed entries: {summary.indexed_entries}\n"
         f"- indexed files: {summary.indexed_files}\n"

@@ -8,7 +8,7 @@ from autopatch_j.cli import AutoPatchCLI
 from autopatch_j.decision_engine import DecisionContext, RuleBasedDecisionEngine
 from autopatch_j.intent import has_scan_intent
 from autopatch_j.mentions import build_mention_completions, parse_prompt
-from autopatch_j.project import discover_repo_root, initialize_project
+from autopatch_j.project import discover_repo_root, initialize_project, refresh_project_index
 from autopatch_j.session import APP_DIR_NAME, SessionState, load_session
 from autopatch_j.tools.scan_java import normalize_semgrep_payload, select_targets
 
@@ -44,6 +44,18 @@ class AutoPatchInitTests(unittest.TestCase):
 
             discovered = discover_repo_root(nested)
             self.assertEqual(discovered, repo_root.resolve())
+
+    def test_refresh_project_index_picks_up_new_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "src").mkdir()
+            initialize_project(repo_root)
+            (repo_root / "src" / "Demo.java").write_text("class Demo {}\n", encoding="utf-8")
+
+            index, summary = refresh_project_index(repo_root)
+
+            self.assertEqual(summary.indexed_java_files, 1)
+            self.assertTrue(any(entry.path == "src/Demo.java" for entry in index))
 
 
 class MentionResolutionTests(unittest.TestCase):
@@ -129,6 +141,21 @@ class MentionCompletionTests(unittest.TestCase):
 
             self.assertEqual(completion, "@src/main/java/demo/UserService.java ")
             self.assertIsNone(cli.complete_input("@UserService", 1))
+
+    def test_reindex_command_refreshes_cli_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "src").mkdir()
+            initialize_project(repo_root)
+
+            cli = AutoPatchCLI(repo_root)
+            self.assertIsNone(cli.complete_input("@Demo", 0))
+
+            (repo_root / "src" / "Demo.java").write_text("class Demo {}\n", encoding="utf-8")
+            output = cli.handle_command("/reindex")
+
+            self.assertIn("Reindexed project:", output)
+            self.assertEqual(cli.complete_input("@Demo", 0), "@src/Demo.java ")
 
     def test_parse_prompt_marks_ambiguous_mentions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

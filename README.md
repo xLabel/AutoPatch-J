@@ -29,6 +29,7 @@ Inside the shell:
 /init .
 @UserService<Tab> scan this file
 @src/main/java/com/foo/UserService.java scan this file
+/reindex
 /status
 /show-findings
 列出问题
@@ -49,6 +50,7 @@ Inside the shell:
 - if the prompt contains scan intent and includes `@mention`, AutoPatch-J scans that scope
 - if the prompt contains scan intent without `@mention`, AutoPatch-J scans the whole repository
 - typing `@query` and pressing `Tab` can autocomplete repository paths; blank `@` prefers recent mentions first
+- run `/reindex` after the repository adds, deletes, or renames files so `@mention` candidates stay fresh
 - current fallback routing is keyword-based; if `OPENAI_API_KEY` is present, scan decisions can go through OpenAI
 - prompt-level review requests such as `列出问题` reuse the current findings artifact instead of forcing a re-scan
 - after findings are loaded, prompt-level patch requests such as `修复第1个问题` can draft a pending edit
