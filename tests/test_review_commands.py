@@ -30,6 +30,8 @@ class ReviewCommandTests(unittest.TestCase):
             self.assertIn("Pending edit:", show_output)
             self.assertIn("safeCall();", show_output)
             self.assertIn("validation status: skipped", show_output)
+            self.assertIn("rationale: (none)", show_output)
+            self.assertIn("source artifact: (none)", show_output)
 
             apply_output = cli.handle_command("/apply-pending")
             self.assertIn("Pending edit applied.", apply_output)

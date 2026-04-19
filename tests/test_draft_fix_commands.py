@@ -76,6 +76,11 @@ class DraftFixCommandTests(unittest.TestCase):
             self.assertIn("Draft fix context:", output)
             self.assertIn("Pending edit updated from draft.", output)
             self.assertIsNotNone(cli.session.pending_edit)
+            assert cli.session.pending_edit is not None
+            self.assertEqual(cli.session.pending_edit.rationale, "Guard nullable string comparison.")
+            self.assertEqual(cli.session.pending_edit.source_artifact_id, artifact_id)
+            self.assertEqual(cli.session.pending_edit.source_finding_index, 1)
+            self.assertEqual(cli.session.pending_edit.source_check_id, "java.lang.correctness.demo")
             self.assertEqual(len(drafter.calls), 1)
             _, instruction, file_content = drafter.calls[0]
             self.assertIn("Avoid direct string equality on nullable values", instruction)

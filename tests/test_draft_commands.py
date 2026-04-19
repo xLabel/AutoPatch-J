@@ -39,6 +39,9 @@ class DraftCommandTests(unittest.TestCase):
             self.assertIn("Minimal replacement.", output)
             self.assertIn("Pending edit updated from draft.", output)
             self.assertIsNotNone(cli.session.pending_edit)
+            assert cli.session.pending_edit is not None
+            self.assertEqual(cli.session.pending_edit.rationale, "Minimal replacement.")
+            self.assertIsNone(cli.session.pending_edit.source_artifact_id)
 
     def test_draft_edit_requires_configured_drafter(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

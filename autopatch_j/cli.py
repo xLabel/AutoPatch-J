@@ -252,7 +252,12 @@ class AutoPatchCLI:
             f"- severity: {finding.severity}",
             f"- message: {finding.message}",
         ]
-        body = self.store_pending_from_draft(drafted)
+        body = self.store_pending_from_draft(
+            drafted,
+            source_artifact_id=artifact_id,
+            source_finding_index=finding_position,
+            source_check_id=finding.check_id,
+        )
         return "\n".join(header + ["", body])
 
     def handle_preview_edit(self, parts: list[str]) -> str:
@@ -281,7 +286,13 @@ class AutoPatchCLI:
             prefix="Pending edit updated.",
         )
 
-    def store_pending_from_draft(self, drafted: DraftedEdit) -> str:
+    def store_pending_from_draft(
+        self,
+        drafted: DraftedEdit,
+        source_artifact_id: str | None = None,
+        source_finding_index: int | None = None,
+        source_check_id: str | None = None,
+    ) -> str:
         execution = self.tool_registry.execute(
             repo_root=self.repo_root,
             tool_name="preview_search_replace",
@@ -303,6 +314,10 @@ class AutoPatchCLI:
             new_string=drafted.new_string,
             preview=preview,
             prefix="Pending edit updated from draft.",
+            rationale=drafted.rationale,
+            source_artifact_id=source_artifact_id,
+            source_finding_index=source_finding_index,
+            source_check_id=source_check_id,
         )
         return "\n".join(header + ["", body])
 
@@ -313,6 +328,10 @@ class AutoPatchCLI:
         new_string: str,
         preview: EditPreview,
         prefix: str,
+        rationale: str | None = None,
+        source_artifact_id: str | None = None,
+        source_finding_index: int | None = None,
+        source_check_id: str | None = None,
     ) -> str:
         if preview.status == "ok":
             self.session.pending_edit = PendingEdit(
@@ -322,6 +341,10 @@ class AutoPatchCLI:
                 diff=preview.diff,
                 validation_status=preview.validation.status,
                 validation_message=preview.validation.message,
+                rationale=rationale,
+                source_artifact_id=source_artifact_id,
+                source_finding_index=source_finding_index,
+                source_check_id=source_check_id,
             )
             save_session(self.repo_root, self.session)
             return format_edit_preview(preview, prefix=prefix)
@@ -343,6 +366,10 @@ class AutoPatchCLI:
             f"- new_string length: {len(pending.new_string)}\n"
             f"- validation status: {pending.validation_status}\n"
             f"- validation message: {pending.validation_message}\n"
+            f"- rationale: {pending.rationale or '(none)'}\n"
+            f"- source artifact: {pending.source_artifact_id or '(none)'}\n"
+            f"- source finding index: {pending.source_finding_index or '(none)'}\n"
+            f"- source check_id: {pending.source_check_id or '(none)'}\n"
             f"{pending.diff}"
         )
 

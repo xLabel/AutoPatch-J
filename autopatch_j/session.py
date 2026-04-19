@@ -19,6 +19,10 @@ class PendingEdit:
     diff: str
     validation_status: str
     validation_message: str
+    rationale: str | None = None
+    source_artifact_id: str | None = None
+    source_finding_index: int | None = None
+    source_check_id: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -28,6 +32,10 @@ class PendingEdit:
             "diff": self.diff,
             "validation_status": self.validation_status,
             "validation_message": self.validation_message,
+            "rationale": self.rationale,
+            "source_artifact_id": self.source_artifact_id,
+            "source_finding_index": self.source_finding_index,
+            "source_check_id": self.source_check_id,
         }
 
     @classmethod
@@ -39,6 +47,18 @@ class PendingEdit:
             diff=str(data.get("diff", "")),
             validation_status=str(data.get("validation_status", "")),
             validation_message=str(data.get("validation_message", "")),
+            rationale=str(data.get("rationale", "")) if data.get("rationale") else None,
+            source_artifact_id=(
+                str(data.get("source_artifact_id")) if data.get("source_artifact_id") else None
+            ),
+            source_finding_index=(
+                int(data.get("source_finding_index"))
+                if data.get("source_finding_index") is not None
+                else None
+            ),
+            source_check_id=(
+                str(data.get("source_check_id")) if data.get("source_check_id") else None
+            ),
         )
 
 
