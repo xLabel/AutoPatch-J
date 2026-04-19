@@ -144,6 +144,8 @@ class PromptAgentFlowTests(unittest.TestCase):
             self.assertIn("src/Demo.java", output)
             self.assertEqual(len(drafter.calls), 1)
             self.assertEqual(drafter.calls[0][0], "src/Demo.java")
+            self.assertIn("mention_context:", drafter.calls[0][1])
+            self.assertIn("class Demo { void run() { call(); } }", drafter.calls[0][1])
             self.assertIsNotNone(cli.session.pending_edit)
             assert cli.session.pending_edit is not None
             self.assertEqual(cli.session.pending_edit.source_finding_index, 1)

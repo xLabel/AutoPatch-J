@@ -14,6 +14,7 @@ class DecisionContext:
     user_text: str
     scoped_paths: list[str]
     has_active_findings: bool
+    mention_context: str = "(none)"
 
 
 @dataclass(slots=True)
@@ -185,6 +186,7 @@ def render_decision_prompt(context: DecisionContext) -> str:
     return (
         f"User text:\n{context.user_text}\n\n"
         f"Scoped paths:\n{scoped_paths}\n\n"
+        f"Mention context:\n{context.mention_context}\n\n"
         f"Has active findings:\n{context.has_active_findings}\n"
     )
 

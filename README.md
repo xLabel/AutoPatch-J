@@ -54,6 +54,7 @@ Inside the shell:
 - if the prompt contains scan intent and includes `@mention`, AutoPatch-J scans that scope
 - if the prompt contains scan intent without `@mention`, AutoPatch-J scans the whole repository
 - typing `@query` and pressing `Tab` can autocomplete repository paths; blank `@` prefers recent mentions first
+- selected `@mention` files are truncated into code snippets and injected into decision/draft prompts
 - run `/reindex` after the repository adds, deletes, or renames files so `@mention` candidates stay fresh
 - scanner execution now goes through a Java scanner adapter; current supported backend: `semgrep`
 - set `AUTOPATCH_SCANNER=semgrep` to select the current backend explicitly

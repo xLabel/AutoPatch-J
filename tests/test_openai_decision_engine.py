@@ -10,6 +10,7 @@ from autopatch_j.decision_engine import (
     RuleBasedDecisionEngine,
     build_default_decision_engine,
     build_openai_decision_payload,
+    render_decision_prompt,
     parse_openai_decision_response,
 )
 
@@ -36,12 +37,26 @@ class OpenAIDecisionEngineTests(unittest.TestCase):
                 user_text="扫描整个仓库的问题",
                 scoped_paths=["src/main/java/demo/App.java"],
                 has_active_findings=False,
+                mention_context="- src/main/java/demo/App.java (file)",
             ),
         )
 
         self.assertEqual(payload["model"], "gpt-5.4-mini")
         self.assertEqual(payload["tool_choice"], "auto")
         self.assertEqual(payload["tools"][0]["name"], "scan_java")
+
+    def test_render_decision_prompt_includes_mention_context(self) -> None:
+        prompt = render_decision_prompt(
+            DecisionContext(
+                user_text="scan this file",
+                scoped_paths=["src/main/java/demo/App.java"],
+                has_active_findings=False,
+                mention_context="- src/main/java/demo/App.java (file)\n```text\nclass App {}\n```",
+            )
+        )
+
+        self.assertIn("Mention context:", prompt)
+        self.assertIn("class App {}", prompt)
 
     def test_parse_response_returns_tool_call(self) -> None:
         decision = parse_openai_decision_response(

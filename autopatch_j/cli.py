@@ -15,7 +15,7 @@ from autopatch_j.artifacts import (
     save_scan_result,
     save_validation_result,
 )
-from autopatch_j.context import build_context_preview
+from autopatch_j.context import build_context_preview, build_mention_context_text
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
 from autopatch_j.doctor import DoctorReport, build_doctor_report
 from autopatch_j.edit_drafter import DraftedEdit, build_default_edit_drafter
@@ -175,6 +175,7 @@ class AutoPatchCLI:
             return "Prompt cancelled."
 
         self.update_session_from_prompt(parsed)
+        mention_context = build_mention_context_text(self.repo_root, parsed)
 
         if has_apply_intent(parsed.clean_text):
             response = self.handle_prompt_apply()
@@ -198,6 +199,7 @@ class AutoPatchCLI:
                     user_text=parsed.clean_text,
                     scoped_paths=self.effective_scope(parsed),
                     has_active_findings=self.session.active_findings_id is not None,
+                    mention_context=mention_context,
                 )
             )
 
@@ -217,6 +219,7 @@ class AutoPatchCLI:
                 user_text=parsed.clean_text,
                 scoped_paths=self.effective_scope(parsed),
                 has_active_findings=self.session.active_findings_id is not None,
+                mention_context=mention_context,
             )
         )
 
@@ -639,7 +642,14 @@ class AutoPatchCLI:
             return selected
 
         finding_position, _ = selected
-        return self.draft_fix_for_finding(result, artifact_id, finding_position)
+        mention_context = build_mention_context_text(self.repo_root, parsed)
+        return self.draft_fix_for_finding(
+            result,
+            artifact_id,
+            finding_position,
+            user_request=parsed.clean_text,
+            mention_context=mention_context,
+        )
 
     def select_patch_finding(
         self,
@@ -705,6 +715,8 @@ class AutoPatchCLI:
         result: ScanResult,
         artifact_id: str,
         finding_position: int,
+        user_request: str | None = None,
+        mention_context: str | None = None,
     ) -> str:
         finding = result.findings[finding_position - 1]
         target = (self.repo_root / finding.path).resolve()
@@ -716,7 +728,11 @@ class AutoPatchCLI:
             return f"Finding file does not exist: {finding.path}"
 
         file_content = read_text(target)
-        instruction = build_finding_instruction(finding)
+        instruction = build_finding_instruction(
+            finding,
+            user_request=user_request,
+            mention_context=mention_context,
+        )
         try:
             drafted = self.edit_drafter.draft_edit(finding.path, instruction, file_content)
         except Exception as exc:
@@ -1031,7 +1047,11 @@ def read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8", errors="replace")
 
 
-def build_finding_instruction(finding: object) -> str:
+def build_finding_instruction(
+    finding: object,
+    user_request: str | None = None,
+    mention_context: str | None = None,
+) -> str:
     check_id = getattr(finding, "check_id", "")
     severity = getattr(finding, "severity", "")
     message = getattr(finding, "message", "")
@@ -1041,12 +1061,14 @@ def build_finding_instruction(finding: object) -> str:
     snippet = getattr(finding, "snippet", "")
     return (
         "Draft one minimal search-replace edit for this finding.\n"
+        f"user_request: {user_request or '(none)'}\n"
         f"check_id: {check_id}\n"
         f"severity: {severity}\n"
         f"message: {message}\n"
         f"rule: {rule}\n"
         f"line_range: {start_line}-{end_line}\n"
         f"snippet:\n{snippet}\n"
+        f"mention_context:\n{mention_context or '(none)'}\n"
     )
 
 
