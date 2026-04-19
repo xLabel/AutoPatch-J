@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from autopatch_j.scanners import ScanResult
 from autopatch_j.session import PendingEdit
-from autopatch_j.tools.scan_java import ScanResult, scan_java
+from autopatch_j.tools.scan_java import scan_java
 
 Scanner = Callable[[Path, list[str]], ScanResult]
 

@@ -4,8 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from autopatch_j.scanners import ScanResult
 from autopatch_j.session import app_dir
-from autopatch_j.tools.scan_java import ScanResult
 from autopatch_j.validators.rescan import RescanValidationResult
 
 

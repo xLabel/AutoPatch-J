@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from autopatch_j.scanners import JavaScanner, ScanResult, build_default_java_scanner
 from autopatch_j.tools.edit_tool import EditPreview, SearchReplaceEdit, apply_search_replace, preview_search_replace
-from autopatch_j.tools.scan_java import ScanResult, scan_java
+from autopatch_j.tools.scan_java import scan_java
 
 ToolHandler = Callable[..., object]
 
@@ -19,7 +20,8 @@ class ToolExecutionResult:
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, scanner: JavaScanner | None = None) -> None:
+        self.scanner = scanner or build_default_java_scanner()
         self._handlers: dict[str, ToolHandler] = {
             "apply_search_replace": self._apply_search_replace,
             "preview_search_replace": self._preview_search_replace,
@@ -52,7 +54,7 @@ class ToolRegistry:
         )
 
     def _scan_java(self, repo_root: Path, scope: list[str]) -> ScanResult:
-        return scan_java(repo_root, scope)
+        return scan_java(repo_root, scope, scanner=self.scanner)
 
     def _preview_search_replace(
         self,

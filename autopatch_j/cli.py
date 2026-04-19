@@ -39,9 +39,9 @@ from autopatch_j.project import (
     load_project,
     refresh_project_index,
 )
+from autopatch_j.scanners import ScanResult, build_default_java_scanner
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools.edit_tool import EditPreview
-from autopatch_j.tools.scan_java import ScanResult, scan_java
 from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 from autopatch_j.validators.rescan import RescanValidationResult, validate_post_apply_rescan
 
@@ -86,9 +86,10 @@ class AutoPatchCLI:
         self.session = SessionState()
         self.index: list[IndexEntry] = []
         self._completion_matches: list[str] = []
+        self.scanner = build_default_java_scanner()
         self.decision_engine = build_default_decision_engine()
         self.edit_drafter = build_default_edit_drafter()
-        self.tool_registry = ToolRegistry()
+        self.tool_registry = ToolRegistry(scanner=self.scanner)
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
             if self.session.repo_root is None:
@@ -278,6 +279,7 @@ class AutoPatchCLI:
         pending_edit = self.session.pending_edit.file_path if self.session.pending_edit else "(none)"
         return (
             f"Repo root: {self.repo_root}\n"
+            f"Scanner: {self.scanner.label}\n"
             f"Decision engine: {self.decision_engine.label}\n"
             f"Edit drafter: {self.edit_drafter.label if self.edit_drafter else '(disabled)'}\n"
             f"Indexed entries: {summary['entries']} "
@@ -783,7 +785,7 @@ class AutoPatchCLI:
         self.session.active_findings_id = None
 
     def run_post_apply_rescan(self, pending: PendingEdit) -> str:
-        validation, rescan = validate_post_apply_rescan(self.repo_root, pending, scanner=scan_java)
+        validation, rescan = validate_post_apply_rescan(self.repo_root, pending, scanner=self.scanner.scan)
         if rescan is not None:
             rescan_artifact_id = save_scan_result(self.repo_root, rescan)
             validation.rescan_artifact_id = rescan_artifact_id
