@@ -9,6 +9,7 @@ Current checkpoint:
 - `.autopatch/` local state
 - repository indexing
 - `@mention` path resolution with interactive disambiguation
+- `@query` + `Tab` path autocomplete when `readline` is available
 - prompt-driven scan routing
 - prompt-driven patch drafting from active findings
 - prompt-driven pending patch apply confirmation
@@ -26,6 +27,7 @@ Inside the shell:
 
 ```text
 /init .
+@UserService<Tab> scan this file
 @src/main/java/com/foo/UserService.java scan this file
 /status
 /show-findings
@@ -46,6 +48,7 @@ Inside the shell:
 
 - if the prompt contains scan intent and includes `@mention`, AutoPatch-J scans that scope
 - if the prompt contains scan intent without `@mention`, AutoPatch-J scans the whole repository
+- typing `@query` and pressing `Tab` can autocomplete repository paths; blank `@` prefers recent mentions first
 - current fallback routing is keyword-based; if `OPENAI_API_KEY` is present, scan decisions can go through OpenAI
 - prompt-level review requests such as `列出问题` reuse the current findings artifact instead of forcing a re-scan
 - after findings are loaded, prompt-level patch requests such as `修复第1个问题` can draft a pending edit

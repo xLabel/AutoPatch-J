@@ -124,3 +124,79 @@ def score_entry(query: str, entry: IndexEntry) -> int:
 def is_exact_path_match(query: str, entry: IndexEntry) -> bool:
     query_norm = query.strip().lower()
     return query_norm == entry.path.lower()
+
+
+def mention_completion_candidates(
+    index: list[IndexEntry],
+    query: str,
+    recent_paths: list[str] | None = None,
+    limit: int = 10,
+) -> list[IndexEntry]:
+    query_norm = query.strip()
+    if not query_norm:
+        return default_completion_candidates(index, recent_paths=recent_paths, limit=limit)
+
+    selected: list[IndexEntry] = []
+    seen_paths: set[str] = set()
+    for candidate in search_index(index, query_norm, limit=max(limit * 3, limit)):
+        if candidate.entry.path in seen_paths:
+            continue
+        selected.append(candidate.entry)
+        seen_paths.add(candidate.entry.path)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def default_completion_candidates(
+    index: list[IndexEntry],
+    recent_paths: list[str] | None = None,
+    limit: int = 10,
+) -> list[IndexEntry]:
+    selected: list[IndexEntry] = []
+    seen_paths: set[str] = set()
+    by_path = {entry.path: entry for entry in index}
+
+    for path in recent_paths or []:
+        entry = by_path.get(path)
+        if entry is None or entry.path in seen_paths:
+            continue
+        selected.append(entry)
+        seen_paths.add(entry.path)
+        if len(selected) >= limit:
+            return selected
+
+    ordered_index = sorted(
+        index,
+        key=lambda entry: (
+            entry.kind != "file",
+            not entry.is_java,
+            entry.path,
+        ),
+    )
+    for entry in ordered_index:
+        if entry.path in seen_paths:
+            continue
+        selected.append(entry)
+        seen_paths.add(entry.path)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def build_mention_completions(
+    index: list[IndexEntry],
+    token: str,
+    recent_paths: list[str] | None = None,
+    limit: int = 10,
+) -> list[str]:
+    if not token.startswith("@"):
+        return []
+
+    candidates = mention_completion_candidates(
+        index=index,
+        query=token[1:],
+        recent_paths=recent_paths,
+        limit=limit,
+    )
+    return [f"@{entry.path} " for entry in candidates]

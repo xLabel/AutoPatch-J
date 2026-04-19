@@ -4,9 +4,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from autopatch_j.cli import AutoPatchCLI
 from autopatch_j.decision_engine import DecisionContext, RuleBasedDecisionEngine
 from autopatch_j.intent import has_scan_intent
-from autopatch_j.mentions import parse_prompt
+from autopatch_j.mentions import build_mention_completions, parse_prompt
 from autopatch_j.project import discover_repo_root, initialize_project
 from autopatch_j.session import APP_DIR_NAME, SessionState, load_session
 from autopatch_j.tools.scan_java import normalize_semgrep_payload, select_targets
@@ -67,6 +68,67 @@ class MentionResolutionTests(unittest.TestCase):
             self.assertEqual(len(parsed.mentions), 1)
             self.assertEqual(parsed.mentions[0].status, "resolved")
             self.assertEqual(parsed.mentions[0].selected.path, "src/main/java/demo/UserService.java")
+
+
+class MentionCompletionTests(unittest.TestCase):
+    def test_build_mention_completions_returns_ranked_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "src" / "main" / "java" / "demo").mkdir(parents=True)
+            (repo_root / "src" / "main" / "java" / "demo" / "UserService.java").write_text(
+                "class UserService {}\n",
+                encoding="utf-8",
+            )
+            (repo_root / "src" / "test" / "java" / "demo").mkdir(parents=True)
+            (repo_root / "src" / "test" / "java" / "demo" / "UserServiceTest.java").write_text(
+                "class UserServiceTest {}\n",
+                encoding="utf-8",
+            )
+
+            _, index, _ = initialize_project(repo_root)
+            completions = build_mention_completions(index, "@UserService")
+
+            self.assertGreaterEqual(len(completions), 1)
+            self.assertEqual(completions[0], "@src/main/java/demo/UserService.java ")
+
+    def test_build_mention_completions_prefers_recent_mentions_for_blank_query(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "src" / "main" / "java" / "demo").mkdir(parents=True)
+            (repo_root / "src" / "main" / "java" / "demo" / "UserService.java").write_text(
+                "class UserService {}\n",
+                encoding="utf-8",
+            )
+            (repo_root / "src" / "main" / "java" / "demo" / "OrderService.java").write_text(
+                "class OrderService {}\n",
+                encoding="utf-8",
+            )
+
+            _, index, _ = initialize_project(repo_root)
+            completions = build_mention_completions(
+                index,
+                "@",
+                recent_paths=["src/main/java/demo/OrderService.java"],
+            )
+
+            self.assertGreaterEqual(len(completions), 1)
+            self.assertEqual(completions[0], "@src/main/java/demo/OrderService.java ")
+
+    def test_cli_complete_input_uses_mention_completions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "src" / "main" / "java" / "demo").mkdir(parents=True)
+            (repo_root / "src" / "main" / "java" / "demo" / "UserService.java").write_text(
+                "class UserService {}\n",
+                encoding="utf-8",
+            )
+            initialize_project(repo_root)
+
+            cli = AutoPatchCLI(repo_root)
+            completion = cli.complete_input("@UserService", 0)
+
+            self.assertEqual(completion, "@src/main/java/demo/UserService.java ")
+            self.assertIsNone(cli.complete_input("@UserService", 1))
 
     def test_parse_prompt_marks_ambiguous_mentions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

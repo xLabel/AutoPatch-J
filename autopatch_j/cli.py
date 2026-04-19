@@ -4,6 +4,11 @@ import re
 import shlex
 from pathlib import Path
 
+try:
+    import readline
+except ImportError:  # pragma: no cover - platform dependent
+    readline = None
+
 from autopatch_j.artifacts import (
     load_scan_result,
     load_validation_result,
@@ -21,7 +26,12 @@ from autopatch_j.intent import (
     has_pending_review_intent,
     has_scan_intent,
 )
-from autopatch_j.mentions import MentionResolution, ParsedPrompt, parse_prompt
+from autopatch_j.mentions import (
+    MentionResolution,
+    ParsedPrompt,
+    build_mention_completions,
+    parse_prompt,
+)
 from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools.edit_tool import EditPreview
@@ -51,6 +61,7 @@ HELP_TEXT = """Commands:
 Prompt rules:
   - Use @path or @filename to bind scope, for example:
       @src/main/java/com/foo/UserService.java scan this file
+  - Press Tab after typing @query to autocomplete candidate paths.
   - After findings are ready, you can say:
       列出问题
       修复第1个问题
@@ -67,6 +78,7 @@ class AutoPatchCLI:
         self.repo_root = discover_repo_root(self.cwd)
         self.session = SessionState()
         self.index: list[IndexEntry] = []
+        self._completion_matches: list[str] = []
         self.decision_engine = build_default_decision_engine()
         self.edit_drafter = build_default_edit_drafter()
         self.tool_registry = ToolRegistry()
@@ -76,6 +88,7 @@ class AutoPatchCLI:
                 self.session.repo_root = str(self.repo_root)
 
     def run(self) -> int:
+        self.configure_readline()
         print("AutoPatch-J CLI")
         if self.repo_root is not None:
             print(f"Loaded project: {self.repo_root}")
@@ -100,6 +113,36 @@ class AutoPatchCLI:
             response = self.handle_line(raw)
             if response:
                 print(response)
+
+    def configure_readline(self) -> None:
+        if readline is None:
+            return
+
+        try:
+            binding = "tab: complete"
+            if "libedit" in (getattr(readline, "__doc__", "") or ""):
+                binding = "bind ^I rl_complete"
+            readline.parse_and_bind(binding)
+            delimiters = readline.get_completer_delims()
+            for char in "@/.-":
+                delimiters = delimiters.replace(char, "")
+            readline.set_completer_delims(delimiters)
+            readline.set_completer(self.complete_input)
+        except Exception:
+            return
+
+    def complete_input(self, text: str, state: int) -> str | None:
+        if state == 0:
+            recent_paths = self.session.recent_mentions or self.session.active_scope
+            self._completion_matches = build_mention_completions(
+                index=self.index,
+                token=text,
+                recent_paths=recent_paths,
+            )
+
+        if state >= len(self._completion_matches):
+            return None
+        return self._completion_matches[state]
 
     def handle_line(self, raw: str) -> str:
         if raw.startswith("/"):
