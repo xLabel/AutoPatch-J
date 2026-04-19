@@ -28,6 +28,7 @@ Inside the shell:
 
 ```text
 /init .
+/doctor
 @UserService<Tab> scan this file
 @src/main/java/com/foo/UserService.java scan this file
 /reindex
@@ -59,6 +60,15 @@ Inside the shell:
 - prompt-level review requests such as `列出问题` reuse the current findings artifact instead of forcing a re-scan
 - after findings are loaded, prompt-level patch requests such as `修复第1个问题` can draft a pending edit
 - if multiple findings are active, AutoPatch-J asks for a finding index or a narrower `@mention`
+
+## Runtime diagnosis
+
+- run `/doctor` to inspect whether the current machine is ready for:
+  - repository initialization
+  - scanner execution
+  - Tree-sitter Java syntax validation
+  - OpenAI decision routing
+  - OpenAI patch drafting
 
 The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns a clear error and keeps session state intact.
 

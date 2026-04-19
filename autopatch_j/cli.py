@@ -17,6 +17,7 @@ from autopatch_j.artifacts import (
 )
 from autopatch_j.context import build_context_preview
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
+from autopatch_j.doctor import DoctorReport, build_doctor_report
 from autopatch_j.edit_drafter import DraftedEdit, build_default_edit_drafter
 from autopatch_j.indexer import IndexEntry, summarize_index
 from autopatch_j.intent import (
@@ -60,6 +61,7 @@ HELP_TEXT = """Commands:
                  Show a saved scan artifact, or the current active findings if omitted
   /show-validation [artifact_id]
                  Show a saved post-apply validation artifact, or the latest one if omitted
+  /doctor        Inspect the current runtime prerequisites and feature availability
   /reindex       Refresh repository index for @mention and scope lookup
   /status        Show current session state
   /help          Show this message
@@ -246,6 +248,8 @@ class AutoPatchCLI:
         if command == "/show-validation":
             artifact_id = parts[1] if len(parts) > 1 else None
             return self.handle_show_validation(artifact_id)
+        if command == "/doctor":
+            return self.handle_doctor()
         if command == "/reindex":
             return self.handle_reindex()
         if command == "/status":
@@ -268,6 +272,15 @@ class AutoPatchCLI:
 
         self.index, summary = refresh_project_index(self.repo_root)
         return format_reindex_summary(summary)
+
+    def handle_doctor(self) -> str:
+        report = build_doctor_report(
+            repo_root=self.repo_root,
+            scanner=self.scanner,
+            decision_engine_label=self.decision_engine.label,
+            edit_drafter_label=self.edit_drafter.label if self.edit_drafter else None,
+        )
+        return format_doctor_report(report)
 
     def format_status(self) -> str:
         if self.repo_root is None:
@@ -823,6 +836,14 @@ def format_reindex_summary(summary: ProjectSummary) -> str:
         f"- indexed directories: {summary.indexed_directories}\n"
         f"- indexed java files: {summary.indexed_java_files}"
     )
+
+
+def format_doctor_report(report: DoctorReport) -> str:
+    lines = ["Doctor report:"]
+    for check in report.checks:
+        lines.append(f"- {check.name}: {check.status}")
+        lines.append(f"  {check.message}")
+    return "\n".join(lines)
 
 
 def format_scan_result(result: ScanResult) -> str:
