@@ -13,12 +13,18 @@
 - `AutoPatch-J` is a local CLI agent focused on Java repositories.
 - Prefer explicit, inspectable building blocks over opaque agent frameworks.
 - Keep the core loop understandable: session state, context building, tool dispatch, validation, and approval gates.
+- `tools` means Agent function-call tools exposed to the planner or tool registry.
+- `scanners` means static scanner adapters such as Semgrep, PMD, SpotBugs, or Checkstyle.
 
 ## Implementation boundaries
 
 - Use Python as the orchestration language.
 - Avoid introducing heavy dependencies until they remove real complexity.
 - Keep file edits minimal and scoped.
+- Do not update `README.md` during normal code changes unless the user explicitly asks for documentation updates.
+- Do not add or update unit tests unless the user explicitly asks for test work.
+- Prefer generic LLM naming in custom classes and modules. Avoid provider-specific names such as OpenAI unless referring to a third-party SDK/API compatibility surface.
+- Environment variables should not use the `AUTOPATCH_` prefix.
 - Patch generation and patch application must remain separate concerns.
 - Side-effecting actions should stay behind explicit user confirmation.
 
@@ -36,7 +42,7 @@
 
 ## Verification defaults
 
-- For Python code, prefer focused `unittest` coverage for the changed slice.
+- For Python code, prefer lightweight syntax/import checks unless the user explicitly asks to run or update tests.
 - Smoke-test the CLI whenever command behavior changes.
 
 ## Git workflow pitfalls
