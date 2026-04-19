@@ -11,6 +11,7 @@ from autopatch_j.mentions import MentionResolution, ParsedPrompt, parse_prompt
 from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
 from autopatch_j.session import SessionState, save_session
 from autopatch_j.tools.scan_java import ScanResult, scan_java
+from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 
 HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
@@ -32,6 +33,7 @@ class AutoPatchCLI:
         self.session = SessionState()
         self.index: list[IndexEntry] = []
         self.decision_engine = RuleBasedDecisionEngine()
+        self.tool_registry = ToolRegistry()
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
             if self.session.repo_root is None:
@@ -85,7 +87,8 @@ class AutoPatchCLI:
         )
 
         if decision.action == "tool_call":
-            result = self.run_tool(decision)
+            execution = self.run_tool(decision)
+            result = self.extract_scan_result(execution)
             self.apply_scan_result(result)
             save_session(self.repo_root, self.session)
             return f"{preview}\n\n{format_scan_result(result)}"
@@ -189,22 +192,26 @@ class AutoPatchCLI:
             if resolution.selected is not None
         ]
 
-    def run_tool(self, decision: AgentDecision) -> ScanResult:
-        if decision.tool_name != "scan_java":
-            return ScanResult(
-                engine="autopatch-j",
-                scope=[],
-                targets=[],
-                status="error",
-                message=f"Unsupported tool: {decision.tool_name}",
-                summary={"total": 0},
-                findings=[],
-            )
+    def run_tool(self, decision: AgentDecision) -> ToolExecutionResult:
+        return self.tool_registry.execute(
+            repo_root=self.repo_root,
+            tool_name=decision.tool_name or "",
+            tool_args=dict(decision.tool_args),
+        )
 
-        scope = decision.tool_args.get("scope", [])
-        if not isinstance(scope, list):
-            scope = []
-        return scan_java(self.repo_root, [str(item) for item in scope])
+    def extract_scan_result(self, execution: ToolExecutionResult) -> ScanResult:
+        if isinstance(execution.payload, ScanResult):
+            return execution.payload
+
+        return ScanResult(
+            engine="autopatch-j",
+            scope=[],
+            targets=[],
+            status="error",
+            message=execution.message,
+            summary={"total": 0},
+            findings=[],
+        )
 
     def apply_scan_result(self, result: ScanResult) -> None:
         if result.status == "ok":
