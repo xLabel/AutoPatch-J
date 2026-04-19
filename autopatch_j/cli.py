@@ -19,6 +19,8 @@ HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
   /draft-edit <file_path> <instruction>
                  Ask the model to draft one search-replace edit for a file
+  /draft-fix <finding_index> [artifact_id]
+                 Ask the model to draft one search-replace edit for a finding
   /preview-edit <file_path> <old_string> <new_string>
                  Preview a search-replace edit and store it as pending
   /show-pending  Show the current pending edit and diff
@@ -119,6 +121,8 @@ class AutoPatchCLI:
             return HELP_TEXT
         if command == "/draft-edit":
             return self.handle_draft_edit(parts)
+        if command == "/draft-fix":
+            return self.handle_draft_fix(parts)
         if command == "/preview-edit":
             return self.handle_preview_edit(parts)
         if command == "/show-pending":
@@ -193,6 +197,63 @@ class AutoPatchCLI:
             return f"Draft edit failed: {exc}"
 
         return self.store_pending_from_draft(drafted)
+
+    def handle_draft_fix(self, parts: list[str]) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+        if self.edit_drafter is None:
+            return "Edit drafter is disabled. Set OPENAI_API_KEY to enable /draft-fix."
+        if len(parts) not in {2, 3}:
+            return (
+                "Usage: /draft-fix <finding_index> [artifact_id]\n"
+                "Use /show-findings to inspect the available finding list."
+            )
+
+        finding_index = parts[1]
+        if not finding_index.isdigit():
+            return f"finding_index must be a positive integer: {finding_index}"
+
+        artifact_id = parts[2] if len(parts) == 3 else self.session.active_findings_id
+        if not artifact_id:
+            return "No findings artifact is active."
+
+        result = load_scan_result(self.repo_root, artifact_id)
+        if result is None:
+            return f"Findings artifact not found: {artifact_id}"
+
+        finding_position = int(finding_index)
+        if finding_position < 1 or finding_position > len(result.findings):
+            return (
+                f"finding_index out of range: {finding_position}. "
+                f"Available findings: 1..{len(result.findings)}"
+            )
+
+        finding = result.findings[finding_position - 1]
+        target = (self.repo_root / finding.path).resolve()
+        try:
+            target.relative_to(self.repo_root.resolve())
+        except ValueError:
+            return f"Finding path is outside the repository: {finding.path}"
+        if not target.exists() or not target.is_file():
+            return f"Finding file does not exist: {finding.path}"
+
+        file_content = read_text(target)
+        instruction = build_finding_instruction(finding)
+        try:
+            drafted = self.edit_drafter.draft_edit(finding.path, instruction, file_content)
+        except Exception as exc:
+            return f"Draft fix failed: {exc}"
+
+        header = [
+            "Draft fix context:",
+            f"- artifact: {artifact_id}",
+            f"- finding index: {finding_position}",
+            f"- rule: {finding.check_id}",
+            f"- severity: {finding.severity}",
+            f"- message: {finding.message}",
+        ]
+        body = self.store_pending_from_draft(drafted)
+        return "\n".join(header + ["", body])
 
     def handle_preview_edit(self, parts: list[str]) -> str:
         if self.repo_root is None:
@@ -466,8 +527,8 @@ def format_scan_result(result: ScanResult) -> str:
             continue
         header.append(f"  - {severity}: {count}")
 
-    header.append("Top findings:")
-    for idx, finding in enumerate(result.findings[:5], start=1):
+    header.append("Findings:")
+    for idx, finding in enumerate(result.findings, start=1):
         header.append(
             f"  {idx}. {finding.path}:{finding.start_line} [{finding.severity}] "
             f"{finding.check_id} - {finding.message}"
@@ -495,6 +556,25 @@ def read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return path.read_text(encoding="utf-8", errors="replace")
+
+
+def build_finding_instruction(finding: object) -> str:
+    check_id = getattr(finding, "check_id", "")
+    severity = getattr(finding, "severity", "")
+    message = getattr(finding, "message", "")
+    start_line = getattr(finding, "start_line", 0)
+    end_line = getattr(finding, "end_line", 0)
+    rule = getattr(finding, "rule", "")
+    snippet = getattr(finding, "snippet", "")
+    return (
+        "Draft one minimal search-replace edit for this finding.\n"
+        f"check_id: {check_id}\n"
+        f"severity: {severity}\n"
+        f"message: {message}\n"
+        f"rule: {rule}\n"
+        f"line_range: {start_line}-{end_line}\n"
+        f"snippet:\n{snippet}\n"
+    )
 
 
 def main() -> int:
