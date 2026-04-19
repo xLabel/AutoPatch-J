@@ -17,6 +17,8 @@ class PendingEdit:
     old_string: str
     new_string: str
     diff: str
+    validation_status: str
+    validation_message: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -24,6 +26,8 @@ class PendingEdit:
             "old_string": self.old_string,
             "new_string": self.new_string,
             "diff": self.diff,
+            "validation_status": self.validation_status,
+            "validation_message": self.validation_message,
         }
 
     @classmethod
@@ -33,6 +37,8 @@ class PendingEdit:
             old_string=str(data.get("old_string", "")),
             new_string=str(data.get("new_string", "")),
             diff=str(data.get("diff", "")),
+            validation_status=str(data.get("validation_status", "")),
+            validation_message=str(data.get("validation_message", "")),
         )
 
 

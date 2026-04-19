@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
 
+from autopatch_j.validators.java_syntax import SyntaxValidationResult, SyntaxValidator, TreeSitterJavaValidator
+
 
 @dataclass(slots=True)
 class SearchReplaceEdit:
@@ -19,12 +21,14 @@ class EditPreview:
     message: str
     occurrences: int
     diff: str
+    validation: SyntaxValidationResult
 
 
 def preview_search_replace(
     repo_root: Path,
     edit: SearchReplaceEdit,
     context_lines: int = 3,
+    validator: SyntaxValidator | None = None,
 ) -> EditPreview:
     target = resolve_repo_file(repo_root, edit.file_path)
     if not target.exists() or not target.is_file():
@@ -34,6 +38,10 @@ def preview_search_replace(
             message="Target file does not exist.",
             occurrences=0,
             diff="",
+            validation=SyntaxValidationResult(
+                status="skipped",
+                message="Syntax validation was not attempted because the target file was missing.",
+            ),
         )
 
     original = read_text(target)
@@ -45,6 +53,10 @@ def preview_search_replace(
             message="old_string was not found in the target file.",
             occurrences=0,
             diff="",
+            validation=SyntaxValidationResult(
+                status="skipped",
+                message="Syntax validation was not attempted because the edit could not be previewed.",
+            ),
         )
     if occurrences > 1:
         return EditPreview(
@@ -53,16 +65,22 @@ def preview_search_replace(
             message="old_string matched multiple locations in the target file.",
             occurrences=occurrences,
             diff="",
+            validation=SyntaxValidationResult(
+                status="skipped",
+                message="Syntax validation was not attempted because the edit was ambiguous.",
+            ),
         )
 
     updated = original.replace(edit.old_string, edit.new_string, 1)
     diff = build_unified_diff(edit.file_path, original, updated, context_lines=context_lines)
+    validation = (validator or TreeSitterJavaValidator()).validate(edit.file_path, updated)
     return EditPreview(
         file_path=edit.file_path,
         status="ok",
         message="Edit preview generated successfully.",
         occurrences=1,
         diff=diff,
+        validation=validation,
     )
 
 
@@ -70,10 +88,28 @@ def apply_search_replace(
     repo_root: Path,
     edit: SearchReplaceEdit,
     context_lines: int = 3,
+    validator: SyntaxValidator | None = None,
 ) -> EditPreview:
-    preview = preview_search_replace(repo_root, edit, context_lines=context_lines)
+    preview = preview_search_replace(
+        repo_root,
+        edit,
+        context_lines=context_lines,
+        validator=validator,
+    )
     if preview.status != "ok":
         return preview
+    if preview.validation.status != "ok" and Path(edit.file_path).suffix.lower() == ".java":
+        return EditPreview(
+            file_path=edit.file_path,
+            status="blocked",
+            message=(
+                "Java edit apply is blocked until syntax validation passes. "
+                f"Current validation status: {preview.validation.status}."
+            ),
+            occurrences=preview.occurrences,
+            diff=preview.diff,
+            validation=preview.validation,
+        )
 
     target = resolve_repo_file(repo_root, edit.file_path)
     original = read_text(target)

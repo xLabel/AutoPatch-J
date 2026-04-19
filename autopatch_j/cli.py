@@ -182,6 +182,8 @@ class AutoPatchCLI:
                 old_string=parts[2],
                 new_string=parts[3],
                 diff=preview.diff,
+                validation_status=preview.validation.status,
+                validation_message=preview.validation.message,
             )
             save_session(self.repo_root, self.session)
             return format_edit_preview(preview, prefix="Pending edit updated.")
@@ -201,6 +203,8 @@ class AutoPatchCLI:
             f"- file: {pending.file_path}\n"
             f"- old_string length: {len(pending.old_string)}\n"
             f"- new_string length: {len(pending.new_string)}\n"
+            f"- validation status: {pending.validation_status}\n"
+            f"- validation message: {pending.validation_message}\n"
             f"{pending.diff}"
         )
 
@@ -401,6 +405,8 @@ def format_edit_preview(preview: EditPreview, prefix: str) -> str:
         f"- status: {preview.status}",
         f"- message: {preview.message}",
         f"- occurrences: {preview.occurrences}",
+        f"- validation status: {preview.validation.status}",
+        f"- validation message: {preview.validation.message}",
     ]
     if preview.diff:
         lines.append(preview.diff)

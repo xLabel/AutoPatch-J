@@ -46,3 +46,4 @@ The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns 
 - `/show-pending` shows the current pending diff
 - `/apply-pending` writes the pending edit to disk
 - `/clear-pending` drops the pending edit without changing files
+- Java edits require Tree-sitter validation before apply; if `tree_sitter` or `tree_sitter_java` is missing, preview still works but apply is blocked
