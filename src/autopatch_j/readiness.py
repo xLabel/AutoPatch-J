@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from autopatch_j.scanners import JavaScanner, SemgrepScanner, UnsupportedJavaScanner
+from autopatch_j.scanners import SemgrepScanner
 
 
 @dataclass(slots=True)
@@ -22,7 +22,7 @@ class ReadinessReport:
 
 def build_readiness_report(
     repo_root: Path | None,
-    scanner: JavaScanner,
+    scanner: SemgrepScanner,
     planner_label: str,
     edit_drafter_label: str | None,
 ) -> ReadinessReport:
@@ -50,42 +50,25 @@ def build_project_check(repo_root: Path | None) -> ReadinessCheck:
     )
 
 
-def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> ReadinessCheck:
-    if isinstance(scanner, UnsupportedJavaScanner):
+def build_scanner_check(repo_root: Path | None, scanner: SemgrepScanner) -> ReadinessCheck:
+    resolved = scanner.resolve_binary_with_source(repo_root)
+    if resolved:
+        semgrep_path, source = resolved
         return ReadinessCheck(
             name="scanner",
-            status="error",
+            status="ok",
             message=(
-                "Unsupported Java scanner configured. "
-                f"Current scanner: {scanner.label}. Supported scanner: semgrep."
-            ),
-    )
-
-    if isinstance(scanner, SemgrepScanner):
-        resolved = scanner.resolve_binary_with_source(repo_root)
-        if resolved:
-            semgrep_path, source = resolved
-            return ReadinessCheck(
-                name="scanner",
-                status="ok",
-                message=(
-                    f"Scanner ready: {scanner.label}. "
-                    f"Using semgrep binary from {source} at {semgrep_path}."
-                ),
-            )
-        return ReadinessCheck(
-            name="scanner",
-            status="error",
-            message=(
-                f"Scanner configured as {scanner.label}, but the Semgrep runtime binary "
-                "is missing or not executable under runtime/semgrep/bin/<platform>/."
+                f"Scanner ready: {scanner.label}. "
+                f"Using semgrep binary from {source} at {semgrep_path}."
             ),
         )
-
     return ReadinessCheck(
         name="scanner",
-        status="ok",
-        message=f"Custom scanner configured: {scanner.label}",
+        status="error",
+        message=(
+            f"Scanner configured as {scanner.label}, but the Semgrep runtime binary "
+            "is missing or not executable under runtime/semgrep/bin/<platform>/."
+        ),
     )
 
 

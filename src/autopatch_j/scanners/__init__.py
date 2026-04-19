@@ -1,47 +1,14 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 from autopatch_j.scanners.model import Finding, JavaScanner, ScanResult
 from autopatch_j.scanners.semgrep import SemgrepScanner
 
 
-class UnsupportedJavaScanner:
-    def __init__(self, configured_name: str) -> None:
-        self.configured_name = configured_name
-
-    @property
-    def label(self) -> str:
-        return f"unsupported:{self.configured_name}"
-
-    def scan(self, repo_root: Path, scope: list[str]) -> ScanResult:
-        del repo_root
-        return ScanResult(
-            engine=self.configured_name,
-            scope=list(scope),
-            targets=[],
-            status="error",
-            message=(
-                "Unsupported Java scanner. "
-                f"Configured SCANNER={self.configured_name!r}. "
-                "Currently supported: semgrep."
-            ),
-            summary={"total": 0},
-            findings=[],
-        )
+def build_java_scanner() -> SemgrepScanner:
+    return SemgrepScanner()
 
 
-def build_java_scanner(
-    scanner_name: str | None = None,
-) -> JavaScanner:
-    configured_name = (scanner_name or os.getenv("SCANNER", "semgrep")).strip().lower() or "semgrep"
-    if configured_name == "semgrep":
-        return SemgrepScanner()
-    return UnsupportedJavaScanner(configured_name)
-
-
-def build_default_java_scanner() -> JavaScanner:
+def build_default_java_scanner() -> SemgrepScanner:
     return build_java_scanner()
 
 
@@ -50,7 +17,6 @@ __all__ = [
     "JavaScanner",
     "ScanResult",
     "SemgrepScanner",
-    "UnsupportedJavaScanner",
     "build_java_scanner",
     "build_default_java_scanner",
 ]

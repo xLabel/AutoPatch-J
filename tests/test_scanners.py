@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,8 +13,7 @@ from autopatch_j.tools.scan_java import scan_java
 
 class ScannerFactoryTests(unittest.TestCase):
     def test_build_default_scanner_uses_semgrep_by_default(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            scanner = build_default_java_scanner()
+        scanner = build_default_java_scanner()
 
         self.assertIsInstance(scanner, SemgrepScanner)
         self.assertEqual(scanner.label, "semgrep:autopatch-j/java-default")
@@ -93,17 +91,6 @@ class ScannerFactoryTests(unittest.TestCase):
                 resolved = scanner.resolve_binary_with_source(Path("."))
 
         self.assertEqual(resolved, (str(binary.resolve()), "local runtime"))
-
-    def test_unsupported_scanner_returns_controlled_error(self) -> None:
-        with patch.dict(os.environ, {"SCANNER": "spotbugs"}, clear=True):
-            scanner = build_default_java_scanner()
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = scanner.scan(Path(tmpdir), ["src"])
-
-        self.assertEqual(result.status, "error")
-        self.assertEqual(result.engine, "spotbugs")
-        self.assertIn("Unsupported Java scanner", result.message)
 
     def test_scan_java_uses_injected_scanner(self) -> None:
         class FakeScanner:

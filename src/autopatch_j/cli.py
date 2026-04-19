@@ -33,7 +33,6 @@ from autopatch_j.project import (
     ProjectSummary,
     discover_repo_root,
     initialize_project,
-    load_project_config,
     load_project,
     refresh_project_index,
 )
@@ -41,7 +40,7 @@ from autopatch_j.planner import AgentDecision, DecisionContext, build_default_pl
 from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
 from autopatch_j.scanners import ScanResult, build_java_scanner
 from autopatch_j.scanners.catalog import ScannerCatalogEntry, build_scanner_catalog
-from autopatch_j.session import PendingEdit, ProjectConfig, SessionState, save_session
+from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools.edit_tool import EditPreview
 from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 from autopatch_j.validators.rescan import RescanValidationResult, validate_post_apply_rescan
@@ -74,14 +73,12 @@ class AutoPatchCLI:
         self.cwd = cwd.resolve()
         self.repo_root = discover_repo_root(self.cwd)
         self.session = SessionState()
-        self.project_config = ProjectConfig(repo_root=str(self.repo_root)) if self.repo_root else None
         self.index: list[IndexEntry] = []
         self._completion_matches: list[str] = []
         self.planner = build_default_planner()
         self.edit_drafter = build_default_edit_drafter()
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
-            self.project_config = load_project_config(self.repo_root)
             if self.session.repo_root is None:
                 self.session.repo_root = str(self.repo_root)
         self.rebuild_scanner()
@@ -205,7 +202,6 @@ class AutoPatchCLI:
         self.repo_root = Path(summary.repo_root)
         self.session = session
         self.index = index
-        self.project_config = load_project_config(self.repo_root)
         self.rebuild_scanner()
         self.tool_registry = ToolRegistry(scanner=self.scanner)
         return format_init_summary(summary)
@@ -226,7 +222,7 @@ class AutoPatchCLI:
         )
 
     def handle_scanners(self) -> str:
-        return format_scanners_report(build_scanner_catalog(self.repo_root, self.scanner))
+        return format_scanners_report(build_scanner_catalog(self.repo_root))
 
     def format_status(self) -> str:
         if self.repo_root is None:
@@ -820,10 +816,7 @@ class AutoPatchCLI:
         )
 
     def rebuild_scanner(self) -> None:
-        scanner_name = self.project_config.scanner_name if self.project_config else None
-        self.scanner = build_java_scanner(
-            scanner_name=scanner_name,
-        )
+        self.scanner = build_java_scanner()
 
 
 def format_init_summary(summary: ProjectSummary) -> str:
@@ -861,7 +854,7 @@ def format_readiness_report(report: ReadinessReport) -> str:
 def format_scanners_report(entries: list[ScannerCatalogEntry]) -> str:
     lines = ["Java scanners:"]
     for entry in entries:
-        selector = "selected" if entry.selected else "disabled" if not entry.selectable else "available"
+        selector = "selected" if entry.selected else "disabled"
         lines.append(f"- [{selector}] {entry.name}: {entry.status}")
         lines.append(f"  {entry.message}")
     return "\n".join(lines)

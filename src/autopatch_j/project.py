@@ -7,12 +7,10 @@ from autopatch_j.indexer import IndexEntry, build_index, load_index, save_index,
 from autopatch_j.session import (
     APP_DIR_NAME,
     CONFIG_FILE_NAME,
-    ProjectConfig,
     SessionState,
     config_file,
     ensure_project_layout,
     index_file,
-    load_config,
     load_session,
     save_config,
     save_session,
@@ -59,16 +57,6 @@ def initialize_project(repo_root: Path) -> tuple[SessionState, list[IndexEntry],
 def load_project(repo_root: Path) -> tuple[SessionState, list[IndexEntry]]:
     repo_root = repo_root.expanduser().resolve()
     return load_session(repo_root), load_index(index_file(repo_root))
-
-
-def load_project_config(repo_root: Path) -> ProjectConfig:
-    repo_root = repo_root.expanduser().resolve()
-    return load_config(repo_root)
-
-
-def save_project_config(repo_root: Path, config: ProjectConfig) -> None:
-    repo_root = repo_root.expanduser().resolve()
-    save_config(repo_root, config)
 
 
 def refresh_project_index(repo_root: Path) -> tuple[list[IndexEntry], ProjectSummary]:
