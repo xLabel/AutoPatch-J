@@ -31,6 +31,7 @@ Inside the shell:
 /env
 /scanner
 /scanner semgrep rules/demo.yml
+/scanner semgrep rules/demo.yml --bin .autopatch/tools/semgrep
 @UserService<Tab> scan this file
 @src/main/java/com/foo/UserService.java scan this file
 /reindex
@@ -59,8 +60,9 @@ Inside the shell:
 - scanner execution now goes through a Java scanner adapter; current supported backend: `semgrep`
 - set `AUTOPATCH_SCANNER=semgrep` to select the current backend explicitly
 - set `AUTOPATCH_SEMGREP_CONFIG` to override the default Semgrep config (`p/java`)
+- set `AUTOPATCH_SEMGREP_BIN` to point to a repo-local or absolute Semgrep binary without touching shell `PATH`
 - use `/scanner` to inspect the active scanner and project-level overrides
-- use `/scanner semgrep [config]` to persist the scanner choice into the project
+- use `/scanner semgrep [config] [--bin <path>]` to persist the scanner choice, config, and optional binary path into the project
 - use `/scanner reset` to clear project overrides and fall back to env/defaults
 - current fallback routing is keyword-based; if `OPENAI_API_KEY` is present, scan decisions can go through OpenAI
 - prompt-level review requests such as `列出问题` reuse the current findings artifact instead of forcing a re-scan
@@ -71,12 +73,17 @@ Inside the shell:
 
 - run `/env` to inspect whether the current machine is ready for:
   - repository initialization
-  - scanner execution
-  - Tree-sitter Java syntax validation
+  - scanner execution through a Semgrep binary on `PATH` or an explicit configured binary path
+  - Tree-sitter Java syntax validation through Python modules
   - OpenAI decision routing
   - OpenAI patch drafting
 
-The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns a clear error and keeps session state intact.
+The scan wrapper can use either `semgrep` from `PATH` or an explicit binary path. If neither is available, the CLI returns a clear error and keeps session state intact.
+
+Tree-sitter validation is a Python dependency, not an npm dependency. The project declares:
+
+- `tree-sitter`
+- `tree-sitter-java`
 
 ## Demo fixture
 

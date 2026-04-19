@@ -11,7 +11,10 @@ requires-python = ">=3.11"
 authors = [
   { name = "weijianguan" }
 ]
-dependencies = []
+dependencies = [
+  "tree-sitter",
+  "tree-sitter-java",
+]
 
 [project.scripts]
 autopatch-j = "autopatch_j.cli:main"

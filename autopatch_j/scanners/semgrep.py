@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,8 +10,9 @@ from autopatch_j.scanners.model import Finding, ScanResult
 
 
 class SemgrepScanner:
-    def __init__(self, config: str = "p/java") -> None:
+    def __init__(self, config: str = "p/java", binary_path: str | None = None) -> None:
         self.config = config
+        self.binary_path = binary_path
 
     @property
     def label(self) -> str:
@@ -29,18 +31,11 @@ class SemgrepScanner:
                 findings=[],
             )
 
-        if shutil.which("semgrep") is None:
-            return ScanResult(
-                engine="semgrep",
-                scope=list(scope),
-                targets=targets,
-                status="error",
-                message="semgrep is not installed or not available on PATH.",
-                summary={"total": 0},
-                findings=[],
-            )
+        resolved_binary = self.resolve_binary(repo_root)
+        if resolved_binary is None:
+            return self.missing_binary_result(scope=list(scope), targets=targets)
 
-        command = ["semgrep", "scan", "--json", "--config", self.config, *targets]
+        command = [resolved_binary, "scan", "--json", "--config", self.config, *targets]
         completed = subprocess.run(
             command,
             cwd=repo_root,
@@ -63,6 +58,45 @@ class SemgrepScanner:
 
         payload = json.loads(completed.stdout or "{}")
         return normalize_semgrep_payload(payload, scope=list(scope), targets=targets)
+
+    def resolve_binary(self, repo_root: Path | None = None) -> str | None:
+        if self.binary_path:
+            return resolve_explicit_binary(self.binary_path, repo_root)
+        return shutil.which("semgrep")
+
+    def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
+        if self.binary_path:
+            message = (
+                "Configured semgrep binary was not found or is not executable: "
+                f"{self.binary_path}"
+            )
+        else:
+            message = "semgrep is not installed or not available on PATH."
+        return ScanResult(
+            engine="semgrep",
+            scope=scope,
+            targets=targets,
+            status="error",
+            message=message,
+            summary={"total": 0},
+            findings=[],
+        )
+
+
+def resolve_explicit_binary(binary_path: str, repo_root: Path | None = None) -> str | None:
+    candidate = Path(binary_path).expanduser()
+    if not candidate.is_absolute():
+        base_dir = repo_root if repo_root is not None else Path.cwd()
+        candidate = base_dir / candidate
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    if not resolved.exists() or not resolved.is_file():
+        return None
+    if not os.access(resolved, os.X_OK):
+        return None
+    return str(resolved)
 
 
 def select_targets(repo_root: Path, scope: list[str]) -> list[str]:

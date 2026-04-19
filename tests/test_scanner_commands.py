@@ -39,6 +39,21 @@ class ScannerCommandTests(unittest.TestCase):
         self.assertIn("- active: semgrep:rules/demo.yml", reloaded_output)
         self.assertIn("- project semgrep config: rules/demo.yml", reloaded_output)
 
+    def test_scanner_command_persists_project_semgrep_bin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            initialize_project(repo_root)
+
+            with patch.dict(os.environ, {}, clear=True):
+                cli = AutoPatchCLI(repo_root)
+                output = cli.handle_command("/scanner semgrep rules/demo.yml --bin tools/semgrep")
+                reloaded_cli = AutoPatchCLI(repo_root)
+                reloaded_output = reloaded_cli.handle_command("/scanner")
+
+        self.assertIn("Scanner config updated.", output)
+        self.assertIn("- project semgrep bin: tools/semgrep", reloaded_output)
+        self.assertIn("- active semgrep bin: tools/semgrep", reloaded_output)
+
     def test_scanner_reset_clears_project_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
@@ -53,6 +68,7 @@ class ScannerCommandTests(unittest.TestCase):
         self.assertIn("- active: semgrep:p/java", output)
         self.assertIn("- project scanner: (none)", output)
         self.assertIn("- project semgrep config: (none)", output)
+        self.assertIn("- project semgrep bin: (none)", output)
 
 
 if __name__ == "__main__":

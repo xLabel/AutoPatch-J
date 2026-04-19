@@ -29,7 +29,7 @@ def build_doctor_report(
 ) -> DoctorReport:
     checks = [
         build_project_check(repo_root),
-        build_scanner_check(scanner),
+        build_scanner_check(repo_root, scanner),
         build_tree_sitter_check(),
         build_openai_decision_check(decision_engine_label),
         build_openai_drafter_check(edit_drafter_label),
@@ -51,7 +51,7 @@ def build_project_check(repo_root: Path | None) -> DoctorCheck:
     )
 
 
-def build_scanner_check(scanner: JavaScanner) -> DoctorCheck:
+def build_scanner_check(repo_root: Path | None, scanner: JavaScanner) -> DoctorCheck:
     if isinstance(scanner, UnsupportedJavaScanner):
         return DoctorCheck(
             name="scanner",
@@ -63,21 +63,36 @@ def build_scanner_check(scanner: JavaScanner) -> DoctorCheck:
         )
 
     if isinstance(scanner, SemgrepScanner):
-        semgrep_path = shutil.which("semgrep")
+        semgrep_path = scanner.resolve_binary(repo_root)
         if semgrep_path:
+            source = (
+                f"configured binary at {semgrep_path}"
+                if scanner.binary_path
+                else f"PATH at {semgrep_path}"
+            )
             return DoctorCheck(
                 name="scanner",
                 status="ok",
                 message=(
                     f"Scanner ready: {scanner.label}. "
-                    f"semgrep resolved on PATH at {semgrep_path}."
+                    f"Using semgrep binary from {source}."
+                ),
+            )
+        if scanner.binary_path:
+            return DoctorCheck(
+                name="scanner",
+                status="error",
+                message=(
+                    f"Scanner configured as {scanner.label}, but the configured semgrep binary "
+                    f"is missing or not executable: {scanner.binary_path}"
                 ),
             )
         return DoctorCheck(
             name="scanner",
             status="error",
             message=(
-                f"Scanner configured as {scanner.label}, but semgrep is not available on PATH."
+                f"Scanner configured as {scanner.label}, but semgrep is not available on PATH. "
+                "Set AUTOPATCH_SEMGREP_BIN or configure `/scanner semgrep ... --bin <path>`."
             ),
         )
 
@@ -95,7 +110,7 @@ def build_tree_sitter_check() -> DoctorCheck:
         return DoctorCheck(
             name="java_syntax_validator",
             status="ok",
-            message="Tree-sitter Java syntax validation is available.",
+            message="Tree-sitter Java syntax validation is available through Python modules.",
         )
     missing: list[str] = []
     if not has_tree_sitter:
@@ -106,8 +121,8 @@ def build_tree_sitter_check() -> DoctorCheck:
         name="java_syntax_validator",
         status="unavailable",
         message=(
-            "Tree-sitter Java syntax validation is unavailable. Missing modules: "
-            f"{', '.join(missing)}."
+            "Tree-sitter Java syntax validation is unavailable. Missing Python modules: "
+            f"{', '.join(missing)}. Install packages: tree-sitter, tree-sitter-java."
         ),
     )
 

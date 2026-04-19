@@ -67,12 +67,14 @@ class ProjectConfig:
     repo_root: str
     scanner_name: str | None = None
     semgrep_config: str | None = None
+    semgrep_bin: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "repo_root": self.repo_root,
             "scanner_name": self.scanner_name,
             "semgrep_config": self.semgrep_config,
+            "semgrep_bin": self.semgrep_bin,
         }
 
     @classmethod
@@ -83,6 +85,7 @@ class ProjectConfig:
             semgrep_config=(
                 str(data.get("semgrep_config")) if data.get("semgrep_config") else None
             ),
+            semgrep_bin=str(data.get("semgrep_bin")) if data.get("semgrep_bin") else None,
         )
 
 

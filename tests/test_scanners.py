@@ -30,6 +30,39 @@ class ScannerFactoryTests(unittest.TestCase):
         self.assertIsInstance(scanner, SemgrepScanner)
         self.assertEqual(scanner.label, "semgrep:rules/demo.yml")
 
+    def test_build_default_scanner_allows_custom_semgrep_binary(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"AUTOPATCH_SCANNER": "semgrep", "AUTOPATCH_SEMGREP_BIN": "/opt/semgrep/bin/semgrep"},
+            clear=True,
+        ):
+            scanner = build_default_java_scanner()
+
+        self.assertIsInstance(scanner, SemgrepScanner)
+        self.assertEqual(scanner.binary_path, "/opt/semgrep/bin/semgrep")
+
+    def test_semgrep_scanner_uses_explicit_binary_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir)
+            (repo_root / "src").mkdir()
+            (repo_root / "src" / "Demo.java").write_text("class Demo {}\n", encoding="utf-8")
+            binary = repo_root / "tools" / "semgrep"
+            binary.parent.mkdir(parents=True, exist_ok=True)
+            binary.write_text("#!/bin/sh\n", encoding="utf-8")
+            binary.chmod(0o755)
+            scanner = SemgrepScanner(config="rules/demo.yml", binary_path="tools/semgrep")
+
+            with patch("autopatch_j.scanners.semgrep.subprocess.run") as run_mock:
+                run_mock.return_value.stdout = '{"results": []}'
+                run_mock.return_value.stderr = ""
+                run_mock.return_value.returncode = 0
+                result = scanner.scan(repo_root, ["src"])
+
+        self.assertEqual(result.status, "ok")
+        command = run_mock.call_args.args[0]
+        self.assertEqual(command[0], str(binary.resolve()))
+        self.assertEqual(command[1:4], ["scan", "--json", "--config"])
+
     def test_unsupported_scanner_returns_controlled_error(self) -> None:
         with patch.dict(os.environ, {"AUTOPATCH_SCANNER": "spotbugs"}, clear=True):
             scanner = build_default_java_scanner()

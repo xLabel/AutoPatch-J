@@ -57,8 +57,8 @@ HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
   /env          Inspect runtime prerequisites and feature availability
   /scanner      Show the current scanner configuration
-  /scanner semgrep [config]
-                Persist project scanner selection and optional Semgrep config
+  /scanner semgrep [config] [--bin <path>]
+                Persist project scanner selection, optional Semgrep config, and optional binary path
   /scanner reset
                 Clear project scanner overrides and fall back to env/defaults
   /draft-edit <file_path> <instruction>
@@ -312,6 +312,7 @@ class AutoPatchCLI:
         if len(parts) == 2 and parts[1] == "reset":
             self.project_config.scanner_name = None
             self.project_config.semgrep_config = None
+            self.project_config.semgrep_bin = None
             save_project_config(self.repo_root, self.project_config)
             self.rebuild_scanner()
             self.tool_registry = ToolRegistry(scanner=self.scanner)
@@ -319,17 +320,31 @@ class AutoPatchCLI:
                 "Scanner config reset to env/default.\n"
                 f"{format_scanner_summary(self.scanner, self.project_config)}"
             )
-        if parts[1] != "semgrep" or len(parts) > 3:
+        if parts[1] != "semgrep":
             return (
                 "Usage:\n"
                 "  /scanner\n"
-                "  /scanner semgrep [config]\n"
+                "  /scanner semgrep [config] [--bin <path>]\n"
                 "  /scanner reset"
             )
-
-        semgrep_config = parts[2] if len(parts) == 3 else "p/java"
+        args = parts[2:]
+        semgrep_config = "p/java"
+        semgrep_bin = self.project_config.semgrep_bin
+        if args and args[0] != "--bin":
+            semgrep_config = args[0]
+            args = args[1:]
+        if args:
+            if len(args) != 2 or args[0] != "--bin":
+                return (
+                    "Usage:\n"
+                    "  /scanner\n"
+                    "  /scanner semgrep [config] [--bin <path>]\n"
+                    "  /scanner reset"
+                )
+            semgrep_bin = args[1]
         self.project_config.scanner_name = "semgrep"
         self.project_config.semgrep_config = semgrep_config
+        self.project_config.semgrep_bin = semgrep_bin
         save_project_config(self.repo_root, self.project_config)
         self.rebuild_scanner()
         self.tool_registry = ToolRegistry(scanner=self.scanner)
@@ -954,9 +969,11 @@ class AutoPatchCLI:
     def rebuild_scanner(self) -> None:
         scanner_name = self.project_config.scanner_name if self.project_config else None
         semgrep_config = self.project_config.semgrep_config if self.project_config else None
+        semgrep_bin = self.project_config.semgrep_bin if self.project_config else None
         self.scanner = build_java_scanner(
             scanner_name=scanner_name,
             semgrep_config=semgrep_config,
+            semgrep_bin=semgrep_bin,
         )
 
 
@@ -994,8 +1011,10 @@ def format_scanner_summary(scanner: object, project_config: ProjectConfig | None
     return (
         "Scanner config:\n"
         f"- active: {getattr(scanner, 'label', '(unknown)')}\n"
+        f"- active semgrep bin: {getattr(scanner, 'binary_path', None) or '(PATH)'}\n"
         f"- project scanner: {project_config.scanner_name if project_config and project_config.scanner_name else '(none)'}\n"
-        f"- project semgrep config: {project_config.semgrep_config if project_config and project_config.semgrep_config else '(none)'}"
+        f"- project semgrep config: {project_config.semgrep_config if project_config and project_config.semgrep_config else '(none)'}\n"
+        f"- project semgrep bin: {project_config.semgrep_bin if project_config and project_config.semgrep_bin else '(none)'}"
     )
 
 
