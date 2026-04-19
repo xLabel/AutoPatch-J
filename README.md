@@ -26,6 +26,7 @@ Inside the shell:
 /init .
 @src/main/java/com/foo/UserService.java scan this file
 /status
+/draft-edit Demo.java "guard string compare"
 /preview-edit Demo.java "call();" "safeCall();"
 /show-pending
 /apply-pending
@@ -43,6 +44,7 @@ The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns 
 
 ## Edit review gate
 
+- `/draft-edit` asks the model to propose one minimal search-replace edit for a target file
 - `/preview-edit` only previews a `search-replace` edit and stores it as pending
 - `/show-pending` shows the current pending diff
 - `/apply-pending` writes the pending edit to disk
@@ -53,6 +55,7 @@ The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns 
 
 - default: rule-based routing
 - if `OPENAI_API_KEY` is present, AutoPatch-J switches to an OpenAI `Responses API` decision engine
+- the same API key also enables the OpenAI edit drafter used by `/draft-edit`
 - optional environment variables:
   - `AUTOPATCH_OPENAI_MODEL`
   - `OPENAI_BASE_URL`

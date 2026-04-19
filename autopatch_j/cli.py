@@ -6,6 +6,7 @@ from pathlib import Path
 from autopatch_j.artifacts import load_scan_result, save_scan_result
 from autopatch_j.context import build_context_preview
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
+from autopatch_j.edit_drafter import DraftedEdit, build_default_edit_drafter
 from autopatch_j.indexer import IndexEntry, summarize_index
 from autopatch_j.mentions import MentionResolution, ParsedPrompt, parse_prompt
 from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
@@ -16,6 +17,8 @@ from autopatch_j.tools.registry import ToolExecutionResult, ToolRegistry
 
 HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
+  /draft-edit <file_path> <instruction>
+                 Ask the model to draft one search-replace edit for a file
   /preview-edit <file_path> <old_string> <new_string>
                  Preview a search-replace edit and store it as pending
   /show-pending  Show the current pending edit and diff
@@ -41,6 +44,7 @@ class AutoPatchCLI:
         self.session = SessionState()
         self.index: list[IndexEntry] = []
         self.decision_engine = build_default_decision_engine()
+        self.edit_drafter = build_default_edit_drafter()
         self.tool_registry = ToolRegistry()
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
@@ -113,6 +117,8 @@ class AutoPatchCLI:
         command = parts[0]
         if command == "/help":
             return HELP_TEXT
+        if command == "/draft-edit":
+            return self.handle_draft_edit(parts)
         if command == "/preview-edit":
             return self.handle_preview_edit(parts)
         if command == "/show-pending":
@@ -149,6 +155,7 @@ class AutoPatchCLI:
         return (
             f"Repo root: {self.repo_root}\n"
             f"Decision engine: {self.decision_engine.label}\n"
+            f"Edit drafter: {self.edit_drafter.label if self.edit_drafter else '(disabled)'}\n"
             f"Indexed entries: {summary['entries']} "
             f"(files: {summary['files']}, dirs: {summary['directories']}, java: {summary['java_files']})\n"
             f"Active scope: {active_scope}\n"
@@ -157,6 +164,35 @@ class AutoPatchCLI:
             f"Active findings: {self.session.active_findings_id or '(none)'}\n"
             f"Pending edit: {pending_edit}"
         )
+
+    def handle_draft_edit(self, parts: list[str]) -> str:
+        if self.repo_root is None:
+            return "No active project. Run /init [path] to create AutoPatch-J state."
+        if self.edit_drafter is None:
+            return "Edit drafter is disabled. Set OPENAI_API_KEY to enable /draft-edit."
+        if len(parts) != 3:
+            return (
+                "Usage: /draft-edit <file_path> <instruction>\n"
+                "Wrap the instruction in quotes if it contains spaces."
+            )
+
+        file_path = parts[1]
+        instruction = parts[2]
+        target = (self.repo_root / file_path).resolve()
+        try:
+            target.relative_to(self.repo_root.resolve())
+        except ValueError:
+            return f"Target file is outside the repository: {file_path}"
+        if not target.exists() or not target.is_file():
+            return f"Target file does not exist: {file_path}"
+
+        file_content = read_text(target)
+        try:
+            drafted = self.edit_drafter.draft_edit(file_path, instruction, file_content)
+        except Exception as exc:
+            return f"Draft edit failed: {exc}"
+
+        return self.store_pending_from_draft(drafted)
 
     def handle_preview_edit(self, parts: list[str]) -> str:
         if self.repo_root is None:
@@ -176,18 +212,58 @@ class AutoPatchCLI:
                 "new_string": parts[3],
             },
         )
-        preview = self.extract_edit_preview(execution, parts[1])
+        return self.store_pending_from_preview(
+            file_path=parts[1],
+            old_string=parts[2],
+            new_string=parts[3],
+            preview=self.extract_edit_preview(execution, parts[1]),
+            prefix="Pending edit updated.",
+        )
+
+    def store_pending_from_draft(self, drafted: DraftedEdit) -> str:
+        execution = self.tool_registry.execute(
+            repo_root=self.repo_root,
+            tool_name="preview_search_replace",
+            tool_args={
+                "file_path": drafted.file_path,
+                "old_string": drafted.old_string,
+                "new_string": drafted.new_string,
+            },
+        )
+        preview = self.extract_edit_preview(execution, drafted.file_path)
+        header = [
+            "Drafted edit:",
+            f"- file: {drafted.file_path}",
+            f"- rationale: {drafted.rationale or '(none)'}",
+        ]
+        body = self.store_pending_from_preview(
+            file_path=drafted.file_path,
+            old_string=drafted.old_string,
+            new_string=drafted.new_string,
+            preview=preview,
+            prefix="Pending edit updated from draft.",
+        )
+        return "\n".join(header + ["", body])
+
+    def store_pending_from_preview(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        preview: EditPreview,
+        prefix: str,
+    ) -> str:
         if preview.status == "ok":
             self.session.pending_edit = PendingEdit(
-                file_path=parts[1],
-                old_string=parts[2],
-                new_string=parts[3],
+                file_path=file_path,
+                old_string=old_string,
+                new_string=new_string,
                 diff=preview.diff,
                 validation_status=preview.validation.status,
                 validation_message=preview.validation.message,
             )
             save_session(self.repo_root, self.session)
-            return format_edit_preview(preview, prefix="Pending edit updated.")
+            return format_edit_preview(preview, prefix=prefix)
 
         self.session.pending_edit = None
         save_session(self.repo_root, self.session)
@@ -412,6 +488,13 @@ def format_edit_preview(preview: EditPreview, prefix: str) -> str:
     if preview.diff:
         lines.append(preview.diff)
     return "\n".join(lines)
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="replace")
 
 
 def main() -> int:
