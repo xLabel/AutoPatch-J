@@ -14,7 +14,13 @@ from autopatch_j.context import build_context_preview
 from autopatch_j.decision_engine import AgentDecision, DecisionContext, build_default_decision_engine
 from autopatch_j.edit_drafter import DraftedEdit, build_default_edit_drafter
 from autopatch_j.indexer import IndexEntry, summarize_index
-from autopatch_j.intent import has_apply_intent, has_patch_intent, has_scan_intent
+from autopatch_j.intent import (
+    has_apply_intent,
+    has_findings_review_intent,
+    has_patch_intent,
+    has_pending_review_intent,
+    has_scan_intent,
+)
 from autopatch_j.mentions import MentionResolution, ParsedPrompt, parse_prompt
 from autopatch_j.project import ProjectSummary, discover_repo_root, initialize_project, load_project
 from autopatch_j.session import PendingEdit, SessionState, save_session
@@ -46,8 +52,10 @@ Prompt rules:
   - Use @path or @filename to bind scope, for example:
       @src/main/java/com/foo/UserService.java scan this file
   - After findings are ready, you can say:
+      列出问题
       修复第1个问题
       @src/main/java/com/foo/UserService.java 生成 patch
+      看看 patch
       应用这个patch
   - Ambiguous mentions will show candidate paths for selection.
 """
@@ -110,6 +118,11 @@ class AutoPatchCLI:
             response = self.handle_prompt_apply()
             save_session(self.repo_root, self.session)
             return response
+
+        prompt_review_response = self.handle_prompt_review(parsed)
+        if prompt_review_response is not None:
+            save_session(self.repo_root, self.session)
+            return self.render_prompt_response(parsed, prompt_review_response)
 
         prompt_patch_response = self.handle_prompt_patch(parsed)
         if prompt_patch_response is not None:
@@ -464,6 +477,15 @@ class AutoPatchCLI:
         if self.session.pending_edit is None:
             return "No pending edit to apply."
         return self.handle_apply_pending()
+
+    def handle_prompt_review(self, parsed: ParsedPrompt) -> str | None:
+        if has_pending_review_intent(parsed.clean_text):
+            return self.handle_show_pending()
+        if not has_findings_review_intent(parsed.clean_text):
+            return None
+        if self.session.active_findings_id is None and has_scan_intent(parsed.clean_text):
+            return None
+        return self.handle_show_findings(None)
 
     def handle_prompt_patch(self, parsed: ParsedPrompt) -> str | None:
         if not has_patch_intent(parsed.clean_text):
