@@ -73,18 +73,16 @@ class DoctorReportTests(unittest.TestCase):
         self.assertIn("- scanner: error", output)
         self.assertIn("- openai_decision_engine: unavailable", output)
 
-    def test_doctor_alias_still_works(self) -> None:
+    def test_doctor_command_is_no_longer_supported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir)
             initialize_project(repo_root)
             cli = AutoPatchCLI(repo_root)
 
-            with patch.dict(os.environ, {}, clear=True):
-                with patch("autopatch_j.doctor.shutil.which", return_value=None):
-                    with patch("autopatch_j.doctor.importlib.util.find_spec", return_value=None):
-                        output = cli.handle_command("/doctor")
+            output = cli.handle_command("/doctor")
 
-        self.assertIn("Environment report:", output)
+        self.assertIn("Unknown command: /doctor", output)
+        self.assertIn("/env", output)
 
 
 if __name__ == "__main__":

@@ -51,7 +51,6 @@ from autopatch_j.validators.rescan import RescanValidationResult, validate_post_
 HELP_TEXT = """Commands:
   /init [path]   Initialize the current repository for AutoPatch-J
   /env          Inspect runtime prerequisites and feature availability
-  /doctor       Compatibility alias for /env
   /scanner      Show the current scanner configuration
   /scanner semgrep [config]
                 Persist project scanner selection and optional Semgrep config
@@ -258,7 +257,7 @@ class AutoPatchCLI:
         if command == "/show-validation":
             artifact_id = parts[1] if len(parts) > 1 else None
             return self.handle_show_validation(artifact_id)
-        if command in {"/env", "/doctor"}:
+        if command == "/env":
             return self.handle_env()
         if command == "/scanner":
             return self.handle_scanner(parts)

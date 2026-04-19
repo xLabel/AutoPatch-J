@@ -74,7 +74,6 @@ Inside the shell:
   - Tree-sitter Java syntax validation
   - OpenAI decision routing
   - OpenAI patch drafting
-- `/doctor` is kept as a compatibility alias
 
 The scan wrapper expects `semgrep` on `PATH`. If it is missing, the CLI returns a clear error and keeps session state intact.
 
