@@ -85,6 +85,14 @@ class ScanResult:
         )
 
 
+@dataclass(slots=True)
+class ScannerCatalogEntry:
+    name: str
+    selected: bool
+    status: str
+    message: str
+
+
 class JavaScanner(Protocol):
     @property
     def label(self) -> str:
