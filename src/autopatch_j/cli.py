@@ -46,13 +46,13 @@ from autopatch_j.mentions import (
     parse_prompt,
 )
 from autopatch_j.llm_config import missing_llm_config_message
+from autopatch_j.agent import AgentAction, AgentContext, AgentResult, build_default_agent
 from autopatch_j.project import (
     discover_repo_root,
     initialize_project,
     load_project,
     refresh_project_index,
 )
-from autopatch_j.planner import AgentAction, AgentDecision, DecisionContext, build_default_planner
 from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
 from autopatch_j.scanners import (
     ALL_SCANNERS,
@@ -100,7 +100,7 @@ class AutoPatchCLI:
         self.session = SessionState()
         self.index: list[IndexEntry] = []
         self._completion_matches: list[str] = []
-        self.planner = build_default_planner()
+        self.agent = build_default_agent()
         self.edit_drafter = build_default_edit_drafter()
         if self.repo_root is not None:
             self.session, self.index = load_project(self.repo_root)
@@ -198,8 +198,8 @@ class AutoPatchCLI:
                 stream_started = True
             print(delta, end="", flush=True)
 
-        decision = self.planner.decide(
-            DecisionContext(
+        decision = self.agent.chat(
+            AgentContext(
                 user_text=parsed.clean_text,
                 scoped_paths=self.effective_scope(parsed),
                 has_active_findings=self.session.active_findings_id is not None,
@@ -276,7 +276,7 @@ class AutoPatchCLI:
         return build_readiness_snapshot(
             repo_root=self.repo_root,
             scanner=self.scanner,
-            planner_label=self.planner.label,
+            agent_label=self.agent.label,
             edit_drafter_label=self.edit_drafter.label if self.edit_drafter else None,
         )
 
@@ -439,7 +439,7 @@ class AutoPatchCLI:
         self,
         parsed: ParsedPrompt,
         preview: str,
-        decision: AgentDecision,
+        decision: AgentResult,
     ) -> str:
         if decision.action == AgentAction.SCAN:
             execution = self.run_tool(decision)
@@ -453,7 +453,7 @@ class AutoPatchCLI:
             return ""
         return f"{preview}\n\n{decision.message}"
 
-    def handle_planned_patch(self, parsed: ParsedPrompt, decision: AgentDecision) -> str:
+    def handle_planned_patch(self, parsed: ParsedPrompt, decision: AgentResult) -> str:
         if self.session.pending_edit is not None:
             return self.handle_pending_patch_revision(parsed)
         artifact_id = self.session.active_findings_id
@@ -825,7 +825,7 @@ class AutoPatchCLI:
             if resolution.selected is not None
         ]
 
-    def run_tool(self, decision: AgentDecision) -> ToolExecutionResult:
+    def run_tool(self, decision: AgentResult) -> ToolExecutionResult:
         return execute_tool(
             repo_root=self.repo_root,
             tool_name=decision.tool_name or "",

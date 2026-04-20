@@ -33,14 +33,14 @@ class ReadinessReport:
 def build_readiness_report(
     repo_root: Path | None,
     scanner: ReadinessScanner,
-    planner_label: str,
+    agent_label: str,
     edit_drafter_label: str | None,
 ) -> ReadinessReport:
     checks = [
         build_project_check(repo_root),
         build_scanner_check(repo_root, scanner),
         build_tree_sitter_check(),
-        build_llm_planner_check(planner_label),
+        build_llm_agent_check(agent_label),
         build_llm_drafter_check(edit_drafter_label),
     ]
     return ReadinessReport(checks=checks)
@@ -105,17 +105,17 @@ def build_tree_sitter_check() -> ReadinessCheck:
     )
 
 
-def build_llm_planner_check(planner_label: str) -> ReadinessCheck:
+def build_llm_agent_check(agent_label: str) -> ReadinessCheck:
     if not has_llm_config():
         return ReadinessCheck(
-            name="llm_planner",
+            name="llm_agent",
             status="unavailable",
-            message=missing_llm_config_message("自然语言 Agent planning"),
+            message=missing_llm_config_message("自然语言 Agent"),
         )
     return ReadinessCheck(
-        name="llm_planner",
+        name="llm_agent",
         status="ok",
-        message=f"LLM planner 已启用：{planner_label}。",
+        message=f"LLM Agent 已启用：{agent_label}。",
     )
 
 
