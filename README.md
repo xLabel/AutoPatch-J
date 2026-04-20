@@ -106,14 +106,14 @@ The bootstrap script installs those packages into the project-local `.venv`.
 - Java edits require Tree-sitter validation before apply; if `tree_sitter` or `tree_sitter_java` is missing, preview still works but apply is blocked
 - after apply, AutoPatch-J records a post-apply ReScan validation artifact
 
-## Decision Engine
+## Agent decision
 
 - default without an LLM key: natural-language agent actions are unavailable
-- with an OpenAI-compatible endpoint, the LLM planner chooses `scan`, `draft_patch`, or `respond`
+- with an OpenAI-compatible endpoint, the LLM planner chooses `scan`, `patch`, or `answer`
 - planner calls use streaming so reading and routing do not feel frozen
 - patch drafting uses non-streaming JSON mode because the full JSON object must be parsed before preview
 - optional environment variables:
-  - `AUTOPATCH_LLM_API_KEY`
-  - `AUTOPATCH_LLM_BASE_URL`
-  - `AUTOPATCH_LLM_MODEL`
-  - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are accepted as compatibility aliases
+  - `LLM_API_KEY`
+  - `LLM_BASE_URL`
+  - `LLM_MODEL`
+  - `OPENAI_API_KEY` and `OPENAI_BASE_URL` are accepted as OpenAI-compatible aliases
