@@ -5,14 +5,14 @@ from pathlib import Path
 from typing import cast
 
 from autopatch_j.scanners import DEFAULT_SCANNER_NAME, JavaScanner, ScanResult, get_scanner
-from autopatch_j.tools.base import Tool, ToolExecutionResult
+from autopatch_j.tools.base import Tool, ToolExecutionResult, ToolName
 
 
 @dataclass(slots=True)
-class ScanJavaTool(Tool):
+class ScanTool(Tool):
     scanner: JavaScanner | None = None
 
-    name = "scan_java"
+    name = ToolName.SCAN
     description = "Run the Java static scanner for the selected repository scope."
     parameters = {
         "type": "object",
@@ -27,7 +27,7 @@ class ScanJavaTool(Tool):
     }
 
     def execute(self, repo_root: Path, scope: list[str] | None = None) -> ToolExecutionResult:
-        result = scan_java(repo_root, scope or ["."], scanner=self.scanner)
+        result = scan(repo_root, scope or ["."], scanner=self.scanner)
         return ToolExecutionResult(
             tool_name=self.name,
             status=result.status,
@@ -36,7 +36,7 @@ class ScanJavaTool(Tool):
         )
 
 
-def scan_java(
+def scan(
     repo_root: Path,
     scope: list[str],
     scanner: JavaScanner | None = None,

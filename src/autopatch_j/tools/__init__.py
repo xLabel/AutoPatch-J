@@ -4,14 +4,14 @@ from pathlib import Path
 from typing import Any
 
 from autopatch_j.scanners import JavaScanner
-from autopatch_j.tools.base import Tool, ToolExecutionResult
+from autopatch_j.tools.base import Tool, ToolExecutionResult, ToolName
 from autopatch_j.tools.edit import ApplySearchReplaceTool, PreviewSearchReplaceTool
-from autopatch_j.tools.scan_java import ScanJavaTool
+from autopatch_j.tools.scan import ScanTool
 
 
 def build_tools(scanner: JavaScanner | None = None) -> list[Tool]:
     return [
-        ScanJavaTool(scanner=scanner),
+        ScanTool(scanner=scanner),
         PreviewSearchReplaceTool(),
         ApplySearchReplaceTool(),
     ]
@@ -20,7 +20,7 @@ def build_tools(scanner: JavaScanner | None = None) -> list[Tool]:
 ALL_TOOLS = build_tools()
 
 
-def get_tool(name: str, tools: list[Tool] | None = None) -> Tool | None:
+def get_tool(name: ToolName, tools: list[Tool] | None = None) -> Tool | None:
     for tool in tools or ALL_TOOLS:
         if tool.name == name:
             return tool
@@ -29,7 +29,7 @@ def get_tool(name: str, tools: list[Tool] | None = None) -> Tool | None:
 
 def execute_tool(
     repo_root: Path,
-    tool_name: str,
+    tool_name: ToolName,
     tool_args: dict[str, Any],
     tools: list[Tool] | None = None,
 ) -> ToolExecutionResult:

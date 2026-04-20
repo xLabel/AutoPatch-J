@@ -86,9 +86,9 @@ def validate_post_apply_rescan(
         )
 
     if scanner is None:
-        from autopatch_j.tools.scan_java import scan_java
+        from autopatch_j.tools.scan import scan
 
-        scanner = scan_java
+        scanner = scan
 
     rescan = scanner(repo_root, [pending.file_path])
     if rescan.status != "ok":

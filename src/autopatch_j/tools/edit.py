@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
 
-from autopatch_j.tools.base import Tool, ToolExecutionResult
+from autopatch_j.tools.base import Tool, ToolExecutionResult, ToolName
 from autopatch_j.validators import SyntaxValidationResult, SyntaxValidator, TreeSitterJavaValidator
 
 
@@ -26,7 +26,7 @@ class EditPreview:
 
 
 class PreviewSearchReplaceTool(Tool):
-    name = "preview_search_replace"
+    name = ToolName.PREVIEW_SEARCH_REPLACE
     description = "Preview a single search-replace edit and validate Java syntax when possible."
     parameters = {
         "type": "object",
@@ -62,7 +62,7 @@ class PreviewSearchReplaceTool(Tool):
 
 
 class ApplySearchReplaceTool(Tool):
-    name = "apply_search_replace"
+    name = ToolName.APPLY_SEARCH_REPLACE
     description = "Apply a single search-replace edit after preview validation passes."
     parameters = PreviewSearchReplaceTool.parameters
 

@@ -36,7 +36,7 @@ from autopatch_j.project import (
     load_project,
     refresh_project_index,
 )
-from autopatch_j.planner import AgentDecision, DecisionContext, build_default_planner
+from autopatch_j.planner import AgentAction, AgentDecision, DecisionContext, build_default_planner
 from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
 from autopatch_j.scanners import (
     ALL_SCANNERS,
@@ -47,7 +47,7 @@ from autopatch_j.scanners import (
 )
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 from autopatch_j.session import PendingEdit, SessionState, save_session
-from autopatch_j.tools import ToolExecutionResult, build_tools, execute_tool
+from autopatch_j.tools import ToolExecutionResult, ToolName, build_tools, execute_tool
 from autopatch_j.tools.edit import EditPreview
 from autopatch_j.validators import (
     RescanValidationResult,
@@ -323,7 +323,7 @@ class AutoPatchCLI:
 
         execution = execute_tool(
             repo_root=self.repo_root,
-            tool_name="preview_search_replace",
+            tool_name=ToolName.PREVIEW_SEARCH_REPLACE,
             tool_args={
                 "file_path": parts[1],
                 "old_string": parts[2],
@@ -440,7 +440,7 @@ class AutoPatchCLI:
 
         execution = execute_tool(
             repo_root=self.repo_root,
-            tool_name="apply_search_replace",
+            tool_name=ToolName.APPLY_SEARCH_REPLACE,
             tool_args={
                 "file_path": pending.file_path,
                 "old_string": pending.old_string,
@@ -505,12 +505,12 @@ class AutoPatchCLI:
         preview: str,
         decision: AgentDecision,
     ) -> str:
-        if decision.action == "scan":
+        if decision.action == AgentAction.SCAN:
             execution = self.run_tool(decision)
             result = self.extract_scan_result(execution)
             self.apply_scan_result(result)
             return f"{preview}\n\n{format_scan_result(result)}"
-        if decision.action == "patch":
+        if decision.action == AgentAction.PATCH:
             body = self.handle_planned_patch(parsed, decision)
             return self.render_prompt_response(parsed, body)
         if decision.streamed:
@@ -934,7 +934,7 @@ class AutoPatchCLI:
     def preview_drafted_edit(self, drafted: DraftedEdit) -> EditPreview:
         execution = execute_tool(
             repo_root=self.repo_root,
-            tool_name="preview_search_replace",
+            tool_name=ToolName.PREVIEW_SEARCH_REPLACE,
             tool_args={
                 "file_path": drafted.file_path,
                 "old_string": drafted.old_string,

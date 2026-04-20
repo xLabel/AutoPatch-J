@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Protocol
+from enum import StrEnum
+from typing import Callable, Protocol
 
 from autopatch_j.llm import ChatCompletionClient, LLMResponse, build_default_llm_client
+from autopatch_j.tools.base import ToolName
+
+
+class AgentAction(StrEnum):
+    ANSWER = "answer"
+    SCAN = "scan"
+    PATCH = "patch"
 
 
 @dataclass(slots=True)
@@ -18,9 +26,9 @@ class DecisionContext:
 
 @dataclass(slots=True)
 class AgentDecision:
-    action: Literal["answer", "scan", "patch"]
+    action: AgentAction
     message: str
-    tool_name: str | None = None
+    tool_name: ToolName | None = None
     tool_args: dict[str, object] = field(default_factory=dict)
     streamed: bool = False
 
@@ -42,7 +50,7 @@ class UnavailablePlanner:
     def decide(self, context: DecisionContext) -> AgentDecision:
         del context
         return AgentDecision(
-            action="answer",
+            action=AgentAction.ANSWER,
             message=(
                 "LLM planner is unavailable. Set LLM_API_KEY or OPENAI_API_KEY "
                 "to enable natural-language agent actions."
@@ -70,7 +78,7 @@ class LLMPlanner:
             return parse_llm_decision_response(response, context)
         except Exception as exc:
             return AgentDecision(
-                action="answer",
+                action=AgentAction.ANSWER,
                 message=f"LLM planner failed after retries: {exc}",
             )
 
@@ -102,20 +110,20 @@ def parse_llm_decision_response(
             if not isinstance(scope, list):
                 scope = context.scoped_paths or ["."]
             return AgentDecision(
-                action="scan",
+                action=AgentAction.SCAN,
                 message="LLM planner chose to run the Java scanner.",
-                tool_name="scan_java",
+                tool_name=ToolName.SCAN,
                 tool_args={"scope": [str(item) for item in scope]},
             )
         if tool_call.name == "patch":
             return AgentDecision(
-                action="patch",
+                action=AgentAction.PATCH,
                 message="LLM planner chose to generate a patch.",
                 tool_args=dict(tool_call.arguments),
             )
 
     return AgentDecision(
-        action="answer",
+        action=AgentAction.ANSWER,
         message=response.content or "LLM planner returned no action.",
         streamed=bool(response.content and context.on_answer_delta),
     )
