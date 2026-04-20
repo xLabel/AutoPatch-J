@@ -39,10 +39,9 @@ from autopatch_j.project import (
 from autopatch_j.planner import AgentDecision, DecisionContext, build_default_planner
 from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
 from autopatch_j.scanners import (
+    ALL_SCANNERS,
     ScanResult,
-    ScannerCatalogEntry,
     build_java_scanner,
-    build_scanner_catalog,
 )
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 from autopatch_j.session import PendingEdit, SessionState, save_session
@@ -265,7 +264,7 @@ class AutoPatchCLI:
         )
 
     def handle_scanners(self) -> str:
-        return format_scanners_report(build_scanner_catalog(self.repo_root))
+        return format_scanners_report(ALL_SCANNERS, self.repo_root)
 
     def format_status(self) -> str:
         if self.repo_root is None:
@@ -1024,12 +1023,13 @@ def format_readiness_report(report: ReadinessReport) -> str:
     return "\n".join(lines)
 
 
-def format_scanners_report(entries: list[ScannerCatalogEntry]) -> str:
+def format_scanners_report(scanners: list[object], repo_root: Path | None) -> str:
     lines = ["Java scanners:"]
-    for entry in entries:
-        selector = "selected" if entry.selected else "disabled"
-        lines.append(f"- [{selector}] {entry.name}: {entry.status}")
-        lines.append(f"  {entry.message}")
+    for scanner in scanners:
+        scanner_meta = scanner.get_scanner(repo_root)
+        selector = "selected" if scanner_meta.selected else "disabled"
+        lines.append(f"- [{selector}] {scanner_meta.name}: {scanner_meta.status}")
+        lines.append(f"  {scanner_meta.message}")
     return "\n".join(lines)
 
 

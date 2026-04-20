@@ -86,7 +86,7 @@ class ScanResult:
 
 
 @dataclass(slots=True)
-class ScannerCatalogEntry:
+class ScannerMeta:
     name: str
     selected: bool
     status: str

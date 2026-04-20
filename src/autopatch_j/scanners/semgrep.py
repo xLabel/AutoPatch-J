@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterator
 
 from autopatch_j.paths import project_state_dir, user_state_dir
-from autopatch_j.scanners.base import Finding, ScanResult
+from autopatch_j.scanners.base import Finding, ScannerMeta, ScanResult
 
 DEFAULT_SEMGREP_VERSION = "1.160.0"
 DEFAULT_SEMGREP_RULE_PATH = Path("resources") / "semgrep" / "rules" / "java.yml"
@@ -86,6 +86,27 @@ class SemgrepScanner:
         if user_runtime is not None:
             return user_runtime, "AutoPatch-J managed semgrep"
         return None
+
+    def get_scanner(self, repo_root: Path | None = None) -> ScannerMeta:
+        resolved = self.resolve_binary_with_source(repo_root)
+        if resolved is None:
+            return ScannerMeta(
+                name=self.name,
+                selected=True,
+                status="selected, runtime missing",
+                message=(
+                    "已默认选中；AutoPatch-J 管理的 Semgrep 环境缺失或不可执行。"
+                    "执行 /init 时会自动初始化到 ~/.autopatch-j。"
+                ),
+            )
+
+        semgrep_path, _source = resolved
+        return ScannerMeta(
+            name=self.name,
+            selected=True,
+            status="selected, ready",
+            message=f"已默认选中；使用 {semgrep_path}",
+        )
 
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
         message = (
