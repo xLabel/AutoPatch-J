@@ -85,7 +85,8 @@ class SemgrepScanner:
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
         message = (
             "Semgrep runtime binary is missing or not executable. Expected: "
-            f"{repo_runtime_binary_path()}"
+            f"{repo_runtime_binary_path()}. Install it with: "
+            "python3 scripts/install_semgrep_runtime.py --source /path/to/semgrep"
         )
         return ScanResult(
             engine="semgrep",
