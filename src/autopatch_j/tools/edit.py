@@ -5,7 +5,13 @@ from difflib import unified_diff
 from pathlib import Path
 
 from autopatch_j.tools.base import Tool, ToolExecutionResult, ToolName
-from autopatch_j.validators import SyntaxValidationResult, SyntaxValidator, TreeSitterJavaValidator
+from autopatch_j.validators import (
+    DEFAULT_VALIDATOR_NAME,
+    SyntaxValidationResult,
+    SyntaxValidator,
+    TreeSitterJavaValidator,
+    get_validator,
+)
 
 
 @dataclass(slots=True)
@@ -138,7 +144,8 @@ def preview_search_replace(
 
     updated = original.replace(edit.old_string, edit.new_string, 1)
     diff = build_unified_diff(edit.file_path, original, updated, context_lines=context_lines)
-    validation = (validator or TreeSitterJavaValidator()).validate(edit.file_path, updated)
+    active_validator = validator or get_validator(DEFAULT_VALIDATOR_NAME) or TreeSitterJavaValidator()
+    validation = active_validator.validate(edit.file_path, updated)
     return EditPreview(
         file_path=edit.file_path,
         status="ok",

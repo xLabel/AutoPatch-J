@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
+
+
+class ValidatorName(StrEnum):
+    TREE_SITTER_JAVA = "tree-sitter-java"
 
 
 @dataclass(slots=True)
@@ -18,6 +23,8 @@ class SyntaxValidator(Protocol):
 
 
 class TreeSitterJavaValidator:
+    name = ValidatorName.TREE_SITTER_JAVA
+
     def validate(self, file_path: str, source: str) -> SyntaxValidationResult:
         if Path(file_path).suffix.lower() != ".java":
             return SyntaxValidationResult(
