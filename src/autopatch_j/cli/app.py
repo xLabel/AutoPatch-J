@@ -4,11 +4,9 @@ import shlex
 from pathlib import Path
 from typing import cast
 
-try:
-    import readline
-except ImportError:  # pragma: no cover - platform dependent
-    readline = None
+from prompt_toolkit import PromptSession
 
+from autopatch_j.agent import AgentAction, AgentContext, AgentResult, build_default_agent
 from autopatch_j.artifacts import (
     load_scan_result,
     load_validation_result,
@@ -42,11 +40,11 @@ from autopatch_j.indexer import IndexEntry, summarize_index
 from autopatch_j.mentions import (
     MentionResolution,
     ParsedPrompt,
-    build_mention_completions,
     parse_prompt,
 )
 from autopatch_j.llm_config import missing_llm_config_message
-from autopatch_j.agent import AgentAction, AgentContext, AgentResult, build_default_agent
+from autopatch_j.cli.completer import MentionCompleter
+from autopatch_j.cli.render import CliRenderer
 from autopatch_j.project import (
     discover_repo_root,
     initialize_project,
@@ -97,9 +95,15 @@ class AutoPatchCLI:
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd.resolve()
         self.repo_root = discover_repo_root(self.cwd)
+        self.renderer = CliRenderer()
         self.session = SessionState()
         self.index: list[IndexEntry] = []
-        self._completion_matches: list[str] = []
+        self.prompt = PromptSession(
+            completer=MentionCompleter(
+                index=lambda: self.index,
+                recent_paths=self.completion_recent_paths,
+            )
+        )
         self.agent = build_default_agent()
         self.edit_drafter = build_default_edit_drafter()
         if self.repo_root is not None:
@@ -110,21 +114,20 @@ class AutoPatchCLI:
         self.tools = build_tools(scanner=self.scanner)
 
     def run(self) -> int:
-        self.configure_readline()
-        print("AutoPatch-J CLI")
+        self.renderer.print("AutoPatch-J CLI", style="bold")
         if self.repo_root is not None:
-            print(f"已加载项目：{self.repo_root}")
+            self.renderer.print(f"已加载项目：{self.repo_root}")
         else:
-            print("当前还没有初始化项目，请执行 /init。")
+            self.renderer.print("当前还没有初始化项目，请执行 /init。")
 
         while True:
             try:
-                raw = input("autopatch-j> ").strip()
+                raw = self.prompt.prompt("autopatch-j> ").strip()
             except EOFError:
-                print()
+                self.renderer.print()
                 return 0
             except KeyboardInterrupt:
-                print()
+                self.renderer.print()
                 continue
 
             if not raw:
@@ -134,37 +137,10 @@ class AutoPatchCLI:
 
             response = self.handle_line(raw)
             if response:
-                print(response)
+                self.renderer.print(response)
 
-    def configure_readline(self) -> None:
-        if readline is None:
-            return
-
-        try:
-            binding = "tab: complete"
-            if "libedit" in (getattr(readline, "__doc__", "") or ""):
-                binding = "bind ^I rl_complete"
-            readline.parse_and_bind(binding)
-            delimiters = readline.get_completer_delims()
-            for char in "@/.-":
-                delimiters = delimiters.replace(char, "")
-            readline.set_completer_delims(delimiters)
-            readline.set_completer(self.complete_input)
-        except Exception:
-            return
-
-    def complete_input(self, text: str, state: int) -> str | None:
-        if state == 0:
-            recent_paths = self.session.recent_mentions or self.session.active_scope
-            self._completion_matches = build_mention_completions(
-                index=self.index,
-                token=text,
-                recent_paths=recent_paths,
-            )
-
-        if state >= len(self._completion_matches):
-            return None
-        return self._completion_matches[state]
+    def completion_recent_paths(self) -> list[str]:
+        return self.session.recent_mentions or self.session.active_scope
 
     def handle_line(self, raw: str) -> str:
         if raw.startswith("/"):
@@ -193,10 +169,10 @@ class AutoPatchCLI:
                 return
             if not stream_started:
                 if preview:
-                    print(preview)
-                    print()
+                    self.renderer.print(preview)
+                    self.renderer.print()
                 stream_started = True
-            print(delta, end="", flush=True)
+            self.renderer.print(delta, end="")
 
         decision = self.agent.chat(
             AgentContext(
@@ -210,7 +186,7 @@ class AutoPatchCLI:
 
         response = self.handle_agent_decision(parsed, preview, decision)
         if decision.streamed and stream_started:
-            print()
+            self.renderer.print()
         save_session(self.repo_root, self.session)
         return response
 
@@ -774,7 +750,7 @@ class AutoPatchCLI:
             if resolution.status == "resolved":
                 continue
             if resolution.status == "missing":
-                print(f"没有路径匹配 {resolution.raw}。")
+                self.renderer.print(f"没有路径匹配 {resolution.raw}。")
                 return False
             if resolution.status == "ambiguous":
                 selected = self.prompt_for_candidate(resolution)
@@ -785,21 +761,23 @@ class AutoPatchCLI:
         return True
 
     def prompt_for_candidate(self, resolution: MentionResolution) -> IndexEntry | None:
-        print(f"{resolution.raw} matched multiple paths:")
+        self.renderer.print(f"{resolution.raw} matched multiple paths:")
         for idx, candidate in enumerate(resolution.candidates, start=1):
-            print(f"  {idx}. {candidate.entry.path} ({candidate.entry.kind}, score={candidate.score})")
+            self.renderer.print(
+                f"  {idx}. {candidate.entry.path} ({candidate.entry.kind}, score={candidate.score})"
+            )
 
         while True:
-            choice = input("请选择候选序号，或直接回车取消：").strip()
+            choice = self.prompt.prompt("请选择候选序号，或直接回车取消：").strip()
             if not choice:
                 return None
             if not choice.isdigit():
-                print("请输入数字。")
+                self.renderer.print("请输入数字。")
                 continue
             index = int(choice)
             if 1 <= index <= len(resolution.candidates):
                 return resolution.candidates[index - 1].entry
-            print("选择超出范围。")
+            self.renderer.print("选择超出范围。")
 
     def update_session_from_prompt(self, parsed: ParsedPrompt) -> None:
         resolved_paths = [
