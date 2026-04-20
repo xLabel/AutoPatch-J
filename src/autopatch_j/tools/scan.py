@@ -51,7 +51,7 @@ def scan(
             scope=list(scope),
             targets=[],
             status="error",
-            message=f"Default scanner is unavailable: {DEFAULT_SCANNER_NAME}",
+            message=f"默认 scanner 不可用：{DEFAULT_SCANNER_NAME}",
             summary={"total": 0},
             findings=[],
         )

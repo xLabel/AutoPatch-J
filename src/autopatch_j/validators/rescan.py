@@ -66,7 +66,7 @@ def validate_post_apply_rescan(
         return (
             RescanValidationResult(
                 status="skipped",
-                message="Post-apply ReScan was skipped because this edit has no finding provenance.",
+                message="缺少 finding 来源信息，已跳过应用后 ReScan。",
                 source_path=pending.file_path,
             ),
             None,
@@ -76,7 +76,7 @@ def validate_post_apply_rescan(
         return (
             RescanValidationResult(
                 status="skipped",
-                message="Post-apply ReScan is only enforced for Java files.",
+                message="应用后 ReScan 只对 Java 文件强制执行。",
                 source_artifact_id=pending.source_artifact_id,
                 source_finding_index=pending.source_finding_index,
                 source_check_id=pending.source_check_id,
@@ -95,7 +95,7 @@ def validate_post_apply_rescan(
         return (
             RescanValidationResult(
                 status="error",
-                message=f"Post-apply ReScan failed: {rescan.message}",
+                message=f"应用后 ReScan 失败：{rescan.message}",
                 source_artifact_id=pending.source_artifact_id,
                 source_finding_index=pending.source_finding_index,
                 source_check_id=pending.source_check_id,
@@ -114,7 +114,7 @@ def validate_post_apply_rescan(
             RescanValidationResult(
                 status="failed",
                 message=(
-                    "Post-apply ReScan still reports the original finding on the edited file."
+                    "应用后 ReScan 仍然在被编辑文件中报告原问题。"
                 ),
                 source_artifact_id=pending.source_artifact_id,
                 source_finding_index=pending.source_finding_index,
@@ -128,7 +128,7 @@ def validate_post_apply_rescan(
     return (
         RescanValidationResult(
             status="ok",
-            message="Post-apply ReScan no longer reports the original finding on the edited file.",
+            message="应用后 ReScan 不再报告原问题。",
             source_artifact_id=pending.source_artifact_id,
             source_finding_index=pending.source_finding_index,
             source_check_id=pending.source_check_id,

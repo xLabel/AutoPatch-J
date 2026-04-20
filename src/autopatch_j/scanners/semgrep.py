@@ -42,7 +42,7 @@ class SemgrepScanner:
                 scope=list(scope),
                 targets=[],
                 status="skipped",
-                message="No Java files or directories were selected for scanning.",
+                message="没有选中可扫描的 Java 文件或目录。",
                 summary={"total": 0},
                 findings=[],
             )
@@ -84,7 +84,7 @@ class SemgrepScanner:
         del repo_root
         user_runtime = resolve_user_runtime_binary()
         if user_runtime is not None:
-            return user_runtime, "AutoPatch-J managed semgrep"
+            return user_runtime, "AutoPatch-J 管理的 Semgrep"
         return None
 
     def get_scanner(self, repo_root: Path | None = None) -> ScannerMeta:
@@ -110,8 +110,8 @@ class SemgrepScanner:
 
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
         message = (
-            "AutoPatch-J managed Semgrep is missing or not executable. Expected: "
-            f"{user_runtime_binary_path()}. Run /init to initialize scanner runtime."
+            "AutoPatch-J 管理的 Semgrep 缺失或不可执行。预期路径："
+            f"{user_runtime_binary_path()}。请执行 /init 初始化 scanner runtime。"
         )
         return ScanResult(
             engine="semgrep",
@@ -184,12 +184,12 @@ def install_managed_semgrep_runtime(
     python_executable: str = sys.executable,
 ) -> tuple[str, str]:
     if resolve_user_runtime_binary() is not None:
-        return "ok", f"AutoPatch-J managed Semgrep already exists: {user_runtime_binary_path()}"
+        return "ok", f"AutoPatch-J 管理的 Semgrep 已存在：{user_runtime_binary_path()}"
 
     semgrep_runtime_dir().mkdir(parents=True, exist_ok=True)
     with semgrep_install_lock():
         if resolve_user_runtime_binary() is not None:
-            return "ok", f"AutoPatch-J managed Semgrep already exists: {user_runtime_binary_path()}"
+            return "ok", f"AutoPatch-J 管理的 Semgrep 已存在：{user_runtime_binary_path()}"
 
         subprocess.run(
             [python_executable, "-m", "venv", str(semgrep_venv_dir())],
@@ -204,9 +204,9 @@ def install_managed_semgrep_runtime(
     if resolve_user_runtime_binary() is None:
         return (
             "error",
-            f"Semgrep installation completed but executable was not found at {user_runtime_binary_path()}",
+            f"Semgrep 安装完成，但未在预期路径找到可执行文件：{user_runtime_binary_path()}",
         )
-    return "ok", f"Installed AutoPatch-J managed Semgrep {version}: {user_runtime_binary_path()}"
+    return "ok", f"已安装 AutoPatch-J 管理的 Semgrep {version}：{user_runtime_binary_path()}"
 
 
 @contextmanager
@@ -225,7 +225,7 @@ def semgrep_install_lock(
                 yield
                 return
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Timed out waiting for Semgrep install lock: {lock_path}")
+                raise TimeoutError(f"等待 Semgrep 安装锁超时：{lock_path}")
             time.sleep(1)
 
     try:
@@ -323,7 +323,7 @@ def normalize_semgrep_payload(
         )
 
     summary = {"total": len(findings), **severity_counts}
-    message = f"Semgrep completed with {len(findings)} finding(s)."
+    message = f"Semgrep 扫描完成，发现 {len(findings)} 个问题。"
     return ScanResult(
         engine="semgrep",
         scope=scope,

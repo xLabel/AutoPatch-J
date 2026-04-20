@@ -106,12 +106,12 @@ def preview_search_replace(
         return EditPreview(
             file_path=edit.file_path,
             status="error",
-            message="Target file does not exist.",
+            message="目标文件不存在。",
             occurrences=0,
             diff="",
             validation=SyntaxValidationResult(
                 status="skipped",
-                message="Syntax validation was not attempted because the target file was missing.",
+                message="目标文件缺失，已跳过语法校验。",
             ),
         )
 
@@ -126,7 +126,7 @@ def preview_search_replace(
             diff="",
             validation=SyntaxValidationResult(
                 status="skipped",
-                message="Syntax validation was not attempted because the edit could not be previewed.",
+                message="edit 无法预览，已跳过语法校验。",
             ),
         )
     if occurrences > 1:
@@ -138,7 +138,7 @@ def preview_search_replace(
             diff="",
             validation=SyntaxValidationResult(
                 status="skipped",
-                message="Syntax validation was not attempted because the edit was ambiguous.",
+                message="edit 匹配位置不唯一，已跳过语法校验。",
             ),
         )
 
@@ -149,7 +149,7 @@ def preview_search_replace(
     return EditPreview(
         file_path=edit.file_path,
         status="ok",
-        message="Edit preview generated successfully.",
+        message="edit 预览生成成功。",
         occurrences=1,
         diff=diff,
         validation=validation,
@@ -175,8 +175,8 @@ def apply_search_replace(
             file_path=edit.file_path,
             status="blocked",
             message=(
-                "Java edit apply is blocked until syntax validation passes. "
-                f"Current validation status: {preview.validation.status}."
+                "Java edit 语法校验通过前禁止应用。"
+                f"当前校验状态：{preview.validation.status}。"
             ),
             occurrences=preview.occurrences,
             diff=preview.diff,

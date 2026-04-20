@@ -38,6 +38,6 @@ def execute_tool(
         return ToolExecutionResult(
             tool_name=tool_name,
             status="error",
-            message=f"Unsupported tool: {tool_name}",
+            message=f"不支持的 tool：{tool_name}",
         )
     return tool.execute(repo_root=repo_root, **tool_args)

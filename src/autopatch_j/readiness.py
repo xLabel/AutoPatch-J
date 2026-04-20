@@ -51,12 +51,12 @@ def build_project_check(repo_root: Path | None) -> ReadinessCheck:
         return ReadinessCheck(
             name="project",
             status="unavailable",
-            message="No active project. Run /init to initialize repository state.",
+            message="当前没有已初始化项目，请执行 /init。",
         )
     return ReadinessCheck(
         name="project",
         status="ok",
-        message=f"Active project: {repo_root}",
+        message=f"当前项目：{repo_root}",
     )
 
 
@@ -67,7 +67,7 @@ def build_scanner_check(repo_root: Path | None, scanner: ReadinessScanner) -> Re
             name="scanner",
             status="ok",
             message=(
-                f"Scanner ready: {scanner.label}. "
+                f"Scanner 就绪：{scanner.label}。"
                 f"{scanner_meta.message}"
             ),
         )
@@ -75,7 +75,7 @@ def build_scanner_check(repo_root: Path | None, scanner: ReadinessScanner) -> Re
         name="scanner",
         status="error",
         message=(
-            f"Scanner configured as {scanner.label}, but it is not ready. "
+            f"Scanner 已配置为 {scanner.label}，但还未就绪。"
             f"{scanner_meta.message}"
         ),
     )
@@ -88,7 +88,7 @@ def build_tree_sitter_check() -> ReadinessCheck:
         return ReadinessCheck(
             name="java_syntax_validator",
             status="ok",
-            message="Tree-sitter Java syntax validation is available through Python modules.",
+            message="Tree-sitter Java 语法校验可用。",
         )
     missing: list[str] = []
     if not has_tree_sitter:
@@ -99,8 +99,8 @@ def build_tree_sitter_check() -> ReadinessCheck:
         name="java_syntax_validator",
         status="unavailable",
         message=(
-            "Tree-sitter Java syntax validation is unavailable. Missing Python modules: "
-            f"{', '.join(missing)}. Install packages: tree-sitter, tree-sitter-java."
+            "Tree-sitter Java 语法校验不可用。缺失 Python 模块："
+            f"{', '.join(missing)}。请安装：tree-sitter, tree-sitter-java。"
         ),
     )
 
@@ -115,7 +115,7 @@ def build_llm_planner_check(planner_label: str) -> ReadinessCheck:
     return ReadinessCheck(
         name="llm_planner",
         status="ok",
-        message=f"LLM planner is enabled: {planner_label}.",
+        message=f"LLM planner 已启用：{planner_label}。",
     )
 
 
@@ -129,5 +129,5 @@ def build_llm_drafter_check(edit_drafter_label: str | None) -> ReadinessCheck:
     return ReadinessCheck(
         name="llm_patch_drafter",
         status="ok",
-        message=f"LLM patch drafter is enabled: {edit_drafter_label or 'configured LLM'}.",
+        message=f"LLM patch drafter 已启用：{edit_drafter_label or 'configured LLM'}。",
     )

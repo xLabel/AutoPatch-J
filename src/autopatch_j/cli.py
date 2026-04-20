@@ -70,26 +70,26 @@ from autopatch_j.validators import (
     validate_post_apply_rescan,
 )
 
-HELP_TEXT = """Commands:
-  /init         Initialize the current repository for AutoPatch-J
-  /status       Show project readiness and current work summary
-  /scanners     Show Java static scanner choices
-  /reindex       Refresh repository index for @mention and scope lookup
-  /help          Show this message
-  /quit          Exit the CLI
+HELP_TEXT = """命令：
+  /init         初始化当前 Java 仓库
+  /status       查看项目状态和运行环境
+  /scanners     查看 Java 静态扫描器
+  /reindex      刷新 @mention 路径索引
+  /help         查看帮助
+  /quit         退出 CLI
 
-Prompt rules:
-  - Use @path or @filename to bind scope, for example:
-      @src/main/java/com/foo/UserService.java scan this file
-  - Press Tab after typing @query to autocomplete candidate paths.
-  - After findings are ready, you can say:
+提示词规则：
+  - 使用 @path 或 @filename 绑定代码范围，例如：
+      @src/main/java/com/foo/UserService.java 扫描这个文件
+  - 输入 @query 后按 Tab，可以补全候选路径。
+  - 扫描结果就绪后，可以继续输入：
       列出问题
       修复第1个问题
       @src/main/java/com/foo/UserService.java 生成 patch
-  - After a patch is drafted, choose exactly one option:
+  - patch 生成后，只能选择：
       apply
       discard
-  - Ambiguous mentions will show candidate paths for selection.
+  - 如果 @mention 命中多个路径，CLI 会展示候选项让你选择。
 """
 
 
@@ -113,9 +113,9 @@ class AutoPatchCLI:
         self.configure_readline()
         print("AutoPatch-J CLI")
         if self.repo_root is not None:
-            print(f"Loaded project: {self.repo_root}")
+            print(f"已加载项目：{self.repo_root}")
         else:
-            print("No project initialized yet. Run /init to start.")
+            print("当前还没有初始化项目，请执行 /init。")
 
         while True:
             try:
@@ -171,7 +171,7 @@ class AutoPatchCLI:
             return self.handle_command(raw)
 
         if self.repo_root is None:
-            return "No active project. Run /init before entering prompts."
+            return "当前没有已初始化项目，请先执行 /init。"
 
         menu_response = self.handle_pending_menu_choice(raw)
         if menu_response is not None:
@@ -179,7 +179,7 @@ class AutoPatchCLI:
 
         parsed = parse_prompt(raw, self.index)
         if not self.resolve_mentions_interactively(parsed):
-            return "Prompt cancelled."
+            return "提示词已取消。"
 
         self.update_session_from_prompt(parsed)
         mention_context = build_mention_context_text(self.repo_root, parsed)
@@ -218,7 +218,7 @@ class AutoPatchCLI:
         try:
             parts = shlex.split(raw)
         except ValueError as exc:
-            return f"Command parse error: {exc}"
+            return f"命令解析失败：{exc}"
 
         command = parts[0]
         if command == "/help":
@@ -232,11 +232,11 @@ class AutoPatchCLI:
         if command == "/init":
             if len(parts) != 1:
                 return (
-                    "/init only initializes the current directory in v1. "
-                    "Please cd into the target repository first, then run /init."
+                    "v1 版本的 /init 只初始化当前目录。"
+                    "请先 cd 到目标 Java 仓库根目录，再执行 /init。"
                 )
             return self.handle_init()
-        return f"Unknown command: {command}\n\n{HELP_TEXT}"
+        return f"未知命令：{command}\n\n{HELP_TEXT}"
 
     def handle_init(self) -> str:
         session, index, summary = initialize_project(self.cwd)
@@ -248,7 +248,7 @@ class AutoPatchCLI:
         self.tools = build_tools(scanner=self.scanner)
         return (
             f"{format_init_summary(summary)}\n\n"
-            "Scanner runtime:\n"
+            "扫描器运行时：\n"
             f"- semgrep: {runtime_status}\n"
             f"  {runtime_message}"
         )
@@ -260,14 +260,14 @@ class AutoPatchCLI:
             return (
                 "missing",
                 (
-                    "AutoPatch-J managed Semgrep was not installed. "
-                    f"Check network access, then run /init again. Error: {exc}"
+                    "AutoPatch-J 管理的 Semgrep 未安装成功。"
+                    f"请检查网络后重新执行 /init。错误：{exc}"
                 ),
             )
 
     def handle_reindex(self) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init to create AutoPatch-J state."
+            return "当前没有已初始化项目，请先执行 /init。"
 
         self.index, summary = refresh_project_index(self.repo_root)
         return format_reindex_summary(summary)
@@ -287,8 +287,8 @@ class AutoPatchCLI:
         if self.repo_root is None:
             return (
                 "AutoPatch-J status:\n"
-                "- project: not initialized\n"
-                "- next: run /init from the Java repository root\n\n"
+                "- project: 未初始化\n"
+                "- next: 在 Java 仓库根目录执行 /init\n\n"
                 f"{format_readiness_report(self.build_readiness_report())}"
             )
 
@@ -304,7 +304,7 @@ class AutoPatchCLI:
         return (
             "AutoPatch-J status:\n"
             f"- project: {self.repo_root}\n"
-            f"- index: {summary['entries']} entries, {summary['java_files']} Java files\n"
+            f"- index: {summary['entries']} 个索引项，{summary['java_files']} 个 Java 文件\n"
             f"- active findings: {active_findings}\n"
             f"- pending patch: {pending_patch}\n"
             f"- last validation: {last_validation}\n\n"
@@ -316,7 +316,7 @@ class AutoPatchCLI:
             return "(none)"
         result = load_scan_result(self.repo_root, self.session.active_findings_id)
         if result is None:
-            return "saved scan artifact is unavailable"
+            return "已保存的扫描结果不可用"
         return f"{len(result.findings)} finding(s), status {result.status}"
 
     def format_last_validation_status(self) -> str:
@@ -324,7 +324,7 @@ class AutoPatchCLI:
             return "(none)"
         result = load_validation_result(self.repo_root, self.session.last_validation_id)
         if result is None:
-            return "saved validation artifact is unavailable"
+            return "已保存的校验结果不可用"
         return result.status
 
     def store_pending_from_draft(
@@ -338,7 +338,7 @@ class AutoPatchCLI:
     ) -> str:
         resolved_preview = preview or self.preview_drafted_edit(drafted)
         header = [
-            "Drafted edit:",
+            "已生成编辑草稿：",
             f"- file: {drafted.file_path}",
             f"- rationale: {drafted.rationale or '(none)'}",
         ]
@@ -349,7 +349,7 @@ class AutoPatchCLI:
             old_string=drafted.old_string,
             new_string=drafted.new_string,
             preview=resolved_preview,
-            prefix="Pending edit updated from draft.",
+            prefix="已根据草稿更新待确认 patch。",
             rationale=drafted.rationale,
             source_artifact_id=source_artifact_id,
             source_finding_index=source_finding_index,
@@ -388,7 +388,7 @@ class AutoPatchCLI:
 
         self.session.pending_edit = None
         save_session(self.repo_root, self.session)
-        return format_edit_preview(preview, prefix="Pending edit cleared because preview failed.")
+        return format_edit_preview(preview, prefix="预览失败，已清空待确认 patch。")
 
     def handle_pending_menu_choice(self, raw: str) -> str | None:
         choice = raw.strip().lower()
@@ -400,10 +400,10 @@ class AutoPatchCLI:
 
     def handle_apply_pending(self) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init to create AutoPatch-J state."
+            return "当前没有已初始化项目，请先执行 /init。"
         pending = self.session.pending_edit
         if pending is None:
-            return "No pending edit to apply."
+            return "当前没有待应用的 patch。"
 
         execution = execute_tool(
             repo_root=self.repo_root,
@@ -422,21 +422,21 @@ class AutoPatchCLI:
             self.session.current_goal = "pending_edit_applied"
             save_session(self.repo_root, self.session)
             return (
-                f"{format_edit_preview(preview, prefix='Pending edit applied.')}\n\n"
+                f"{format_edit_preview(preview, prefix='待确认 patch 已应用。')}\n\n"
                 f"{rescan_output}"
             )
 
         save_session(self.repo_root, self.session)
-        return format_edit_preview(preview, prefix="Pending edit was not applied.")
+        return format_edit_preview(preview, prefix="待确认 patch 未应用。")
 
     def handle_discard_pending(self) -> str:
         if self.repo_root is None:
-            return "No active project. Run /init to create AutoPatch-J state."
+            return "当前没有已初始化项目，请先执行 /init。"
         if self.session.pending_edit is None:
-            return "No pending edit to discard."
+            return "当前没有待丢弃的 patch。"
         self.session.pending_edit = None
         save_session(self.repo_root, self.session)
-        return "Pending patch discarded."
+        return "已丢弃待确认 patch。"
 
     def handle_agent_decision(
         self,
@@ -462,22 +462,21 @@ class AutoPatchCLI:
         artifact_id = self.session.active_findings_id
         if not artifact_id:
             return (
-                "No active findings are available. Scan the repository first, "
-                "then ask AutoPatch-J to draft a patch."
+                "当前没有可用的扫描结果。请先扫描仓库，再让 AutoPatch-J 生成 patch。"
             )
         if self.edit_drafter is None:
             return missing_llm_config_message("patch drafting")
 
         result = load_scan_result(self.repo_root, artifact_id)
         if result is None:
-            return f"Findings artifact not found: {artifact_id}"
+            return f"找不到扫描结果 artifact：{artifact_id}"
 
         finding_index = extract_planned_finding_index(decision.tool_args)
         if finding_index is not None:
             if finding_index < 1 or finding_index > len(result.findings):
                 return (
-                    f"Requested finding index is out of range: {finding_index}. "
-                    f"Available findings: 1..{len(result.findings)}"
+                    f"指定的问题序号超出范围：{finding_index}。"
+                    f"可用范围：1..{len(result.findings)}"
                 )
             selected: tuple[int, object] | str = (finding_index, result.findings[finding_index - 1])
         else:
@@ -498,21 +497,21 @@ class AutoPatchCLI:
     def handle_pending_patch_revision(self, parsed: ParsedPrompt) -> str:
         pending = self.session.pending_edit
         if pending is None:
-            return "No pending edit to revise."
+            return "当前没有可修订的待确认 patch。"
         if self.edit_drafter is None:
             return missing_llm_config_message("patch revision")
 
         repairing_drafter = self.repairing_edit_drafter()
         if repairing_drafter is None:
-            return "The configured edit drafter cannot revise pending patches."
+            return "当前 edit drafter 不支持修订待确认 patch。"
 
         target = (self.repo_root / pending.file_path).resolve()
         try:
             target.relative_to(self.repo_root.resolve())
         except ValueError:
-            return f"Pending patch path is outside the repository: {pending.file_path}"
+            return f"待确认 patch 路径不在仓库内：{pending.file_path}"
         if not target.exists() or not target.is_file():
-            return f"Pending patch file does not exist: {pending.file_path}"
+            return f"待确认 patch 文件不存在：{pending.file_path}"
 
         file_content = read_text(target)
         previous_edit = DraftedEdit(
@@ -542,7 +541,7 @@ class AutoPatchCLI:
                 feedback=feedback,
             )
         except Exception as exc:
-            return f"Patch revision failed. Existing pending patch kept.\n- error: {exc}"
+            return f"Patch 修订失败，已保留原待确认 patch。\n- error: {exc}"
 
         preview = self.preview_drafted_edit(drafted)
         if self.should_retry_draft(preview, drafted.file_path):
@@ -558,7 +557,7 @@ class AutoPatchCLI:
                 preview = self.preview_drafted_edit(drafted)
             except Exception as exc:
                 return (
-                    "Patch revision retry failed. Existing pending patch kept.\n"
+                    "Patch 修订重试失败，已保留原待确认 patch。\n"
                     f"- retry feedback: {retry_feedback}\n"
                     f"- error: {exc}"
                 )
@@ -567,14 +566,14 @@ class AutoPatchCLI:
             return append_pending_patch_menu(
                 format_edit_preview(
                     preview,
-                    prefix="Revised patch preview failed. Existing pending patch kept.",
+                    prefix="修订后的 patch 预览失败，已保留原待确认 patch。",
                 )
             )
 
         return self.store_pending_from_draft(
             drafted,
             preview=preview,
-            retry_note="Revised from user feedback.",
+            retry_note="已根据用户反馈修订。",
             source_artifact_id=pending.source_artifact_id,
             source_finding_index=pending.source_finding_index,
             source_check_id=pending.source_check_id,
@@ -586,7 +585,7 @@ class AutoPatchCLI:
         user_request: str | None,
         mention_context: str | None,
     ) -> str:
-        base = "Revise the current pending search-replace edit according to the user feedback."
+        base = "根据用户反馈修订当前待确认的 search-replace edit。"
         if pending.source_artifact_id and pending.source_finding_index:
             result = load_scan_result(self.repo_root, pending.source_artifact_id)
             if result is not None and 1 <= pending.source_finding_index <= len(result.findings):
@@ -598,10 +597,10 @@ class AutoPatchCLI:
                 )
         return (
             f"{base}\n"
-            "Revision constraints:\n"
-            "- Keep a single minimal search-replace edit.\n"
-            "- Do not introduce new dependencies unless the user explicitly asks.\n"
-            "- Preserve the original finding provenance when possible.\n"
+            "修订约束：\n"
+            "- 保持单个最小 search-replace edit。\n"
+            "- 除非用户明确要求，不要引入新依赖。\n"
+            "- 尽量保留原始 finding 来源信息。\n"
         )
 
     def build_revision_feedback(
@@ -634,8 +633,8 @@ class AutoPatchCLI:
         if requested_index is not None:
             if requested_index < 1 or requested_index > len(result.findings):
                 return (
-                    f"Requested finding index is out of range: {requested_index}. "
-                    f"Available findings: 1..{len(result.findings)}"
+                    f"指定的问题序号超出范围：{requested_index}。"
+                    f"可用范围：1..{len(result.findings)}"
                 )
             return requested_index, result.findings[requested_index - 1]
 
@@ -646,14 +645,14 @@ class AutoPatchCLI:
         ]
         if parsed.mentions:
             if not scoped_candidates:
-                return "No active findings matched the current @mention scope."
+                return "当前 @mention 范围没有匹配到活跃问题。"
             if len(scoped_candidates) == 1:
                 return scoped_candidates[0]
             return format_finding_candidates(
                 scoped_candidates,
                 prefix=(
                     "Multiple active findings matched the current @mention scope. "
-                    "Specify one with a number such as '修复第2个问题'."
+                    "请用序号指定一个，例如：'修复第2个问题'。"
                 ),
             )
 
@@ -663,8 +662,8 @@ class AutoPatchCLI:
         return format_finding_candidates(
             list(enumerate(result.findings, start=1)),
             prefix=(
-                "Multiple active findings are available. Specify one with a number "
-                "such as '修复第2个问题', or narrow the scope with @mention."
+                "当前有多个活跃问题。请用序号指定一个，例如：'修复第2个问题'，"
+                "或者通过 @mention 缩小范围。"
             ),
         )
 
@@ -697,9 +696,9 @@ class AutoPatchCLI:
         try:
             target.relative_to(self.repo_root.resolve())
         except ValueError:
-            return f"Finding path is outside the repository: {finding.path}"
+            return f"问题路径不在仓库内：{finding.path}"
         if not target.exists() or not target.is_file():
-            return f"Finding file does not exist: {finding.path}"
+            return f"问题文件不存在：{finding.path}"
 
         file_content = read_text(target)
         instruction = build_finding_instruction(
@@ -708,7 +707,7 @@ class AutoPatchCLI:
             mention_context=mention_context,
         )
         header = [
-            "Draft fix context:",
+            "生成修复上下文：",
             f"- artifact: {artifact_id}",
             f"- finding index: {finding_position}",
             f"- rule: {finding.check_id}",
@@ -738,14 +737,14 @@ class AutoPatchCLI:
         try:
             drafted = self.edit_drafter.draft_edit(file_path, instruction, file_content)
         except Exception as exc:
-            return f"Draft edit failed: {exc}"
+            return f"生成编辑草稿失败：{exc}"
 
         preview = self.preview_drafted_edit(drafted)
         retry_note: str | None = None
         repairing_drafter = self.repairing_edit_drafter()
         if repairing_drafter is not None and self.should_retry_draft(preview, drafted.file_path):
             retry_feedback = self.build_draft_retry_feedback(preview, drafted.file_path)
-            retry_note = f"Applied one repair retry after: {retry_feedback}"
+            retry_note = f"已根据反馈重试修复一次：{retry_feedback}"
             try:
                 drafted = repairing_drafter.redraft_edit(
                     file_path=file_path,
@@ -778,7 +777,7 @@ class AutoPatchCLI:
             if resolution.status == "resolved":
                 continue
             if resolution.status == "missing":
-                print(f"No path matched {resolution.raw}.")
+                print(f"没有路径匹配 {resolution.raw}。")
                 return False
             if resolution.status == "ambiguous":
                 selected = self.prompt_for_candidate(resolution)
@@ -794,16 +793,16 @@ class AutoPatchCLI:
             print(f"  {idx}. {candidate.entry.path} ({candidate.entry.kind}, score={candidate.score})")
 
         while True:
-            choice = input("Select a candidate number, or press Enter to cancel: ").strip()
+            choice = input("请选择候选序号，或直接回车取消：").strip()
             if not choice:
                 return None
             if not choice.isdigit():
-                print("Please enter a number.")
+                print("请输入数字。")
                 continue
             index = int(choice)
             if 1 <= index <= len(resolution.candidates):
                 return resolution.candidates[index - 1].entry
-            print("Choice out of range.")
+            print("选择超出范围。")
 
     def update_session_from_prompt(self, parsed: ParsedPrompt) -> None:
         resolved_paths = [
@@ -923,13 +922,13 @@ class AutoPatchCLI:
     def build_default_preview_validation(self) -> object:
         return SyntaxValidationResult(
             status="skipped",
-            message="Syntax validation result was unavailable for this tool execution.",
+            message="本次工具执行没有可用的语法校验结果。",
         )
 
     def rebuild_scanner(self) -> None:
         scanner = get_scanner(DEFAULT_SCANNER_NAME)
         if scanner is None:
-            raise RuntimeError(f"Default scanner is unavailable: {DEFAULT_SCANNER_NAME}")
+            raise RuntimeError(f"默认 scanner 不可用：{DEFAULT_SCANNER_NAME}")
         self.scanner = cast(JavaScanner, scanner)
 
 

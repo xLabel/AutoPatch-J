@@ -11,28 +11,28 @@ from autopatch_j.validators import RescanValidationResult
 
 def format_init_summary(summary: ProjectSummary) -> str:
     return (
-        "Initialized project:\n"
+        "项目已初始化：\n"
         f"- repo_root: {summary.repo_root}\n"
         f"- indexed entries: {summary.indexed_entries}\n"
         f"- indexed files: {summary.indexed_files}\n"
         f"- indexed directories: {summary.indexed_directories}\n"
-        f"- indexed java files: {summary.indexed_java_files}"
+        f"- indexed Java files: {summary.indexed_java_files}"
     )
 
 
 def format_reindex_summary(summary: ProjectSummary) -> str:
     return (
-        "Reindexed project:\n"
+        "索引已刷新：\n"
         f"- repo_root: {summary.repo_root}\n"
         f"- indexed entries: {summary.indexed_entries}\n"
         f"- indexed files: {summary.indexed_files}\n"
         f"- indexed directories: {summary.indexed_directories}\n"
-        f"- indexed java files: {summary.indexed_java_files}"
+        f"- indexed Java files: {summary.indexed_java_files}"
     )
 
 
 def format_readiness_report(report: ReadinessReport) -> str:
-    lines = ["Runtime readiness:"]
+    lines = ["运行环境："]
     for check in report.checks:
         if check.name == "project":
             continue
@@ -42,7 +42,7 @@ def format_readiness_report(report: ReadinessReport) -> str:
 
 
 def format_scanners_report(scanners: list[object], repo_root: Path | None) -> str:
-    lines = ["Java scanners:"]
+    lines = ["Java 静态扫描器："]
     for scanner in scanners:
         scanner_meta = scanner.get_scanner(repo_root)
         selector = "selected" if scanner_meta.selected else "disabled"
@@ -53,7 +53,7 @@ def format_scanners_report(scanners: list[object], repo_root: Path | None) -> st
 
 def format_scan_result(result: ScanResult) -> str:
     header = [
-        "Scan result:",
+        "扫描结果：",
         f"- engine: {result.engine}",
         f"- scope: {', '.join(result.scope) if result.scope else '(none)'}",
         f"- targets: {', '.join(result.targets) if result.targets else '(none)'}",
@@ -71,15 +71,15 @@ def format_scan_result(result: ScanResult) -> str:
             continue
         header.append(f"  - {severity}: {count}")
 
-    header.append("Findings:")
+    header.append("问题列表：")
     for idx, finding in enumerate(result.findings, start=1):
         header.append(
             f"  {idx}. {finding.path}:{finding.start_line} [{finding.severity}] "
             f"{finding.check_id} - {finding.message}"
         )
-    header.append("Next:")
-    header.append("  - Say '修复第1个问题' to draft a patch for one finding.")
-    header.append("  - Say '@path 生成 patch' to narrow the draft to one file.")
+    header.append("下一步：")
+    header.append("  - 输入 '修复第1个问题'，为某个问题生成 patch。")
+    header.append("  - 输入 '@path 生成 patch'，把修复范围收敛到单个文件。")
     return "\n".join(header)
 
 
@@ -103,12 +103,12 @@ def append_pending_patch_menu(body: str) -> str:
 
 
 def format_pending_patch_menu() -> str:
-    return "Patch options:\n- apply\n- discard"
+    return "Patch 选项：\n- apply\n- discard"
 
 
 def format_rescan_validation(result: RescanValidationResult) -> str:
     lines = [
-        "Post-apply ReScan:",
+        "应用后 ReScan：",
         f"- status: {result.status}",
         f"- message: {result.message}",
         f"- source artifact: {result.source_artifact_id or '(none)'}",
@@ -126,7 +126,7 @@ def format_finding_candidates(
     prefix: str,
     max_items: int = 10,
 ) -> str:
-    lines = [prefix, "Candidates:"]
+    lines = [prefix, "候选问题："]
     for index, finding in candidates[:max_items]:
         lines.append(
             f"  {index}. {getattr(finding, 'path', '')}:{getattr(finding, 'start_line', 0)} "
@@ -134,5 +134,5 @@ def format_finding_candidates(
             f"- {getattr(finding, 'message', '')}"
         )
     if len(candidates) > max_items:
-        lines.append(f"  ... and {len(candidates) - max_items} more")
+        lines.append(f"  ... 还有 {len(candidates) - max_items} 个")
     return "\n".join(lines)
