@@ -16,6 +16,17 @@
 - `tools` means Agent function-call tools exposed to the planner or tool registry.
 - `scanners` means static scanner adapters such as Semgrep, PMD, SpotBugs, or Checkstyle.
 
+## Scanner adapter conventions
+
+- Keep `src/autopatch_j/scanners` lightweight and obvious. Avoid extra catalog, registry, factory, or model files unless they remove real complexity.
+- Use `ScannerName` for scanner identity. Do not pass scanner names around as raw strings in internal code.
+- `ALL_SCANNERS` is the scanner list for CLI display and lookup. `get_scanner()` is the only lookup helper.
+- `DEFAULT_SCANNER_NAME` defines the selected v1 scanner. Today it should point to Semgrep.
+- Each scanner gets its own Python file, even when it is not implemented yet. Placeholder scanners should return `ScannerMeta` with `selected=False` and a clear "接入中，敬请期待" message.
+- Semgrep is provided and managed by AutoPatch-J. Do not rely on a user-installed `semgrep` from `PATH`.
+- Scanner resources such as rules and runtime setup helpers should live under `src/autopatch_j/scanners/resources/<scanner-name>/`.
+- `tools` may call scanners, but scanner adapters should not know about Agent tool dispatch.
+
 ## Implementation boundaries
 
 - Use Python as the orchestration language.
