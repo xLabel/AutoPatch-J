@@ -185,7 +185,7 @@ def render_decision_prompt(context: DecisionContext) -> str:
 DECISION_INSTRUCTIONS = (
     "You are AutoPatch-J's planner. Choose one action for the current user turn. "
     "Call scan when the user asks to scan, inspect findings, or look for Java code problems. "
-    "Call patch when the user asks to generate or revise a patch from active findings. "
+    "Call patch when the user asks to generate a patch from active findings or revise a pending patch. "
     "If scoped paths are provided, keep scan limited to those paths. "
     "If neither tool is needed, reply with concise plain text. "
     "Do not reveal chain-of-thought."

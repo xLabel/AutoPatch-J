@@ -479,10 +479,7 @@ class AutoPatchCLI:
 
     def handle_planned_patch(self, parsed: ParsedPrompt, decision: AgentDecision) -> str:
         if self.session.pending_edit is not None:
-            return (
-                "A pending patch already exists. Apply it first, or describe how "
-                "you want AutoPatch-J to revise the patch."
-            )
+            return self.handle_pending_patch_revision(parsed)
         artifact_id = self.session.active_findings_id
         if not artifact_id:
             return (
@@ -520,6 +517,139 @@ class AutoPatchCLI:
             finding_position,
             user_request=parsed.clean_text,
             mention_context=mention_context,
+        )
+
+    def handle_pending_patch_revision(self, parsed: ParsedPrompt) -> str:
+        pending = self.session.pending_edit
+        if pending is None:
+            return "No pending edit to revise."
+        if self.edit_drafter is None:
+            return (
+                "Edit drafter is disabled. Set LLM_API_KEY or OPENAI_API_KEY "
+                "to revise pending patches."
+            )
+
+        repairing_drafter = self.repairing_edit_drafter()
+        if repairing_drafter is None:
+            return "The configured edit drafter cannot revise pending patches."
+
+        target = (self.repo_root / pending.file_path).resolve()
+        try:
+            target.relative_to(self.repo_root.resolve())
+        except ValueError:
+            return f"Pending patch path is outside the repository: {pending.file_path}"
+        if not target.exists() or not target.is_file():
+            return f"Pending patch file does not exist: {pending.file_path}"
+
+        file_content = read_text(target)
+        previous_edit = DraftedEdit(
+            file_path=pending.file_path,
+            old_string=pending.old_string,
+            new_string=pending.new_string,
+            rationale=pending.rationale or "",
+        )
+        mention_context = build_mention_context_text(self.repo_root, parsed)
+        instruction = self.build_revision_instruction(
+            pending=pending,
+            user_request=parsed.clean_text,
+            mention_context=mention_context,
+        )
+        feedback = self.build_revision_feedback(
+            pending=pending,
+            user_request=parsed.clean_text,
+            mention_context=mention_context,
+        )
+
+        try:
+            drafted = repairing_drafter.redraft_edit(
+                file_path=pending.file_path,
+                instruction=instruction,
+                file_content=file_content,
+                previous_edit=previous_edit,
+                feedback=feedback,
+            )
+        except Exception as exc:
+            return f"Patch revision failed. Existing pending patch kept.\n- error: {exc}"
+
+        preview = self.preview_drafted_edit(drafted)
+        if self.should_retry_draft(preview, drafted.file_path):
+            retry_feedback = self.build_draft_retry_feedback(preview, drafted.file_path)
+            try:
+                drafted = repairing_drafter.redraft_edit(
+                    file_path=pending.file_path,
+                    instruction=instruction,
+                    file_content=file_content,
+                    previous_edit=drafted,
+                    feedback=retry_feedback,
+                )
+                preview = self.preview_drafted_edit(drafted)
+            except Exception as exc:
+                return (
+                    "Patch revision retry failed. Existing pending patch kept.\n"
+                    f"- retry feedback: {retry_feedback}\n"
+                    f"- error: {exc}"
+                )
+
+        if preview.status != "ok":
+            return append_pending_patch_menu(
+                format_edit_preview(
+                    preview,
+                    prefix="Revised patch preview failed. Existing pending patch kept.",
+                )
+            )
+
+        return self.store_pending_from_draft(
+            drafted,
+            preview=preview,
+            retry_note="Revised from user feedback.",
+            source_artifact_id=pending.source_artifact_id,
+            source_finding_index=pending.source_finding_index,
+            source_check_id=pending.source_check_id,
+        )
+
+    def build_revision_instruction(
+        self,
+        pending: PendingEdit,
+        user_request: str | None,
+        mention_context: str | None,
+    ) -> str:
+        base = "Revise the current pending search-replace edit according to the user feedback."
+        if pending.source_artifact_id and pending.source_finding_index:
+            result = load_scan_result(self.repo_root, pending.source_artifact_id)
+            if result is not None and 1 <= pending.source_finding_index <= len(result.findings):
+                finding = result.findings[pending.source_finding_index - 1]
+                base = build_finding_instruction(
+                    finding,
+                    user_request=user_request,
+                    mention_context=mention_context,
+                )
+        return (
+            f"{base}\n"
+            "Revision constraints:\n"
+            "- Keep a single minimal search-replace edit.\n"
+            "- Do not introduce new dependencies unless the user explicitly asks.\n"
+            "- Preserve the original finding provenance when possible.\n"
+        )
+
+    def build_revision_feedback(
+        self,
+        pending: PendingEdit,
+        user_request: str | None,
+        mention_context: str | None,
+    ) -> str:
+        return (
+            f"user_feedback: {user_request or '(none)'}\n"
+            f"mention_context:\n{mention_context or '(none)'}\n\n"
+            "current_pending_patch:\n"
+            f"- file: {pending.file_path}\n"
+            f"- validation_status: {pending.validation_status}\n"
+            f"- validation_message: {pending.validation_message}\n"
+            f"- rationale: {pending.rationale or '(none)'}\n"
+            f"- source_artifact: {pending.source_artifact_id or '(none)'}\n"
+            f"- source_finding_index: {pending.source_finding_index or '(none)'}\n"
+            f"- source_check_id: {pending.source_check_id or '(none)'}\n"
+            "diff:\n"
+            f"{pending.diff}\n"
         )
 
     def select_patch_finding(
