@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Protocol
 
-from autopatch_j.llm import ChatCompletionClient, LLMResponse, build_default_llm_client
+from autopatch_j.llm import LLM, LLMResponse, build_default_llm
 
 
 @dataclass(slots=True)
@@ -37,15 +37,15 @@ class RepairingEditDrafter(EditDrafter, Protocol):
 
 
 class LLMEditDrafter:
-    def __init__(self, client: ChatCompletionClient) -> None:
-        self.client = client
+    def __init__(self, llm: LLM) -> None:
+        self.llm = llm
 
     @property
     def label(self) -> str:
-        return self.client.label
+        return self.llm.label
 
     def draft_edit(self, file_path: str, instruction: str, file_content: str) -> DraftedEdit:
-        response = self.client.complete(
+        response = self.llm.chat(
             messages=build_edit_draft_messages(
                 file_path=file_path,
                 instruction=instruction,
@@ -64,7 +64,7 @@ class LLMEditDrafter:
         previous_edit: DraftedEdit,
         feedback: str,
     ) -> DraftedEdit:
-        response = self.client.complete(
+        response = self.llm.chat(
             messages=build_edit_draft_messages(
                 file_path=file_path,
                 instruction=instruction,
@@ -79,10 +79,10 @@ class LLMEditDrafter:
 
 
 def build_default_edit_drafter() -> LLMEditDrafter | None:
-    client = build_default_llm_client()
-    if client is None:
+    llm = build_default_llm()
+    if llm is None:
         return None
-    return LLMEditDrafter(client)
+    return LLMEditDrafter(llm)
 
 
 def build_edit_draft_messages(

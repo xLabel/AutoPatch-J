@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Callable, Protocol
 
-from autopatch_j.llm import ChatCompletionClient, LLMResponse, build_default_llm_client
+from autopatch_j.llm import LLM, LLMResponse, build_default_llm
 from autopatch_j.llm_config import missing_llm_config_message
 from autopatch_j.tools.base import ToolName
 
@@ -56,21 +56,21 @@ class UnavailablePlanner:
 
 
 class LLMPlanner:
-    def __init__(self, client: ChatCompletionClient) -> None:
-        self.client = client
+    def __init__(self, llm: LLM) -> None:
+        self.llm = llm
 
     @property
     def label(self) -> str:
-        return self.client.label
+        return self.llm.label
 
     def decide(self, context: DecisionContext) -> AgentDecision:
         try:
-            response = self.client.complete(
+            response = self.llm.chat(
                 messages=build_decision_messages(context),
                 tools=AGENT_ACTION_TOOLS,
                 tool_choice="auto",
                 stream=True,
-                on_delta=context.on_answer_delta,
+                on_token=context.on_answer_delta,
             )
             return parse_llm_decision_response(response, context)
         except Exception as exc:
@@ -81,10 +81,10 @@ class LLMPlanner:
 
 
 def build_default_planner() -> Planner:
-    client = build_default_llm_client()
-    if client is None:
+    llm = build_default_llm()
+    if llm is None:
         return UnavailablePlanner()
-    return LLMPlanner(client=client)
+    return LLMPlanner(llm=llm)
 
 
 def build_decision_messages(context: DecisionContext) -> list[dict[str, str]]:
@@ -160,11 +160,11 @@ def parse_legacy_response(response: dict[str, object]) -> LLMResponse:
                 text = block.get("text", "")
                 if text:
                     texts.append(str(text))
-    from autopatch_j.llm import parse_message_tool_calls
+    from autopatch_j.llm import parse_tool_calls
 
     return LLMResponse(
         content="\n".join(texts).strip(),
-        tool_calls=parse_message_tool_calls(tool_calls),
+        tool_calls=parse_tool_calls(tool_calls),
     )
 
 

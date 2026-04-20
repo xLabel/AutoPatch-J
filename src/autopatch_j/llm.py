@@ -10,7 +10,7 @@ from autopatch_j.llm_config import load_llm_config
 
 
 @dataclass(slots=True)
-class LLMToolCall:
+class ToolCall:
     name: str
     arguments: dict[str, Any] = field(default_factory=dict)
     raw_arguments: str = ""
@@ -20,12 +20,12 @@ class LLMToolCall:
 @dataclass(slots=True)
 class LLMResponse:
     content: str = ""
-    tool_calls: list[LLMToolCall] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
     usage: dict[str, Any] | None = None
     raw: dict[str, Any] | None = None
 
 
-class ChatCompletionClient:
+class LLM:
     def __init__(
         self,
         api_key: str,
@@ -46,7 +46,7 @@ class ChatCompletionClient:
     def label(self) -> str:
         return f"chat-completions:{self.model}"
 
-    def complete(
+    def chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
@@ -55,9 +55,9 @@ class ChatCompletionClient:
         stream: bool = True,
         include_usage: bool = True,
         temperature: float | None = None,
-        on_delta: Callable[[str], None] | None = None,
+        on_token: Callable[[str], None] | None = None,
     ) -> LLMResponse:
-        payload = self.build_payload(
+        payload = self._build_payload(
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
@@ -66,9 +66,9 @@ class ChatCompletionClient:
             include_usage=include_usage,
             temperature=temperature,
         )
-        return self._complete_with_retries(payload, stream=stream, on_delta=on_delta)
+        return self._call_with_retry(payload, stream=stream, on_token=on_token)
 
-    def build_payload(
+    def _build_payload(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
@@ -94,24 +94,24 @@ class ChatCompletionClient:
             payload["stream_options"] = {"include_usage": True}
         return payload
 
-    def _complete_with_retries(
+    def _call_with_retry(
         self,
         payload: dict[str, Any],
         stream: bool,
-        on_delta: Callable[[str], None] | None,
+        on_token: Callable[[str], None] | None,
     ) -> LLMResponse:
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                return self._complete_once(payload, stream=stream, on_delta=on_delta)
+                return self._call_once(payload, stream=stream, on_token=on_token)
             except error.HTTPError as exc:
-                if should_retry_without_stream_options(exc, payload):
+                if _should_retry_without_stream_options(exc, payload):
                     retry_payload = dict(payload)
                     retry_payload.pop("stream_options", None)
-                    return self._complete_with_retries(
+                    return self._call_with_retry(
                         retry_payload,
                         stream=stream,
-                        on_delta=on_delta,
+                        on_token=on_token,
                     )
                 last_error = exc
             except (TimeoutError, OSError, json.JSONDecodeError, ValueError) as exc:
@@ -123,20 +123,20 @@ class ChatCompletionClient:
         assert last_error is not None
         raise last_error
 
-    def _complete_once(
+    def _call_once(
         self,
         payload: dict[str, Any],
         stream: bool,
-        on_delta: Callable[[str], None] | None,
+        on_token: Callable[[str], None] | None,
     ) -> LLMResponse:
-        http_request = self.build_request(payload)
+        http_request = self._build_request(payload)
         with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
             if stream:
-                return parse_chat_completion_stream(response, on_delta=on_delta)
+                return _parse_stream(response, on_token=on_token)
             raw = response.read().decode("utf-8")
-        return parse_chat_completion_response(json.loads(raw))
+        return _parse_response(json.loads(raw))
 
-    def build_request(self, payload: dict[str, Any]) -> request.Request:
+    def _build_request(self, payload: dict[str, Any]) -> request.Request:
         body = json.dumps(payload).encode("utf-8")
         return request.Request(
             f"{self.base_url}/chat/completions",
@@ -149,42 +149,42 @@ class ChatCompletionClient:
         )
 
 
-def build_default_llm_client() -> ChatCompletionClient | None:
+def build_default_llm() -> LLM | None:
     config = load_llm_config()
     if config is None:
         return None
 
-    return ChatCompletionClient(
+    return LLM(
         api_key=config.api_key,
         model=config.model,
         base_url=config.base_url,
     )
 
 
-def parse_chat_completion_response(payload: dict[str, Any]) -> LLMResponse:
+def _parse_response(payload: dict[str, Any]) -> LLMResponse:
     choices = payload.get("choices", [])
     if not isinstance(choices, list) or not choices:
-        return LLMResponse(raw=payload, usage=extract_usage(payload))
+        return LLMResponse(raw=payload, usage=_extract_usage(payload))
 
     first_choice = choices[0]
     if not isinstance(first_choice, dict):
-        return LLMResponse(raw=payload, usage=extract_usage(payload))
+        return LLMResponse(raw=payload, usage=_extract_usage(payload))
 
     message = first_choice.get("message", {})
     if not isinstance(message, dict):
-        return LLMResponse(raw=payload, usage=extract_usage(payload))
+        return LLMResponse(raw=payload, usage=_extract_usage(payload))
 
     return LLMResponse(
         content=str(message.get("content") or ""),
-        tool_calls=parse_message_tool_calls(message.get("tool_calls", [])),
-        usage=extract_usage(payload),
+        tool_calls=parse_tool_calls(message.get("tool_calls", [])),
+        usage=_extract_usage(payload),
         raw=payload,
     )
 
 
-def parse_chat_completion_stream(
+def _parse_stream(
     response: Any,
-    on_delta: Callable[[str], None] | None = None,
+    on_token: Callable[[str], None] | None = None,
 ) -> LLMResponse:
     content_parts: list[str] = []
     tool_accumulator: dict[int, dict[str, Any]] = {}
@@ -192,7 +192,7 @@ def parse_chat_completion_stream(
     last_event: dict[str, Any] | None = None
 
     for raw_line in response:
-        line = decode_sse_line(raw_line)
+        line = _decode_sse_line(raw_line)
         if not line or not line.startswith("data:"):
             continue
         data = line.removeprefix("data:").strip()
@@ -201,7 +201,7 @@ def parse_chat_completion_stream(
 
         event = json.loads(data)
         last_event = event
-        event_usage = extract_usage(event)
+        event_usage = _extract_usage(event)
         if event_usage is not None:
             usage = event_usage
 
@@ -219,23 +219,23 @@ def parse_chat_completion_stream(
         if content_delta:
             text = str(content_delta)
             content_parts.append(text)
-            if on_delta is not None:
-                on_delta(text)
+            if on_token is not None:
+                on_token(text)
 
-        merge_tool_call_deltas(tool_accumulator, delta.get("tool_calls", []))
+        _merge_tool_call_deltas(tool_accumulator, delta.get("tool_calls", []))
 
     return LLMResponse(
         content="".join(content_parts),
-        tool_calls=build_stream_tool_calls(tool_accumulator),
+        tool_calls=_build_stream_tool_calls(tool_accumulator),
         usage=usage,
         raw=last_event,
     )
 
 
-def parse_message_tool_calls(raw_tool_calls: Any) -> list[LLMToolCall]:
+def parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
     if not isinstance(raw_tool_calls, list):
         return []
-    parsed: list[LLMToolCall] = []
+    parsed: list[ToolCall] = []
     for item in raw_tool_calls:
         if not isinstance(item, dict):
             continue
@@ -245,17 +245,17 @@ def parse_message_tool_calls(raw_tool_calls: Any) -> list[LLMToolCall]:
         name = str(function.get("name") or "")
         raw_arguments = str(function.get("arguments") or "")
         parsed.append(
-            LLMToolCall(
+            ToolCall(
                 call_id=str(item.get("id")) if item.get("id") else None,
                 name=name,
                 raw_arguments=raw_arguments,
-                arguments=parse_json_object(raw_arguments),
+                arguments=_parse_json_object(raw_arguments),
             )
         )
     return parsed
 
 
-def merge_tool_call_deltas(accumulator: dict[int, dict[str, Any]], raw_tool_calls: Any) -> None:
+def _merge_tool_call_deltas(accumulator: dict[int, dict[str, Any]], raw_tool_calls: Any) -> None:
     if not isinstance(raw_tool_calls, list):
         return
     for item in raw_tool_calls:
@@ -284,23 +284,23 @@ def merge_tool_call_deltas(accumulator: dict[int, dict[str, Any]], raw_tool_call
             current["arguments"].append(str(function["arguments"]))
 
 
-def build_stream_tool_calls(accumulator: dict[int, dict[str, Any]]) -> list[LLMToolCall]:
-    calls: list[LLMToolCall] = []
+def _build_stream_tool_calls(accumulator: dict[int, dict[str, Any]]) -> list[ToolCall]:
+    calls: list[ToolCall] = []
     for index in sorted(accumulator):
         item = accumulator[index]
         raw_arguments = "".join(item["arguments"])
         calls.append(
-            LLMToolCall(
+            ToolCall(
                 call_id=item["id"],
                 name=str(item["name"]),
                 raw_arguments=raw_arguments,
-                arguments=parse_json_object(raw_arguments),
+                arguments=_parse_json_object(raw_arguments),
             )
         )
     return calls
 
 
-def parse_json_object(raw: str) -> dict[str, Any]:
+def _parse_json_object(raw: str) -> dict[str, Any]:
     if not raw:
         return {}
     try:
@@ -310,18 +310,18 @@ def parse_json_object(raw: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def extract_usage(payload: dict[str, Any]) -> dict[str, Any] | None:
+def _extract_usage(payload: dict[str, Any]) -> dict[str, Any] | None:
     usage = payload.get("usage")
     return usage if isinstance(usage, dict) else None
 
 
-def decode_sse_line(raw_line: bytes | str) -> str:
+def _decode_sse_line(raw_line: bytes | str) -> str:
     if isinstance(raw_line, bytes):
         return raw_line.decode("utf-8").strip()
     return raw_line.strip()
 
 
-def should_retry_without_stream_options(
+def _should_retry_without_stream_options(
     exc: error.HTTPError,
     payload: dict[str, Any],
 ) -> bool:
