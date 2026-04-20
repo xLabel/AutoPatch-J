@@ -4,7 +4,10 @@ import json
 import os
 import subprocess
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from autopatch_j.paths import project_state_dir, user_state_dir
 from autopatch_j.scanners.base import Finding, ScanResult
@@ -12,7 +15,7 @@ from autopatch_j.scanners.base import Finding, ScanResult
 DEFAULT_SEMGREP_VERSION = "1.160.0"
 DEFAULT_SEMGREP_RULE_PATH = Path("resources") / "semgrep" / "rules" / "java.yml"
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
-SEMGREP_INSTALL_COMMAND = "autopatch-j-install-semgrep"
+SEMGREP_INSTALL_LOCK_TIMEOUT_SECONDS = 600
 
 
 class SemgrepScanner:
@@ -87,8 +90,7 @@ class SemgrepScanner:
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
         message = (
             "AutoPatch-J managed Semgrep is missing or not executable. Expected: "
-            f"{user_runtime_binary_path()}. Install it with: "
-            f"{SEMGREP_INSTALL_COMMAND}"
+            f"{user_runtime_binary_path()}. Run /init to initialize scanner runtime."
         )
         return ScanResult(
             engine="semgrep",
@@ -138,6 +140,10 @@ def semgrep_runtime_dir() -> Path:
     return user_state_dir() / "scanners" / "semgrep"
 
 
+def semgrep_install_lock_path() -> Path:
+    return semgrep_runtime_dir() / "install.lock"
+
+
 def semgrep_venv_dir() -> Path:
     return semgrep_runtime_dir() / "venv"
 
@@ -160,15 +166,19 @@ def install_managed_semgrep_runtime(
         return "ok", f"AutoPatch-J managed Semgrep already exists: {user_runtime_binary_path()}"
 
     semgrep_runtime_dir().mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [python_executable, "-m", "venv", str(semgrep_venv_dir())],
-        check=True,
-    )
-    pip_executable = semgrep_venv_bin_dir() / ("pip.exe" if os.name == "nt" else "pip")
-    subprocess.run(
-        [str(pip_executable), "install", f"semgrep=={version}"],
-        check=True,
-    )
+    with semgrep_install_lock():
+        if resolve_user_runtime_binary() is not None:
+            return "ok", f"AutoPatch-J managed Semgrep already exists: {user_runtime_binary_path()}"
+
+        subprocess.run(
+            [python_executable, "-m", "venv", str(semgrep_venv_dir())],
+            check=True,
+        )
+        pip_executable = semgrep_venv_bin_dir() / ("pip.exe" if os.name == "nt" else "pip")
+        subprocess.run(
+            [str(pip_executable), "install", f"semgrep=={version}"],
+            check=True,
+        )
 
     if resolve_user_runtime_binary() is None:
         return (
@@ -176,6 +186,36 @@ def install_managed_semgrep_runtime(
             f"Semgrep installation completed but executable was not found at {user_runtime_binary_path()}",
         )
     return "ok", f"Installed AutoPatch-J managed Semgrep {version}: {user_runtime_binary_path()}"
+
+
+@contextmanager
+def semgrep_install_lock(
+    timeout_seconds: int = SEMGREP_INSTALL_LOCK_TIMEOUT_SECONDS,
+) -> Iterator[None]:
+    lock_path = semgrep_install_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            if resolve_user_runtime_binary() is not None:
+                yield
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Timed out waiting for Semgrep install lock: {lock_path}")
+            time.sleep(1)
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as lock_file:
+            lock_file.write(f"pid={os.getpid()}\n")
+        yield
+    finally:
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def semgrep_binary_name() -> str:

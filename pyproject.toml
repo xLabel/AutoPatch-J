@@ -18,7 +18,6 @@ dependencies = [
 
 [project.scripts]
 autopatch-j = "autopatch_j.cli:main"
-autopatch-j-install-semgrep = "autopatch_j.scanners.resources.semgrep.install:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

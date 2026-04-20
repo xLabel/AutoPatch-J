@@ -44,7 +44,7 @@ from autopatch_j.scanners import (
     build_java_scanner,
     build_scanner_catalog,
 )
-from autopatch_j.scanners.semgrep import SEMGREP_INSTALL_COMMAND, install_managed_semgrep_runtime
+from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools import ToolExecutionResult, build_tool_registry
 from autopatch_j.tools.edit import EditPreview
@@ -245,7 +245,7 @@ class AutoPatchCLI:
                 "missing",
                 (
                     "AutoPatch-J managed Semgrep was not installed. "
-                    f"Run {SEMGREP_INSTALL_COMMAND} after checking network access. Error: {exc}"
+                    f"Check network access, then run /init again. Error: {exc}"
                 ),
             )
 
