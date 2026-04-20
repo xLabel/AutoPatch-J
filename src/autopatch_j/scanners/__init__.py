@@ -6,16 +6,14 @@ from autopatch_j.scanners.pmd import PMDScanner
 from autopatch_j.scanners.semgrep import SemgrepScanner
 from autopatch_j.scanners.spotbugs import SpotBugsScanner
 
+DEFAULT_SCANNER_NAME = "Semgrep"
+
 ALL_SCANNERS = [
     SemgrepScanner(),
     PMDScanner(),
     SpotBugsScanner(),
     CheckstyleScanner(),
 ]
-
-
-def build_java_scanner() -> SemgrepScanner:
-    return SemgrepScanner()
 
 
 def get_scanner(name: str) -> object | None:

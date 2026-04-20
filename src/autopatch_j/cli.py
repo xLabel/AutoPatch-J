@@ -40,8 +40,10 @@ from autopatch_j.planner import AgentDecision, DecisionContext, build_default_pl
 from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
 from autopatch_j.scanners import (
     ALL_SCANNERS,
+    DEFAULT_SCANNER_NAME,
+    JavaScanner,
     ScanResult,
-    build_java_scanner,
+    get_scanner,
 )
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 from autopatch_j.session import PendingEdit, SessionState, save_session
@@ -992,7 +994,10 @@ class AutoPatchCLI:
         )
 
     def rebuild_scanner(self) -> None:
-        self.scanner = build_java_scanner()
+        scanner = get_scanner(DEFAULT_SCANNER_NAME)
+        if scanner is None:
+            raise RuntimeError(f"Default scanner is unavailable: {DEFAULT_SCANNER_NAME}")
+        self.scanner = cast(JavaScanner, scanner)
 
 
 def format_init_summary(summary: ProjectSummary) -> str:

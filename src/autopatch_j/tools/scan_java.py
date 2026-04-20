@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
-from autopatch_j.scanners import JavaScanner, ScanResult, build_java_scanner
+from autopatch_j.scanners import DEFAULT_SCANNER_NAME, JavaScanner, ScanResult, get_scanner
 from autopatch_j.tools.base import Tool, ToolExecutionResult
 
 
@@ -40,5 +41,19 @@ def scan_java(
     scope: list[str],
     scanner: JavaScanner | None = None,
 ) -> ScanResult:
-    active_scanner = scanner or build_java_scanner()
+    active_scanner = scanner
+    if active_scanner is None:
+        active_scanner = cast(JavaScanner | None, get_scanner(DEFAULT_SCANNER_NAME))
+
+    if active_scanner is None:
+        return ScanResult(
+            engine="autopatch-j",
+            scope=list(scope),
+            targets=[],
+            status="error",
+            message=f"Default scanner is unavailable: {DEFAULT_SCANNER_NAME}",
+            summary={"total": 0},
+            findings=[],
+        )
+
     return active_scanner.scan(repo_root, scope)
