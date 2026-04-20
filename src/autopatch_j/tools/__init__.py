@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 from autopatch_j.scanners import JavaScanner
 from autopatch_j.tools.base import Tool, ToolExecutionResult
 from autopatch_j.tools.edit import ApplySearchReplaceTool, PreviewSearchReplaceTool
-from autopatch_j.tools.registry import ToolRegistry
 from autopatch_j.tools.scan_java import ScanJavaTool
 
 
@@ -25,5 +27,17 @@ def get_tool(name: str, tools: list[Tool] | None = None) -> Tool | None:
     return None
 
 
-def build_tool_registry(scanner: JavaScanner | None = None) -> ToolRegistry:
-    return ToolRegistry(build_tools(scanner=scanner))
+def execute_tool(
+    repo_root: Path,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    tools: list[Tool] | None = None,
+) -> ToolExecutionResult:
+    tool = get_tool(tool_name, tools=tools)
+    if tool is None:
+        return ToolExecutionResult(
+            tool_name=tool_name,
+            status="error",
+            message=f"Unsupported tool: {tool_name}",
+        )
+    return tool.execute(repo_root=repo_root, **tool_args)

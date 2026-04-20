@@ -45,7 +45,7 @@ from autopatch_j.scanners import (
 )
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 from autopatch_j.session import PendingEdit, SessionState, save_session
-from autopatch_j.tools import ToolExecutionResult, build_tool_registry
+from autopatch_j.tools import ToolExecutionResult, build_tools, execute_tool
 from autopatch_j.tools.edit import EditPreview
 from autopatch_j.validators import (
     RescanValidationResult,
@@ -90,7 +90,7 @@ class AutoPatchCLI:
             if self.session.repo_root is None:
                 self.session.repo_root = str(self.repo_root)
         self.rebuild_scanner()
-        self.tool_registry = build_tool_registry(scanner=self.scanner)
+        self.tools = build_tools(scanner=self.scanner)
 
     def run(self) -> int:
         self.configure_readline()
@@ -228,7 +228,7 @@ class AutoPatchCLI:
         self.index = index
         runtime_status, runtime_message = self.ensure_semgrep_runtime()
         self.rebuild_scanner()
-        self.tool_registry = build_tool_registry(scanner=self.scanner)
+        self.tools = build_tools(scanner=self.scanner)
         return (
             f"{format_init_summary(summary)}\n\n"
             "Scanner runtime:\n"
@@ -319,7 +319,7 @@ class AutoPatchCLI:
                 "Wrap values with spaces in quotes."
             )
 
-        execution = self.tool_registry.execute(
+        execution = execute_tool(
             repo_root=self.repo_root,
             tool_name="preview_search_replace",
             tool_args={
@@ -327,6 +327,7 @@ class AutoPatchCLI:
                 "old_string": parts[2],
                 "new_string": parts[3],
             },
+            tools=self.tools,
         )
         return self.store_pending_from_preview(
             file_path=parts[1],
@@ -435,7 +436,7 @@ class AutoPatchCLI:
         if pending is None:
             return "No pending edit to apply."
 
-        execution = self.tool_registry.execute(
+        execution = execute_tool(
             repo_root=self.repo_root,
             tool_name="apply_search_replace",
             tool_args={
@@ -443,6 +444,7 @@ class AutoPatchCLI:
                 "old_string": pending.old_string,
                 "new_string": pending.new_string,
             },
+            tools=self.tools,
         )
         preview = self.extract_edit_preview(execution, pending.file_path)
         if preview.status == "ok":
@@ -893,10 +895,11 @@ class AutoPatchCLI:
         ]
 
     def run_tool(self, decision: AgentDecision) -> ToolExecutionResult:
-        return self.tool_registry.execute(
+        return execute_tool(
             repo_root=self.repo_root,
             tool_name=decision.tool_name or "",
             tool_args=dict(decision.tool_args),
+            tools=self.tools,
         )
 
     def extract_scan_result(self, execution: ToolExecutionResult) -> ScanResult:
@@ -927,7 +930,7 @@ class AutoPatchCLI:
         )
 
     def preview_drafted_edit(self, drafted: DraftedEdit) -> EditPreview:
-        execution = self.tool_registry.execute(
+        execution = execute_tool(
             repo_root=self.repo_root,
             tool_name="preview_search_replace",
             tool_args={
@@ -935,6 +938,7 @@ class AutoPatchCLI:
                 "old_string": drafted.old_string,
                 "new_string": drafted.new_string,
             },
+            tools=self.tools,
         )
         return self.extract_edit_preview(execution, drafted.file_path)
 
