@@ -22,3 +22,6 @@ autopatch-j = "autopatch_j.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["autopatch_j*"]
+
+[tool.setuptools.package-data]
+"autopatch_j.scanners" = ["rules/*.yml"]

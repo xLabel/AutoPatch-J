@@ -44,7 +44,7 @@ from autopatch_j.scanners import (
     build_java_scanner,
     build_scanner_catalog,
 )
-from autopatch_j.scanners.semgrep import install_bundled_semgrep_runtime
+from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools import ToolExecutionResult, build_tool_registry
 from autopatch_j.tools.edit import EditPreview
@@ -227,7 +227,7 @@ class AutoPatchCLI:
         self.repo_root = Path(summary.repo_root)
         self.session = session
         self.index = index
-        runtime_status, runtime_message = install_bundled_semgrep_runtime()
+        runtime_status, runtime_message = self.ensure_semgrep_runtime()
         self.rebuild_scanner()
         self.tool_registry = build_tool_registry(scanner=self.scanner)
         return (
@@ -236,6 +236,18 @@ class AutoPatchCLI:
             f"- semgrep: {runtime_status}\n"
             f"  {runtime_message}"
         )
+
+    def ensure_semgrep_runtime(self) -> tuple[str, str]:
+        try:
+            return install_managed_semgrep_runtime()
+        except Exception as exc:
+            return (
+                "missing",
+                (
+                    "AutoPatch-J managed Semgrep was not installed. "
+                    f"Run python3 scripts/install_semgrep_runtime.py after checking network access. Error: {exc}"
+                ),
+            )
 
     def handle_reindex(self) -> str:
         if self.repo_root is None:

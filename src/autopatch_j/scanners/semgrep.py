@@ -2,17 +2,15 @@ from __future__ import annotations
 
 import json
 import os
-import platform
-import shutil
 import subprocess
 import sys
-import stat
 from pathlib import Path
 
 from autopatch_j.paths import project_state_dir, user_state_dir
 from autopatch_j.scanners.base import Finding, ScanResult
 
-DEFAULT_SEMGREP_RULE_PATH = Path("runtime") / "semgrep" / "rules" / "java.yml"
+DEFAULT_SEMGREP_VERSION = "1.160.0"
+DEFAULT_SEMGREP_RULE_PATH = Path("rules") / "java.yml"
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
 
 
@@ -82,18 +80,14 @@ class SemgrepScanner:
         del repo_root
         user_runtime = resolve_user_runtime_binary()
         if user_runtime is not None:
-            return user_runtime, "user runtime"
-
-        bundled_runtime = resolve_bundled_runtime_binary()
-        if bundled_runtime is not None:
-            return bundled_runtime, "bundled runtime"
+            return user_runtime, "AutoPatch-J managed semgrep"
         return None
 
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
         message = (
-            "Semgrep runtime binary is missing or not executable. Expected user runtime: "
-            f"{user_runtime_binary_path()}. Bundled fallback: {bundled_runtime_binary_path()}. "
-            "Install it with: python3 scripts/install_semgrep_runtime.py --source /path/to/semgrep"
+            "AutoPatch-J managed Semgrep is missing or not executable. Expected: "
+            f"{user_runtime_binary_path()}. Install it with: "
+            "python3 scripts/install_semgrep_runtime.py"
         )
         return ScanResult(
             engine="semgrep",
@@ -107,7 +101,7 @@ class SemgrepScanner:
 
 
 def default_semgrep_config() -> str:
-    return str(repo_runtime_rules_path())
+    return str(semgrep_rules_path())
 
 
 def is_default_semgrep_config(config: str) -> bool:
@@ -119,10 +113,6 @@ def is_default_semgrep_config(config: str) -> bool:
 
 def resolve_user_runtime_binary() -> str | None:
     return resolve_existing_executable(user_runtime_binary_path())
-
-
-def resolve_bundled_runtime_binary() -> str | None:
-    return resolve_existing_executable(bundled_runtime_binary_path())
 
 
 def resolve_existing_executable(candidate: Path) -> str | None:
@@ -139,71 +129,56 @@ def is_executable_file(candidate: Path) -> bool:
     return candidate.exists() and candidate.is_file() and os.access(candidate, os.X_OK)
 
 
-def repo_root_from_module() -> Path:
-    for candidate in Path(__file__).resolve().parents:
-        if (candidate / "pyproject.toml").exists() and (candidate / "runtime" / "semgrep").exists():
-            return candidate
-    return Path(__file__).resolve().parents[3]
-
-
 def user_runtime_binary_path() -> Path:
-    return user_state_dir() / "scanners" / "semgrep" / "bin" / platform_tag() / semgrep_binary_name()
+    return semgrep_venv_bin_dir() / semgrep_binary_name()
 
 
-def bundled_runtime_binary_path() -> Path:
-    return repo_root_from_module() / "runtime" / "semgrep" / "bin" / platform_tag() / semgrep_binary_name()
+def semgrep_runtime_dir() -> Path:
+    return user_state_dir() / "scanners" / "semgrep"
 
 
-def repo_runtime_binary_path() -> Path:
-    return bundled_runtime_binary_path()
+def semgrep_venv_dir() -> Path:
+    return semgrep_runtime_dir() / "venv"
 
 
-def repo_runtime_rules_path() -> Path:
-    return repo_root_from_module() / DEFAULT_SEMGREP_RULE_PATH
+def semgrep_venv_bin_dir() -> Path:
+    if os.name == "nt":
+        return semgrep_venv_dir() / "Scripts"
+    return semgrep_venv_dir() / "bin"
 
 
-def install_bundled_semgrep_runtime() -> tuple[str, str]:
-    target = user_runtime_binary_path()
-    if resolve_existing_executable(target) is not None:
-        return "ok", f"Semgrep user runtime already installed: {target}"
+def semgrep_rules_path() -> Path:
+    return Path(__file__).resolve().parent / DEFAULT_SEMGREP_RULE_PATH
 
-    source = bundled_runtime_binary_path()
-    if resolve_existing_executable(source) is None:
+
+def install_managed_semgrep_runtime(
+    version: str = DEFAULT_SEMGREP_VERSION,
+    python_executable: str = sys.executable,
+) -> tuple[str, str]:
+    if resolve_user_runtime_binary() is not None:
+        return "ok", f"AutoPatch-J managed Semgrep already exists: {user_runtime_binary_path()}"
+
+    semgrep_runtime_dir().mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [python_executable, "-m", "venv", str(semgrep_venv_dir())],
+        check=True,
+    )
+    pip_executable = semgrep_venv_bin_dir() / ("pip.exe" if os.name == "nt" else "pip")
+    subprocess.run(
+        [str(pip_executable), "install", f"semgrep=={version}"],
+        check=True,
+    )
+
+    if resolve_user_runtime_binary() is None:
         return (
-            "missing",
-            (
-                "AutoPatch-J bundled Semgrep runtime is missing or not executable. "
-                f"Expected: {source}. Download an official Semgrep executable, then run: "
-                "python3 scripts/install_semgrep_runtime.py --source /path/to/semgrep"
-            ),
+            "error",
+            f"Semgrep installation completed but executable was not found at {user_runtime_binary_path()}",
         )
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
-    ensure_executable(target)
-    return "ok", f"Installed Semgrep user runtime: {target}"
+    return "ok", f"Installed AutoPatch-J managed Semgrep {version}: {user_runtime_binary_path()}"
 
 
 def semgrep_binary_name() -> str:
     return "semgrep.exe" if os.name == "nt" else "semgrep"
-
-
-def ensure_executable(path: Path) -> None:
-    current_mode = path.stat().st_mode
-    path.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-
-def platform_tag() -> str:
-    system = sys.platform
-    machine = platform.machine().lower()
-    arch = "arm64" if machine in {"arm64", "aarch64"} else "x64"
-    if system.startswith("darwin"):
-        return f"darwin-{arch}"
-    if system.startswith("linux"):
-        return f"linux-{arch}"
-    if system.startswith("win"):
-        return f"windows-{arch}"
-    return f"{system}-{arch}"
 
 
 def build_semgrep_subprocess_env(repo_root: Path) -> dict[str, str]:
