@@ -44,6 +44,7 @@ from autopatch_j.scanners import (
     build_java_scanner,
     build_scanner_catalog,
 )
+from autopatch_j.scanners.semgrep import install_bundled_semgrep_runtime
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools import ToolExecutionResult, build_tool_registry
 from autopatch_j.tools.edit import EditPreview
@@ -226,9 +227,15 @@ class AutoPatchCLI:
         self.repo_root = Path(summary.repo_root)
         self.session = session
         self.index = index
+        runtime_status, runtime_message = install_bundled_semgrep_runtime()
         self.rebuild_scanner()
         self.tool_registry = build_tool_registry(scanner=self.scanner)
-        return format_init_summary(summary)
+        return (
+            f"{format_init_summary(summary)}\n\n"
+            "Scanner runtime:\n"
+            f"- semgrep: {runtime_status}\n"
+            f"  {runtime_message}"
+        )
 
     def handle_reindex(self) -> str:
         if self.repo_root is None:

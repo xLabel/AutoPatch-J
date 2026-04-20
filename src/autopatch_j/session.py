@@ -4,7 +4,9 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-APP_DIR_NAME = ".autopatch"
+from autopatch_j.paths import PROJECT_STATE_DIR_NAME, project_state_dir
+
+APP_DIR_NAME = PROJECT_STATE_DIR_NAME
 CONFIG_FILE_NAME = "config.json"
 SESSION_FILE_NAME = "session.json"
 INDEX_FILE_NAME = "index.json"
@@ -105,7 +107,7 @@ class SessionState:
 
 
 def app_dir(repo_root: Path) -> Path:
-    return repo_root / APP_DIR_NAME
+    return project_state_dir(repo_root)
 
 
 def config_file(repo_root: Path) -> Path:

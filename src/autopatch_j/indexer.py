@@ -7,6 +7,7 @@ from pathlib import Path
 
 IGNORED_DIRS = {
     ".autopatch",
+    ".autopatch-j",
     ".git",
     ".hg",
     ".svn",

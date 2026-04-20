@@ -67,7 +67,8 @@ def build_scanner_check(repo_root: Path | None, scanner: SemgrepScanner) -> Read
         status="error",
         message=(
             f"Scanner configured as {scanner.label}, but the Semgrep runtime binary "
-            "is missing or not executable under runtime/semgrep/bin/<platform>/."
+            "is missing or not executable under ~/.autopatch-j/scanners/semgrep/bin/<platform>/ "
+            "or the bundled runtime/semgrep/bin/<platform>/ directory."
         ),
     )
 

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
-import stat
 import sys
 from pathlib import Path
 
@@ -13,7 +11,12 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from autopatch_j.scanners.semgrep import platform_tag, semgrep_binary_name  # noqa: E402
+from autopatch_j.scanners.semgrep import (  # noqa: E402
+    bundled_runtime_binary_path,
+    ensure_executable,
+    is_executable_file,
+    user_runtime_binary_path,
+)
 
 
 def main() -> int:
@@ -22,7 +25,10 @@ def main() -> int:
     )
     parser.add_argument(
         "--source",
-        help="Path to an existing semgrep executable. Defaults to semgrep found on PATH.",
+        help=(
+            "Path to an official Semgrep executable. Defaults to AutoPatch-J's "
+            "bundled runtime for the current platform."
+        ),
     )
     args = parser.parse_args()
 
@@ -30,8 +36,8 @@ def main() -> int:
     if source is None:
         print(
             "Semgrep executable was not found.\n"
-            "Install semgrep first, then run one of:\n"
-            "  python3 scripts/install_semgrep_runtime.py\n"
+            "Put the AutoPatch-J bundled binary under runtime/semgrep/bin/<platform>/, "
+            "or download an official Semgrep executable and run:\n"
             "  python3 scripts/install_semgrep_runtime.py --source /path/to/semgrep",
             file=sys.stderr,
         )
@@ -40,7 +46,7 @@ def main() -> int:
     target = runtime_binary_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     if source.resolve() != target.resolve():
-        shutil.copy2(source, target)
+        shutil.copyfile(source, target)
     ensure_executable(target)
     print(f"Installed Semgrep runtime: {target}")
     return 0
@@ -51,24 +57,12 @@ def resolve_source(source_arg: str | None) -> Path | None:
         source = Path(source_arg).expanduser().resolve()
         return source if is_executable_file(source) else None
 
-    discovered = shutil.which("semgrep")
-    if not discovered:
-        return None
-    source = Path(discovered).resolve()
+    source = bundled_runtime_binary_path()
     return source if is_executable_file(source) else None
 
 
 def runtime_binary_path() -> Path:
-    return REPO_ROOT / "runtime" / "semgrep" / "bin" / platform_tag() / semgrep_binary_name()
-
-
-def is_executable_file(path: Path) -> bool:
-    return path.exists() and path.is_file() and os.access(path, os.X_OK)
-
-
-def ensure_executable(path: Path) -> None:
-    current_mode = path.stat().st_mode
-    path.chmod(current_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return user_runtime_binary_path()
 
 
 if __name__ == "__main__":

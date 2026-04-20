@@ -40,8 +40,8 @@ def build_semgrep_entry(repo_root: Path | None) -> ScannerCatalogEntry:
             selected=True,
             status="selected, runtime missing",
             message=(
-                "已默认选中；runtime/semgrep/bin/<platform>/semgrep 缺失或不可执行。"
-                "可运行 python3 scripts/install_semgrep_runtime.py --source /path/to/semgrep 安装。"
+                "已默认选中；用户级 Semgrep runtime 缺失或不可执行。"
+                "可运行 python3 scripts/install_semgrep_runtime.py --source /path/to/semgrep 安装到 ~/.autopatch-j。"
             ),
         )
 
