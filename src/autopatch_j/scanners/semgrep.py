@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Iterator
 
 from autopatch_j.paths import project_state_dir, user_state_dir
-from autopatch_j.scanners.base import Finding, ScannerMeta, ScanResult
+from autopatch_j.scanners.base import Finding, ScannerMeta, ScannerName, ScanResult
 
 DEFAULT_SEMGREP_VERSION = "1.160.0"
 DEFAULT_SEMGREP_RULE_PATH = Path("resources") / "semgrep" / "rules" / "java.yml"
@@ -19,7 +19,7 @@ SEMGREP_INSTALL_LOCK_TIMEOUT_SECONDS = 600
 
 
 class SemgrepScanner:
-    name = "Semgrep"
+    name = ScannerName.SEMGREP
 
     def __init__(self) -> None:
         self.config = default_semgrep_config()

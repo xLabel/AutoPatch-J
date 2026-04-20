@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
+
+
+class ScannerName(StrEnum):
+    SEMGREP = "Semgrep"
+    PMD = "PMD"
+    SPOTBUGS = "SpotBugs"
+    CHECKSTYLE = "Checkstyle"
 
 
 @dataclass(slots=True)
@@ -87,7 +95,7 @@ class ScanResult:
 
 @dataclass(slots=True)
 class ScannerMeta:
-    name: str
+    name: ScannerName
     selected: bool
     status: str
     message: str

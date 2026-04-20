@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autopatch_j.scanners.base import ScannerMeta
+from autopatch_j.scanners.base import ScannerMeta, ScannerName
 
 
 class CheckstyleScanner:
-    name = "Checkstyle"
+    name = ScannerName.CHECKSTYLE
 
     def get_scanner(self, repo_root: Path | None = None) -> ScannerMeta:
         del repo_root
