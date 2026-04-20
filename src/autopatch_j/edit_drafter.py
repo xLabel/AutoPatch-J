@@ -107,27 +107,6 @@ def build_edit_draft_messages(
     ]
 
 
-def build_edit_draft_payload(
-    model: str,
-    file_path: str,
-    instruction: str,
-    file_content: str,
-    previous_edit: DraftedEdit | None = None,
-    feedback: str | None = None,
-) -> dict[str, object]:
-    return {
-        "model": model,
-        "messages": build_edit_draft_messages(
-            file_path=file_path,
-            instruction=instruction,
-            file_content=file_content,
-            previous_edit=previous_edit,
-            feedback=feedback,
-        ),
-        "response_format": {"type": "json_object"},
-    }
-
-
 def parse_edit_draft_response(response: LLMResponse | dict[str, object], expected_file_path: str) -> DraftedEdit:
     raw = extract_draft_response_text(response)
     if not raw:

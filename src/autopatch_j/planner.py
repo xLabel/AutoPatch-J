@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Callable, Protocol
@@ -129,19 +128,6 @@ def parse_llm_decision_response(
     )
 
 
-def parse_tool_arguments(arguments: object) -> dict[str, object]:
-    if isinstance(arguments, dict):
-        return arguments
-    if isinstance(arguments, str):
-        try:
-            parsed = json.loads(arguments)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(parsed, dict):
-            return parsed
-    return {}
-
-
 def parse_legacy_response(response: dict[str, object]) -> LLMResponse:
     output = response.get("output", [])
     if not isinstance(output, list):
@@ -242,9 +228,3 @@ AGENT_ACTION_TOOLS = [
         },
     },
 ]
-
-
-SCAN_JAVA_TOOL = {
-    "type": "function",
-    "function": AGENT_ACTION_TOOLS[0]["function"],
-}

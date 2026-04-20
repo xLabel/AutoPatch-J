@@ -312,33 +312,6 @@ class AutoPatchCLI:
             return "saved validation artifact is unavailable"
         return result.status
 
-    def handle_preview_edit(self, parts: list[str]) -> str:
-        if self.repo_root is None:
-            return "No active project. Run /init to create AutoPatch-J state."
-        if len(parts) != 4:
-            return (
-                "Usage: /preview-edit <file_path> <old_string> <new_string>\n"
-                "Wrap values with spaces in quotes."
-            )
-
-        execution = execute_tool(
-            repo_root=self.repo_root,
-            tool_name=ToolName.PREVIEW_SEARCH_REPLACE,
-            tool_args={
-                "file_path": parts[1],
-                "old_string": parts[2],
-                "new_string": parts[3],
-            },
-            tools=self.tools,
-        )
-        return self.store_pending_from_preview(
-            file_path=parts[1],
-            old_string=parts[2],
-            new_string=parts[3],
-            preview=self.extract_edit_preview(execution, parts[1]),
-            prefix="Pending edit updated.",
-        )
-
     def store_pending_from_draft(
         self,
         drafted: DraftedEdit,
@@ -410,27 +383,6 @@ class AutoPatchCLI:
             return self.handle_discard_pending()
         return None
 
-    def handle_show_pending(self) -> str:
-        if self.repo_root is None:
-            return "No active project. Run /init to create AutoPatch-J state."
-        pending = self.session.pending_edit
-        if pending is None:
-            return "No pending edit."
-        return (
-            "Pending edit:\n"
-            f"- file: {pending.file_path}\n"
-            f"- old_string length: {len(pending.old_string)}\n"
-            f"- new_string length: {len(pending.new_string)}\n"
-            f"- validation status: {pending.validation_status}\n"
-            f"- validation message: {pending.validation_message}\n"
-            f"- rationale: {pending.rationale or '(none)'}\n"
-            f"- source artifact: {pending.source_artifact_id or '(none)'}\n"
-            f"- source finding index: {pending.source_finding_index or '(none)'}\n"
-            f"- source check_id: {pending.source_check_id or '(none)'}\n"
-            f"{pending.diff}\n"
-            f"{format_pending_patch_menu()}"
-        )
-
     def handle_apply_pending(self) -> str:
         if self.repo_root is None:
             return "No active project. Run /init to create AutoPatch-J state."
@@ -470,34 +422,6 @@ class AutoPatchCLI:
         self.session.pending_edit = None
         save_session(self.repo_root, self.session)
         return "Pending patch discarded."
-
-    def handle_show_findings(self, artifact_id: str | None) -> str:
-        if self.repo_root is None:
-            return "No active project. Run /init to create AutoPatch-J state."
-
-        target_artifact = artifact_id or self.session.active_findings_id
-        if not target_artifact:
-            return "No findings artifact is active."
-
-        result = load_scan_result(self.repo_root, target_artifact)
-        if result is None:
-            return f"Findings artifact not found: {target_artifact}"
-
-        return format_scan_result(result)
-
-    def handle_show_validation(self, artifact_id: str | None) -> str:
-        if self.repo_root is None:
-            return "No active project. Run /init to create AutoPatch-J state."
-
-        target_artifact = artifact_id or self.session.last_validation_id
-        if not target_artifact:
-            return "No validation artifact is active."
-
-        result = load_validation_result(self.repo_root, target_artifact)
-        if result is None:
-            return f"Validation artifact not found: {target_artifact}"
-
-        return format_rescan_validation(result)
 
     def handle_agent_decision(
         self,
