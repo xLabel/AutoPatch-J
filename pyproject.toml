@@ -18,10 +18,11 @@ dependencies = [
 
 [project.scripts]
 autopatch-j = "autopatch_j.cli:main"
+autopatch-j-install-semgrep = "autopatch_j.scanners.resources.semgrep.install:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["autopatch_j*"]
 
 [tool.setuptools.package-data]
-"autopatch_j.scanners" = ["rules/*.yml"]
+"autopatch_j.scanners.resources.semgrep" = ["rules/*.yml"]

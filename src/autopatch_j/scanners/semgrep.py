@@ -10,8 +10,9 @@ from autopatch_j.paths import project_state_dir, user_state_dir
 from autopatch_j.scanners.base import Finding, ScanResult
 
 DEFAULT_SEMGREP_VERSION = "1.160.0"
-DEFAULT_SEMGREP_RULE_PATH = Path("rules") / "java.yml"
+DEFAULT_SEMGREP_RULE_PATH = Path("resources") / "semgrep" / "rules" / "java.yml"
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
+SEMGREP_INSTALL_COMMAND = "autopatch-j-install-semgrep"
 
 
 class SemgrepScanner:
@@ -87,7 +88,7 @@ class SemgrepScanner:
         message = (
             "AutoPatch-J managed Semgrep is missing or not executable. Expected: "
             f"{user_runtime_binary_path()}. Install it with: "
-            "python3 scripts/install_semgrep_runtime.py"
+            f"{SEMGREP_INSTALL_COMMAND}"
         )
         return ScanResult(
             engine="semgrep",

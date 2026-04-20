@@ -1,0 +1,1 @@
+"""Semgrep packaged resources."""

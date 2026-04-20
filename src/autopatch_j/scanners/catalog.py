@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from autopatch_j.scanners.semgrep import SemgrepScanner
+from autopatch_j.scanners.semgrep import SEMGREP_INSTALL_COMMAND, SemgrepScanner
 
 
 @dataclass(slots=True)
@@ -41,7 +41,7 @@ def build_semgrep_entry(repo_root: Path | None) -> ScannerCatalogEntry:
             status="selected, runtime missing",
             message=(
                 "已默认选中；AutoPatch-J 管理的 Semgrep 环境缺失或不可执行。"
-                "可运行 python3 scripts/install_semgrep_runtime.py 安装到 ~/.autopatch-j。"
+                f"可运行 {SEMGREP_INSTALL_COMMAND} 安装到 ~/.autopatch-j。"
             ),
         )
 
