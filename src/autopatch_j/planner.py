@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Callable, Literal, Protocol
 
 from autopatch_j.llm import ChatCompletionClient, LLMResponse, build_default_llm_client
 
@@ -13,6 +13,7 @@ class DecisionContext:
     scoped_paths: list[str]
     has_active_findings: bool
     mention_context: str = "(none)"
+    on_answer_delta: Callable[[str], None] | None = None
 
 
 @dataclass(slots=True)
@@ -21,6 +22,7 @@ class AgentDecision:
     message: str
     tool_name: str | None = None
     tool_args: dict[str, object] = field(default_factory=dict)
+    streamed: bool = False
 
 
 class Planner(Protocol):
@@ -63,6 +65,7 @@ class LLMPlanner:
                 tools=AGENT_ACTION_TOOLS,
                 tool_choice="auto",
                 stream=True,
+                on_delta=context.on_answer_delta,
             )
             return parse_llm_decision_response(response, context)
         except Exception as exc:
@@ -114,6 +117,7 @@ def parse_llm_decision_response(
     return AgentDecision(
         action="answer",
         message=response.content or "LLM planner returned no action.",
+        streamed=bool(response.content and context.on_answer_delta),
     )
 
 

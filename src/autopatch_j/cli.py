@@ -168,16 +168,32 @@ class AutoPatchCLI:
         mention_context = build_mention_context_text(self.repo_root, parsed)
 
         preview = build_context_preview(self.repo_root, parsed)
+        stream_started = False
+
+        def stream_answer_delta(delta: str) -> None:
+            nonlocal stream_started
+            if not delta:
+                return
+            if not stream_started:
+                if preview:
+                    print(preview)
+                    print()
+                stream_started = True
+            print(delta, end="", flush=True)
+
         decision = self.planner.decide(
             DecisionContext(
                 user_text=parsed.clean_text,
                 scoped_paths=self.effective_scope(parsed),
                 has_active_findings=self.session.active_findings_id is not None,
                 mention_context=mention_context,
+                on_answer_delta=stream_answer_delta,
             )
         )
 
         response = self.handle_agent_decision(parsed, preview, decision)
+        if decision.streamed and stream_started:
+            print()
         save_session(self.repo_root, self.session)
         return response
 
@@ -475,6 +491,8 @@ class AutoPatchCLI:
         if decision.action == "patch":
             body = self.handle_planned_patch(parsed, decision)
             return self.render_prompt_response(parsed, body)
+        if decision.streamed:
+            return ""
         return f"{preview}\n\n{decision.message}"
 
     def handle_planned_patch(self, parsed: ParsedPrompt, decision: AgentDecision) -> str:
