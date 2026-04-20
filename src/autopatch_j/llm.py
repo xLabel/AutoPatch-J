@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib import error, request
+
+from autopatch_j.llm_config import load_llm_config
 
 
 @dataclass(slots=True)
@@ -149,23 +150,14 @@ class ChatCompletionClient:
 
 
 def build_default_llm_client() -> ChatCompletionClient | None:
-    api_key = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not api_key:
+    config = load_llm_config()
+    if config is None:
         return None
 
-    model = (
-        os.getenv("LLM_MODEL")
-        or "gpt-5.4-mini"
-    )
-    base_url = (
-        os.getenv("LLM_BASE_URL")
-        or os.getenv("OPENAI_BASE_URL")
-        or "https://api.openai.com/v1"
-    )
     return ChatCompletionClient(
-        api_key=api_key,
-        model=model,
-        base_url=base_url,
+        api_key=config.api_key,
+        model=config.model,
+        base_url=config.base_url,
     )
 
 

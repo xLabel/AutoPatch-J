@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Callable, Protocol
 
 from autopatch_j.llm import ChatCompletionClient, LLMResponse, build_default_llm_client
+from autopatch_j.llm_config import missing_llm_config_message
 from autopatch_j.tools.base import ToolName
 
 
@@ -50,10 +51,7 @@ class UnavailablePlanner:
         del context
         return AgentDecision(
             action=AgentAction.ANSWER,
-            message=(
-                "LLM planner is unavailable. Set LLM_API_KEY or OPENAI_API_KEY "
-                "to enable natural-language agent actions."
-            ),
+            message=missing_llm_config_message("自然语言 Agent planning"),
         )
 
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from autopatch_j.llm_config import has_llm_config, missing_llm_config_message
 from autopatch_j.scanners import ScannerMeta
 
 
@@ -105,20 +105,12 @@ def build_tree_sitter_check() -> ReadinessCheck:
     )
 
 
-def has_llm_api_key() -> bool:
-    return bool(os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
-
-
 def build_llm_planner_check(planner_label: str) -> ReadinessCheck:
-    api_key = has_llm_api_key()
-    if not api_key:
+    if not has_llm_config():
         return ReadinessCheck(
             name="llm_planner",
             status="unavailable",
-            message=(
-                "No LLM API key is set. Set LLM_API_KEY or OPENAI_API_KEY "
-                "to enable natural-language agent planning."
-            ),
+            message=missing_llm_config_message("自然语言 Agent planning"),
         )
     return ReadinessCheck(
         name="llm_planner",
@@ -128,15 +120,11 @@ def build_llm_planner_check(planner_label: str) -> ReadinessCheck:
 
 
 def build_llm_drafter_check(edit_drafter_label: str | None) -> ReadinessCheck:
-    api_key = has_llm_api_key()
-    if not api_key:
+    if not has_llm_config():
         return ReadinessCheck(
             name="llm_patch_drafter",
             status="unavailable",
-            message=(
-                "No LLM API key is set. Set LLM_API_KEY or OPENAI_API_KEY "
-                "to enable patch drafting."
-            ),
+            message=missing_llm_config_message("patch drafting"),
         )
     return ReadinessCheck(
         name="llm_patch_drafter",

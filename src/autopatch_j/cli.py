@@ -29,6 +29,7 @@ from autopatch_j.mentions import (
     build_mention_completions,
     parse_prompt,
 )
+from autopatch_j.llm_config import missing_llm_config_message
 from autopatch_j.project import (
     ProjectSummary,
     discover_repo_root,
@@ -451,10 +452,7 @@ class AutoPatchCLI:
                 "then ask AutoPatch-J to draft a patch."
             )
         if self.edit_drafter is None:
-            return (
-                "Edit drafter is disabled. Set LLM_API_KEY or OPENAI_API_KEY "
-                "to enable patch drafting."
-            )
+            return missing_llm_config_message("patch drafting")
 
         result = load_scan_result(self.repo_root, artifact_id)
         if result is None:
@@ -488,10 +486,7 @@ class AutoPatchCLI:
         if pending is None:
             return "No pending edit to revise."
         if self.edit_drafter is None:
-            return (
-                "Edit drafter is disabled. Set LLM_API_KEY or OPENAI_API_KEY "
-                "to revise pending patches."
-            )
+            return missing_llm_config_message("patch revision")
 
         repairing_drafter = self.repairing_edit_drafter()
         if repairing_drafter is None:
