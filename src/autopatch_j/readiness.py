@@ -4,8 +4,18 @@ import importlib.util
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
-from autopatch_j.scanners import SemgrepScanner
+from autopatch_j.scanners import ScannerMeta
+
+
+class ReadinessScanner(Protocol):
+    @property
+    def label(self) -> str:
+        """Return a short scanner label for status output."""
+
+    def get_scanner(self, repo_root: Path | None = None) -> ScannerMeta:
+        """Return scanner status metadata."""
 
 
 @dataclass(slots=True)
@@ -22,7 +32,7 @@ class ReadinessReport:
 
 def build_readiness_report(
     repo_root: Path | None,
-    scanner: SemgrepScanner,
+    scanner: ReadinessScanner,
     planner_label: str,
     edit_drafter_label: str | None,
 ) -> ReadinessReport:
@@ -50,24 +60,23 @@ def build_project_check(repo_root: Path | None) -> ReadinessCheck:
     )
 
 
-def build_scanner_check(repo_root: Path | None, scanner: SemgrepScanner) -> ReadinessCheck:
-    resolved = scanner.resolve_binary_with_source(repo_root)
-    if resolved:
-        semgrep_path, source = resolved
+def build_scanner_check(repo_root: Path | None, scanner: ReadinessScanner) -> ReadinessCheck:
+    scanner_meta = scanner.get_scanner(repo_root)
+    if scanner_meta.selected and "ready" in scanner_meta.status:
         return ReadinessCheck(
             name="scanner",
             status="ok",
             message=(
                 f"Scanner ready: {scanner.label}. "
-                f"Using semgrep binary from {source} at {semgrep_path}."
+                f"{scanner_meta.message}"
             ),
         )
     return ReadinessCheck(
         name="scanner",
         status="error",
         message=(
-            f"Scanner configured as {scanner.label}, but the Semgrep runtime binary "
-            "is missing or not executable under ~/.autopatch-j/scanners/semgrep/venv/."
+            f"Scanner configured as {scanner.label}, but it is not ready. "
+            f"{scanner_meta.message}"
         ),
     )
 
