@@ -5,7 +5,7 @@ from pathlib import Path
 from autopatch_j.project import ProjectSummary
 from autopatch_j.readiness import ReadinessReport
 from autopatch_j.scanners import ScanResult
-from autopatch_j.tools.edit import EditPreview
+from autopatch_j.tools.patch import PatchPreview
 from autopatch_j.validators import RescanValidationResult
 
 
@@ -83,7 +83,7 @@ def format_scan_result(result: ScanResult) -> str:
     return "\n".join(header)
 
 
-def format_edit_preview(preview: EditPreview, prefix: str) -> str:
+def format_edit_preview(preview: PatchPreview, prefix: str) -> str:
     lines = [
         prefix,
         f"- file: {preview.file_path}",

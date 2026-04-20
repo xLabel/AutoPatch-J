@@ -22,7 +22,7 @@ class SearchReplaceEdit:
 
 
 @dataclass(slots=True)
-class EditPreview:
+class PatchPreview:
     file_path: str
     status: str
     message: str
@@ -31,9 +31,9 @@ class EditPreview:
     validation: SyntaxValidationResult
 
 
-class PreviewSearchReplaceTool(Tool):
-    name = ToolName.PREVIEW_SEARCH_REPLACE
-    description = "Preview a single search-replace edit and validate Java syntax when possible."
+class PreviewPatchTool(Tool):
+    name = ToolName.PREVIEW_PATCH
+    description = "Preview a single search-replace patch and validate Java syntax when possible."
     parameters = {
         "type": "object",
         "properties": {
@@ -51,7 +51,7 @@ class PreviewSearchReplaceTool(Tool):
         old_string: str,
         new_string: str,
     ) -> ToolExecutionResult:
-        preview = preview_search_replace(
+        preview = preview_patch(
             repo_root,
             SearchReplaceEdit(
                 file_path=file_path,
@@ -67,43 +67,15 @@ class PreviewSearchReplaceTool(Tool):
         )
 
 
-class ApplySearchReplaceTool(Tool):
-    name = ToolName.APPLY_SEARCH_REPLACE
-    description = "Apply a single search-replace edit after preview validation passes."
-    parameters = PreviewSearchReplaceTool.parameters
-
-    def execute(
-        self,
-        repo_root: Path,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-    ) -> ToolExecutionResult:
-        preview = apply_search_replace(
-            repo_root,
-            SearchReplaceEdit(
-                file_path=file_path,
-                old_string=old_string,
-                new_string=new_string,
-            ),
-        )
-        return ToolExecutionResult(
-            tool_name=self.name,
-            status=preview.status,
-            message=preview.message,
-            payload=preview,
-        )
-
-
-def preview_search_replace(
+def preview_patch(
     repo_root: Path,
     edit: SearchReplaceEdit,
     context_lines: int = 3,
     validator: SyntaxValidator | None = None,
-) -> EditPreview:
+) -> PatchPreview:
     target = resolve_repo_file(repo_root, edit.file_path)
     if not target.exists() or not target.is_file():
-        return EditPreview(
+        return PatchPreview(
             file_path=edit.file_path,
             status="error",
             message="目标文件不存在。",
@@ -118,7 +90,7 @@ def preview_search_replace(
     original = read_text(target)
     occurrences = original.count(edit.old_string)
     if occurrences == 0:
-        return EditPreview(
+        return PatchPreview(
             file_path=edit.file_path,
             status="missing",
             message="old_string was not found in the target file.",
@@ -126,11 +98,11 @@ def preview_search_replace(
             diff="",
             validation=SyntaxValidationResult(
                 status="skipped",
-                message="edit 无法预览，已跳过语法校验。",
+                message="patch 无法预览，已跳过语法校验。",
             ),
         )
     if occurrences > 1:
-        return EditPreview(
+        return PatchPreview(
             file_path=edit.file_path,
             status="ambiguous",
             message="old_string matched multiple locations in the target file.",
@@ -138,7 +110,7 @@ def preview_search_replace(
             diff="",
             validation=SyntaxValidationResult(
                 status="skipped",
-                message="edit 匹配位置不唯一，已跳过语法校验。",
+                message="patch 匹配位置不唯一，已跳过语法校验。",
             ),
         )
 
@@ -146,23 +118,23 @@ def preview_search_replace(
     diff = build_unified_diff(edit.file_path, original, updated, context_lines=context_lines)
     active_validator = validator or get_validator(DEFAULT_VALIDATOR_NAME) or TreeSitterJavaValidator()
     validation = active_validator.validate(edit.file_path, updated)
-    return EditPreview(
+    return PatchPreview(
         file_path=edit.file_path,
         status="ok",
-        message="edit 预览生成成功。",
+        message="patch 预览生成成功。",
         occurrences=1,
         diff=diff,
         validation=validation,
     )
 
 
-def apply_search_replace(
+def apply_patch_preview(
     repo_root: Path,
     edit: SearchReplaceEdit,
     context_lines: int = 3,
     validator: SyntaxValidator | None = None,
-) -> EditPreview:
-    preview = preview_search_replace(
+) -> PatchPreview:
+    preview = preview_patch(
         repo_root,
         edit,
         context_lines=context_lines,
@@ -171,11 +143,11 @@ def apply_search_replace(
     if preview.status != "ok":
         return preview
     if preview.validation.status != "ok" and Path(edit.file_path).suffix.lower() == ".java":
-        return EditPreview(
+        return PatchPreview(
             file_path=edit.file_path,
             status="blocked",
             message=(
-                "Java edit 语法校验通过前禁止应用。"
+                "Java patch 语法校验通过前禁止应用。"
                 f"当前校验状态：{preview.validation.status}。"
             ),
             occurrences=preview.occurrences,

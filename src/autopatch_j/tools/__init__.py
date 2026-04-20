@@ -5,15 +5,14 @@ from typing import Any
 
 from autopatch_j.scanners import JavaScanner
 from autopatch_j.tools.base import Tool, ToolExecutionResult, ToolName
-from autopatch_j.tools.edit import ApplySearchReplaceTool, PreviewSearchReplaceTool
+from autopatch_j.tools.patch import PreviewPatchTool
 from autopatch_j.tools.scan import ScanTool
 
 
 def build_tools(scanner: JavaScanner | None = None) -> list[Tool]:
     return [
         ScanTool(scanner=scanner),
-        PreviewSearchReplaceTool(),
-        ApplySearchReplaceTool(),
+        PreviewPatchTool(),
     ]
 
 

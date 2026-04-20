@@ -64,7 +64,7 @@ from autopatch_j.scanners import (
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 from autopatch_j.session import PendingEdit, SessionState, save_session
 from autopatch_j.tools import ToolExecutionResult, ToolName, build_tools, execute_tool
-from autopatch_j.tools.edit import EditPreview
+from autopatch_j.tools.patch import PatchPreview, SearchReplaceEdit, apply_patch_preview
 from autopatch_j.validators import (
     SyntaxValidationResult,
     validate_post_apply_rescan,
@@ -330,7 +330,7 @@ class AutoPatchCLI:
     def store_pending_from_draft(
         self,
         drafted: DraftedEdit,
-        preview: EditPreview | None = None,
+        preview: PatchPreview | None = None,
         retry_note: str | None = None,
         source_artifact_id: str | None = None,
         source_finding_index: int | None = None,
@@ -362,7 +362,7 @@ class AutoPatchCLI:
         file_path: str,
         old_string: str,
         new_string: str,
-        preview: EditPreview,
+        preview: PatchPreview,
         prefix: str,
         rationale: str | None = None,
         source_artifact_id: str | None = None,
@@ -405,17 +405,14 @@ class AutoPatchCLI:
         if pending is None:
             return "当前没有待应用的 patch。"
 
-        execution = execute_tool(
-            repo_root=self.repo_root,
-            tool_name=ToolName.APPLY_SEARCH_REPLACE,
-            tool_args={
-                "file_path": pending.file_path,
-                "old_string": pending.old_string,
-                "new_string": pending.new_string,
-            },
-            tools=self.tools,
+        preview = apply_patch_preview(
+            self.repo_root,
+            SearchReplaceEdit(
+                file_path=pending.file_path,
+                old_string=pending.old_string,
+                new_string=pending.new_string,
+            ),
         )
-        preview = self.extract_edit_preview(execution, pending.file_path)
         if preview.status == "ok":
             rescan_output = self.run_post_apply_rescan(pending)
             self.session.pending_edit = None
@@ -850,11 +847,11 @@ class AutoPatchCLI:
             findings=[],
         )
 
-    def extract_edit_preview(self, execution: ToolExecutionResult, file_path: str) -> EditPreview:
-        if isinstance(execution.payload, EditPreview):
+    def extract_edit_preview(self, execution: ToolExecutionResult, file_path: str) -> PatchPreview:
+        if isinstance(execution.payload, PatchPreview):
             return execution.payload
 
-        return EditPreview(
+        return PatchPreview(
             file_path=file_path,
             status="error",
             message=execution.message,
@@ -863,10 +860,10 @@ class AutoPatchCLI:
             validation=self.build_default_preview_validation(),
         )
 
-    def preview_drafted_edit(self, drafted: DraftedEdit) -> EditPreview:
+    def preview_drafted_edit(self, drafted: DraftedEdit) -> PatchPreview:
         execution = execute_tool(
             repo_root=self.repo_root,
-            tool_name=ToolName.PREVIEW_SEARCH_REPLACE,
+            tool_name=ToolName.PREVIEW_PATCH,
             tool_args={
                 "file_path": drafted.file_path,
                 "old_string": drafted.old_string,
@@ -881,12 +878,12 @@ class AutoPatchCLI:
             return None
         return cast(RepairingEditDrafter, self.edit_drafter)
 
-    def should_retry_draft(self, preview: EditPreview, file_path: str) -> bool:
+    def should_retry_draft(self, preview: PatchPreview, file_path: str) -> bool:
         if preview.status != "ok":
             return True
         return Path(file_path).suffix.lower() == ".java" and preview.validation.status == "error"
 
-    def build_draft_retry_feedback(self, preview: EditPreview, file_path: str) -> str:
+    def build_draft_retry_feedback(self, preview: PatchPreview, file_path: str) -> str:
         lines = [
             f"preview_status: {preview.status}",
             f"preview_message: {preview.message}",

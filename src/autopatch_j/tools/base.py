@@ -8,8 +8,7 @@ from typing import Any
 
 class ToolName(StrEnum):
     SCAN = "scan"
-    PREVIEW_SEARCH_REPLACE = "preview_search_replace"
-    APPLY_SEARCH_REPLACE = "apply_search_replace"
+    PREVIEW_PATCH = "preview_patch"
 
 
 @dataclass(slots=True)
