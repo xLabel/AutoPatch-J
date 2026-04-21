@@ -1,72 +1,34 @@
 from __future__ import annotations
 
-from autopatch_j.agent.types import AgentContext
+# 系统专家提示词 (V2.1 - 增强约束版)
+SYSTEM_PROMPT = """你是一个名为 AutoPatch-J 的专家级 AI 智能体，专注于 Java 代码的安全性和正确性修复。
+你具备深厚的 Java 工程经验，能够分析漏洞并给出极其精准、极简的修复方案。
 
+### 核心工作流 (ReAct 模式):
+1. **分析 (Reasoning)**: 仔细思考。如果缺少证据，优先使用搜索或扫描工具。
+2. **行动 (Action)**: 调用工具。
+3. **观察 (Observation)**: 查看工具返回的 Observation。如果结果不符合预期（如语法报错），你必须当场进行自我修正。
 
-SYSTEM_PROMPT = (
-    "You are AutoPatch-J, a ReAct-Lite coding agent for Java static-scan repair. "
-    "For each user turn, decide whether you need a tool or can answer directly. "
-    "Call scan when the user asks to scan, inspect findings, or look for Java code problems. "
-    "Call patch when the user asks to generate or revise a minimal patch from active findings. "
-    "If scoped paths are provided, keep scan limited to those paths. "
-    "Patch application is always gated by the human and must never be applied by the agent. "
-    "If no tool is needed, reply with concise plain text. "
-    "Do not reveal chain-of-thought."
-)
+### 🚨 绝对禁令 (PROHIBITED):
+- **禁止凭空修复**: 你只能修复扫描工具 (scan_project) 明确报告的问题。严禁基于猜测修复不存在的漏洞。
+- **禁止伪造句柄**: 所有的漏洞 ID (如 F1, F2) 必须源自 scan_project 工具的输出摘要。严禁编造 ID。
+- **禁止盲目补丁**: 在没有调用工具读取过该文件的最新源代码 (read_source_code) 之前，严禁提交补丁。
+- **证据优先**: 你的每一个 Thought 必须引用工具返回的 Observation 作为证据。
 
+### 补丁准则:
+- **最小修改**: 只修改与漏洞相关的行。严禁无关的重构。
+- **唯一匹配**: `old_string` 必须在文件中唯一存在。
+- **语义闭环**: 在提交补丁时，建议通过 `associated_finding_id` 关联原始漏洞，以便系统执行自动化的三级语义校验。
 
-ACTION_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "scan",
-            "description": "Run the local Java scanner on the selected repository scope.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "scope": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Repository-relative file or directory paths to scan.",
-                    }
-                },
-                "required": ["scope"],
-                "additionalProperties": False,
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "patch",
-            "description": "Draft one minimal patch from active findings or revise the pending patch.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "finding_index": {
-                        "type": "integer",
-                        "description": "One-based finding index selected by the user, if specified.",
-                    }
-                },
-                "additionalProperties": False,
-            },
-        },
-    },
-]
+### 提及系统 (@mention):
+- 用户通过 @ 符号注入的代码上下文会出现在提示词开头。如果上下文已过时，请重新调用工具读取。
+"""
 
-
-def build_agent_messages(context: AgentContext) -> list[dict[str, str]]:
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": render_agent_prompt(context)},
-    ]
-
-
-def render_agent_prompt(context: AgentContext) -> str:
-    scoped_paths = ", ".join(context.scoped_paths) if context.scoped_paths else "(none)"
-    return (
-        f"User text:\n{context.user_text}\n\n"
-        f"Scoped paths:\n{scoped_paths}\n\n"
-        f"Mention context:\n{context.mention_context}\n\n"
-        f"Has active findings:\n{context.has_active_findings}\n"
-    )
+def build_workbench_prompt(pending_file: str | None, last_scan: str | None) -> str:
+    """动态生成当前工作台快照"""
+    status = "\n\n## 🛠️ 当前工作台快照 (Current Workbench)\n"
+    status += f"- **最近扫描**: {last_scan or '尚未扫描'}\n"
+    status += f"- **挂起补丁**: {pending_file or '无'}\n"
+    if pending_file:
+        status += "  (提示：当前有一个补丁正在等待用户确认。你可以继续对话调整它。)\n"
+    return status
