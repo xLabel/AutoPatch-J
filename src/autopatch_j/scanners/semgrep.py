@@ -14,6 +14,8 @@ from autopatch_j.paths import project_state_dir, user_state_dir
 from autopatch_j.scanners.base import Finding, ScannerMeta, ScannerName, ScanResult
 
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
+SEMGREP_INSTALL_LOCK_TIMEOUT_SECONDS = 600
+DEFAULT_SEMGREP_RULE_PATH = Path("resources") / "semgrep" / "rules" / "java.yml"
 
 
 class SemgrepScanner:

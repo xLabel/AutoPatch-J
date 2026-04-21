@@ -65,8 +65,15 @@ class PatchEngine:
         # 4. 语法门禁
         validation_result = self.validator.validate(file_path, updated_content)
         
-        status = "ok" if validation_result.status in ("ok", "skipped") else "invalid"
-        message = "补丁起草成功并已通过语法校验。" if status == "ok" else f"语法校验失败：{validation_result.message}"
+        # 优化状态判断：优先透传 unavailable
+        if validation_result.status == "unavailable":
+            status = "unavailable"
+        elif validation_result.status in ("ok", "skipped"):
+            status = "ok"
+        else:
+            status = "invalid"
+
+        message = "补丁起草成功并已通过语法校验。" if status == "ok" else validation_result.message
 
         return PatchDraft(
             file_path=file_path,

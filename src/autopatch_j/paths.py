@@ -42,3 +42,8 @@ def get_semgrep_runtime_dir() -> Path:
     path = get_global_state_dir() / "scanners" / "semgrep"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+# 向后兼容别名 (用于 scanners 模块)
+project_state_dir = get_project_state_dir
+user_state_dir = get_global_state_dir

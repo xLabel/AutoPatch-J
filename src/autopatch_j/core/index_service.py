@@ -14,22 +14,21 @@ from autopatch_j.paths import get_project_state_dir
 @dataclass(slots=True)
 class IndexEntry:
     """索引项数据模型"""
-    path: str          # 仓库相对路径
-    name: str          # 符号或文件名
-    kind: str          # "file", "dir", "class", "method"
-    line: int = 0      # 定义所在行号 (1-based)
-    container: str = "" # 所属容器（如类名或文件名）
+    path: str
+    name: str
+    kind: str
+    line: int = 0
+    container: str = ""
 
 
 class IndexService:
     """
     符号索引服务 (Core Service)
     职责：使用 Tree-sitter 扫描项目并建立 SQLite 符号索引。
-    支持：文件名、类名、方法名的快速模糊搜索。
     """
 
     def __init__(self, repo_root: Path) -> None:
-        self.repo_root = repo_root.resolve()
+        self.repo_root = repo_root
         self.db_path = get_project_state_dir(self.repo_root) / "index.db"
         self._init_db()
 
@@ -58,33 +57,35 @@ class IndexService:
             conn.close()
 
     def rebuild_index(self) -> dict[str, int]:
-        """全量重建索引，使用高效的 os.scandir 算法"""
+        """全量重建索引，采用稳健的 os.walk 算法"""
         all_entries: list[IndexEntry] = []
-        
-        def _scan_dir(current_path: Path):
-            try:
-                with os.scandir(current_path) as it:
-                    for entry in it:
-                        # 过滤隐藏文件和忽略目录
-                        if entry.name.startswith('.') or entry.name in GlobalConfig.ignored_dirs:
-                            continue
-                        
-                        rel_path = Path(entry.path).relative_to(self.repo_root).as_posix()
-                        
-                        if entry.is_dir():
-                            all_entries.append(IndexEntry(path=rel_path, name=entry.name, kind="dir"))
-                            _scan_dir(Path(entry.path)) # 递归
-                        elif entry.is_file():
-                            all_entries.append(IndexEntry(path=rel_path, name=entry.name, kind="file"))
-                            if entry.name.endswith(".java"):
-                                all_entries.extend(self._extract_java_symbols(rel_path, Path(entry.path)))
-            except PermissionError:
-                pass # 忽略无权限目录
+        repo_root_abs = os.path.abspath(str(self.repo_root))
 
-        # 启动递归扫描
-        _scan_dir(self.repo_root)
+        for root, dirs, files in os.walk(repo_root_abs):
+            # 1. 过滤黑名单
+            dirs[:] = [d for d in dirs if d not in GlobalConfig.ignored_dirs]
+            
+            # 2. 计算当前相对路径
+            rel_root = os.path.relpath(root, repo_root_abs).replace(os.sep, '/')
+            if rel_root == ".": rel_root = ""
 
-        # 持久化到数据库
+            # 3. 索引目录
+            for d in dirs:
+                if d.startswith('.') and d != '.autopatch-j': continue
+                path = f"{rel_root}/{d}".lstrip('/')
+                all_entries.append(IndexEntry(path=path, name=d, kind="dir"))
+
+            # 4. 索引文件
+            for f in files:
+                if f.startswith('.') and f != '.autopatch-j': continue
+                path = f"{rel_root}/{f}".lstrip('/')
+                all_entries.append(IndexEntry(path=path, name=f, kind="file"))
+                
+                if f.endswith(".java"):
+                    abs_f = os.path.join(root, f)
+                    all_entries.extend(self._extract_java_symbols(path, Path(abs_f)))
+
+        # 5. 持久化到数据库
         with self._connect() as conn:
             conn.execute("DELETE FROM entries")
             conn.executemany(
@@ -123,21 +124,17 @@ class IndexService:
             parser = Parser(language)
             tree = parser.parse(content.encode("utf-8"))
             
-            # 定义查询：查找类定义和方法定义
-            query_scm = """
-                (class_declaration name: (identifier) @class.name)
-                (method_declaration name: (identifier) @method.name)
-            """
-            query = language.query(query_scm)
+            query = language.query("(class_declaration name: (identifier) @class.name) (method_declaration name: (identifier) @method.name)")
             captures = query.captures(tree.root_node)
             
             for node, tag in captures:
-                kind = "class" if tag == "class.name" else "method"
-                name = node.text.decode("utf-8")
-                line = node.start_point[0] + 1
-                symbols.append(IndexEntry(path=rel_path, name=name, kind=kind, line=line, container=rel_path))
-                
-        except (ImportError, Exception):
-            # 如果 Tree-sitter 不可用或解析失败，优雅降级（只索引文件本身）
+                symbols.append(IndexEntry(
+                    path=rel_path, 
+                    name=node.text.decode("utf-8"), 
+                    kind="class" if tag == "class.name" else "method", 
+                    line=node.start_point[0] + 1, 
+                    container=rel_path
+                ))
+        except:
             pass
         return symbols
