@@ -19,6 +19,10 @@ class ArtifactManager:
     主要处理：扫描结果 (findings) 和 待确认补丁 (pending_patch)。
     """
     repo_root: Path
+    # 🚀 显式声明字段，以便 slots 能够预留空间
+    state_dir: Path = field(init=False)
+    findings_dir: Path = field(init=False)
+    patches_dir: Path = field(init=False)
 
     def __post_init__(self) -> None:
         self.state_dir = get_project_state_dir(self.repo_root)

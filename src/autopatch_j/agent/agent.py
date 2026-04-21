@@ -26,10 +26,7 @@ class AutoPatchAgent:
         self.context = context
         self.llm = llm or build_default_llm_client()
         
-        if not self.llm:
-            raise ValueError("LLM 配置缺失。")
-
-        # 🚀 构造函数注入：在初始化时就将全量 Context 注入给工具小弟
+        # 注册工具集
         self.available_tools: dict[str, Tool] = {
             t.name: t for t in [
                 ProjectScannerTool(context),
@@ -49,6 +46,9 @@ class AutoPatchAgent:
         on_tool_start: Callable[[str], None] | None = None
     ) -> str:
         """执行 ReAct 循环"""
+        if not self.llm:
+            return "LLM 配置缺失（未检测到有效 API Key）。请设置 LLM_API_KEY 环境变量后重启，以启用对话修复能力。"
+
         self.messages.append({"role": "user", "content": user_text})
 
         for _ in range(5):
@@ -130,4 +130,4 @@ class AutoPatchAgent:
 
     @property
     def label(self) -> str:
-        return self.llm.label
+        return self.llm.label if self.llm else "LLM Not Configured"

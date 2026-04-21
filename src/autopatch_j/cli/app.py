@@ -171,9 +171,38 @@ class AutoPatchCLI:
         if cmd == "/init": self.handle_init()
         elif cmd == "/status": self.handle_status()
         elif cmd == "/reindex": self.handle_reindex()
-        elif cmd == "/help": self.renderer.print_info("常用命令:\n  /init, /status, /reindex, /help, /quit")
+        elif cmd in ("/scanners", "/scanner"): self.handle_scanners()
+        elif cmd == "/help": self.renderer.print_info("常用命令:\n  /init, /status, /scanners, /reindex, /help, /quit")
         elif cmd in ("/quit", "/exit"): sys.exit(0)
         else: self.renderer.print_error(f"未知命令: {cmd}")
+
+    def handle_scanners(self) -> None:
+        """展示所有静态扫描器的状态与规划"""
+        from autopatch_j.scanners import ALL_SCANNERS
+        from rich.table import Table
+
+        table = Table(title="Java 静态扫描器看板", show_header=True, header_style="bold magenta")
+        table.add_column("名称", style="cyan", width=12)
+        table.add_column("状态", width=25)
+        table.add_column("版本", justify="center")
+        table.add_column("功能简述")
+
+        for scanner in ALL_SCANNERS:
+            # 获取元数据
+            meta = scanner.get_meta(self.repo_root)
+            
+            status_text = f"[green]● {meta.status}[/green]" if meta.is_implemented else f"[dim]○ {meta.status}[/dim]"
+            version_text = meta.version if meta.is_implemented else "-"
+            
+            table.add_row(
+                meta.name,
+                status_text,
+                version_text,
+                meta.description
+            )
+
+        self.renderer.console.print(table)
+        self.renderer.print("\n[italic]提示：目前系统默认启用 Semgrep。未来版本将支持多选扫描器进行交叉验证。[/italic]")
 
     def handle_init(self) -> None:
         self.renderer.print_step("正在初始化 AutoPatch-J 环境...")

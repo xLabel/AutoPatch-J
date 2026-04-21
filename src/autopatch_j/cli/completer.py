@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Iterable, Callable
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
@@ -14,10 +15,12 @@ class MentionCompleter(Completer):
 
     def __init__(self, search_func: Callable[[str], list[IndexEntry]]) -> None:
         self.search_func = search_func
+        # 🚀 预编译正则，防止 prompt_toolkit 报错
+        self.mention_pattern = re.compile(r'@[\w\.]*')
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterable[Completion]:
-        # 寻找光标前以 @ 开头的单词
-        text_before_cursor = document.get_word_before_cursor(pattern=r'@[\w\.]*')
+        # 使用预编译的正则对象
+        text_before_cursor = document.get_word_before_cursor(pattern=self.mention_pattern)
         if not text_before_cursor.startswith('@'):
             return
 
