@@ -7,7 +7,6 @@ from rich.markdown import Markdown
 from rich.live import Live
 from rich.text import Text
 
-
 class CliRenderer:
     """
     终端渲染器 (Presentation Layer)
@@ -15,17 +14,21 @@ class CliRenderer:
     """
 
     def __init__(self) -> None:
-        self.console = Console()
+        # 🚀 核心修复：确保开启 markup 解析
+        self.console = Console(markup=True)
 
     def print(self, message: object = "", end: str = "\n", style: str | None = None) -> None:
-        """通用打印，支持自动 Markdown 渲染"""
+        """通用打印，支持标签渲染和自动 Markdown"""
         if isinstance(message, str) and style is None:
-            if "\n" in message or "```" in message:
+            # 如果包含 Markdown 标记且不含样式标签，走 Markdown 渲染
+            if ("```" in message or "\n#" in message) and "[" not in message:
                 self.console.print(Markdown(message), end=end)
             else:
+                # 默认走支持样式标签的 print
                 self.console.print(message, end=end)
         else:
             self.console.print(message, end=end, style=style)
+
 
     def print_panel(self, text: str, title: str | None = None, style: str = "blue") -> None:
         """打印带标题的面板"""
