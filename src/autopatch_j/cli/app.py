@@ -1,912 +1,251 @@
 from __future__ import annotations
 
-import shlex
+import sys
+import re
 from pathlib import Path
-from typing import cast
-
 from prompt_toolkit import PromptSession
+from prompt_toolkit.history import FileHistory
 
-from autopatch_j.agent import AgentAction, AgentContext, AgentResult, build_default_agent
-from autopatch_j.artifacts import (
-    load_scan_result,
-    load_validation_result,
-    save_scan_result,
-    save_validation_result,
-)
-from autopatch_j.context import build_context_preview, build_mention_context_text
-from autopatch_j.cli_support.finding_selection import (
-    build_finding_instruction,
-    extract_planned_finding_index,
-    extract_requested_finding_index,
-    read_text,
-)
-from autopatch_j.cli_support.formatters import (
-    append_pending_patch_menu,
-    format_edit_preview,
-    format_finding_candidates,
-    format_init_summary,
-    format_readiness_report,
-    format_reindex_summary,
-    format_rescan_validation,
-    format_scan_result,
-    format_scanners_report,
-)
-from autopatch_j.edit_drafter import (
-    DraftedEdit,
-    RepairingEditDrafter,
-    build_default_edit_drafter,
-)
-from autopatch_j.indexer import IndexEntry, summarize_index
-from autopatch_j.mentions import (
-    MentionResolution,
-    ParsedPrompt,
-    parse_prompt,
-)
-from autopatch_j.llm_config import missing_llm_config_message
-from autopatch_j.cli.completer import MentionCompleter
+from autopatch_j.paths import discover_repo_root, get_project_state_dir
+from autopatch_j.core.artifact_manager import ArtifactManager
+from autopatch_j.core.index_service import IndexService
+from autopatch_j.core.patch_engine import PatchEngine
+from autopatch_j.core.code_fetcher import CodeFetcher
+from autopatch_j.core.service_context import ServiceContext
+from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.cli.render import CliRenderer
-from autopatch_j.project import (
-    discover_repo_root,
-    initialize_project,
-    load_project,
-    refresh_project_index,
-)
-from autopatch_j.readiness import ReadinessReport, build_readiness_report as build_readiness_snapshot
-from autopatch_j.scanners import (
-    ALL_SCANNERS,
-    DEFAULT_SCANNER_NAME,
-    JavaScanner,
-    ScanResult,
-    get_scanner,
-)
-from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
-from autopatch_j.session import PendingEdit, SessionState, save_session
-from autopatch_j.tools import ToolExecutionResult, ToolName, build_tools, execute_tool
-from autopatch_j.tools.patch import PatchPreview, SearchReplaceEdit, apply_patch_preview
-from autopatch_j.validators import (
-    SyntaxValidationResult,
-    validate_post_apply_rescan,
-)
-
-HELP_TEXT = """命令：
-  /init         初始化当前 Java 仓库
-  /status       查看项目状态和运行环境
-  /scanners     查看 Java 静态扫描器
-  /reindex      刷新 @mention 路径索引
-  /help         查看帮助
-  /quit         退出 CLI
-
-提示词规则：
-  - 使用 @path 或 @filename 绑定代码范围，例如：
-      @src/main/java/com/foo/UserService.java 扫描这个文件
-  - 输入 @query 后按 Tab，可以补全候选路径。
-  - 扫描结果就绪后，可以继续输入：
-      列出问题
-      修复第1个问题
-      @src/main/java/com/foo/UserService.java 生成 patch
-  - patch 生成后，只能选择：
-      apply
-      discard
-  - 如果 @mention 命中多个路径，CLI 会展示候选项让你选择。
-"""
+from autopatch_j.cli.completer import MentionCompleter
 
 
 class AutoPatchCLI:
+    """
+    AutoPatch-J 主控制台 (Application Layer)
+    职责：整合所有核心服务，驱动人机交互循环。
+    """
+
     def __init__(self, cwd: Path) -> None:
         self.cwd = cwd.resolve()
         self.repo_root = discover_repo_root(self.cwd)
         self.renderer = CliRenderer()
-        self.session = SessionState()
-        self.index: list[IndexEntry] = []
-        self.prompt = PromptSession(
-            completer=MentionCompleter(
-                index=lambda: self.index,
-                recent_paths=self.completion_recent_paths,
-            )
+        
+        # 统一上下文容器
+        self.context: ServiceContext | None = None
+        self.agent: AutoPatchAgent | None = None
+
+        if self.repo_root:
+            self._init_services(self.repo_root)
+
+        # 初始化交互会话
+        history_path = get_project_state_dir(self.repo_root) / "history.txt" if self.repo_root else None
+        self.prompt_session = PromptSession(
+            completer=MentionCompleter(self.context.indexer.search if self.context else lambda _: []),
+            history=FileHistory(str(history_path)) if history_path else None
         )
-        self.agent = build_default_agent()
-        self.edit_drafter = build_default_edit_drafter()
-        if self.repo_root is not None:
-            self.session, self.index = load_project(self.repo_root)
-            if self.session.repo_root is None:
-                self.session.repo_root = str(self.repo_root)
-        self.rebuild_scanner()
-        self.tools = build_tools(scanner=self.scanner)
+
+    def _init_services(self, repo_root: Path) -> None:
+        """初始化单例 Service 并注入 Context"""
+        artifacts = ArtifactManager(repo_root)
+        indexer = IndexService(repo_root)
+        patch_engine = PatchEngine(repo_root)
+        fetcher = CodeFetcher(repo_root)
+        
+        self.context = ServiceContext(
+            repo_root=repo_root,
+            artifacts=artifacts,
+            indexer=indexer,
+            patch_engine=patch_engine,
+            fetcher=fetcher
+        )
+        # 将 context 注入 Agent
+        self.agent = AutoPatchAgent(self.context)
 
     def run(self) -> int:
-        self.renderer.print("AutoPatch-J CLI", style="bold")
-        if self.repo_root is not None:
-            self.renderer.print(f"已加载项目：{self.repo_root}")
+        self.renderer.print_panel(
+            "AutoPatch-J V2: 极简 Java 安全补丁智能体\n输入 /help 查看命令，使用 @ 符号绑定上下文。",
+            title="欢迎使用",
+            style="bold blue"
+        )
+        
+        if not self.repo_root:
+            self.renderer.print_info("未检测到 Java 项目。请进入项目目录并执行 /init。")
         else:
-            self.renderer.print("当前还没有初始化项目，请执行 /init。")
+            self.renderer.print(f"当前项目: [bold cyan]{self.repo_root}[/bold cyan]")
 
         while True:
-            try:
-                raw = self.prompt.prompt("autopatch-j> ").strip()
-            except EOFError:
-                self.renderer.print()
-                return 0
-            except KeyboardInterrupt:
-                self.renderer.print()
-                continue
-
-            if not raw:
-                continue
-            if raw in {"/quit", "/exit"}:
-                return 0
-
-            response = self.handle_line(raw)
-            if response:
-                self.renderer.print(response)
-
-    def completion_recent_paths(self) -> list[str]:
-        return self.session.recent_mentions or self.session.active_scope
-
-    def handle_line(self, raw: str) -> str:
-        if raw.startswith("/"):
-            return self.handle_command(raw)
-
-        if self.repo_root is None:
-            return "当前没有已初始化项目，请先执行 /init。"
-
-        menu_response = self.handle_pending_menu_choice(raw)
-        if menu_response is not None:
-            return menu_response
-
-        parsed = parse_prompt(raw, self.index)
-        if not self.resolve_mentions_interactively(parsed):
-            return "提示词已取消。"
-
-        self.update_session_from_prompt(parsed)
-        mention_context = build_mention_context_text(self.repo_root, parsed)
-
-        preview = build_context_preview(self.repo_root, parsed)
-        stream_started = False
-
-        def stream_answer_delta(delta: str) -> None:
-            nonlocal stream_started
-            if not delta:
-                return
-            if not stream_started:
-                if preview:
-                    self.renderer.print(preview)
-                    self.renderer.print()
-                stream_started = True
-            self.renderer.print(delta, end="")
-
-        decision = self.agent.chat(
-            AgentContext(
-                user_text=parsed.clean_text,
-                scoped_paths=self.effective_scope(parsed),
-                has_active_findings=self.session.active_findings_id is not None,
-                mention_context=mention_context,
-                on_answer_delta=stream_answer_delta,
-            )
-        )
-
-        response = self.handle_agent_decision(parsed, preview, decision)
-        if decision.streamed and stream_started:
-            self.renderer.print()
-        save_session(self.repo_root, self.session)
-        return response
-
-    def handle_command(self, raw: str) -> str:
-        try:
-            parts = shlex.split(raw)
-        except ValueError as exc:
-            return f"命令解析失败：{exc}"
-
-        command = parts[0]
-        if command == "/help":
-            return HELP_TEXT
-        if command == "/scanners":
-            return self.handle_scanners()
-        if command == "/reindex":
-            return self.handle_reindex()
-        if command == "/status":
-            return self.format_status()
-        if command == "/init":
-            if len(parts) != 1:
-                return (
-                    "v1 版本的 /init 只初始化当前目录。"
-                    "请先 cd 到目标 Java 仓库根目录，再执行 /init。"
-                )
-            return self.handle_init()
-        return f"未知命令：{command}\n\n{HELP_TEXT}"
-
-    def handle_init(self) -> str:
-        session, index, summary = initialize_project(self.cwd)
-        self.repo_root = Path(summary.repo_root)
-        self.session = session
-        self.index = index
-        runtime_status, runtime_message = self.ensure_semgrep_runtime()
-        self.rebuild_scanner()
-        self.tools = build_tools(scanner=self.scanner)
-        return (
-            f"{format_init_summary(summary)}\n\n"
-            "扫描器运行时：\n"
-            f"- semgrep: {runtime_status}\n"
-            f"  {runtime_message}"
-        )
-
-    def ensure_semgrep_runtime(self) -> tuple[str, str]:
-        try:
-            return install_managed_semgrep_runtime()
-        except Exception as exc:
-            return (
-                "missing",
-                (
-                    "AutoPatch-J 管理的 Semgrep 未安装成功。"
-                    f"请检查网络后重新执行 /init。错误：{exc}"
-                ),
-            )
-
-    def handle_reindex(self) -> str:
-        if self.repo_root is None:
-            return "当前没有已初始化项目，请先执行 /init。"
-
-        self.index, summary = refresh_project_index(self.repo_root)
-        return format_reindex_summary(summary)
-
-    def build_readiness_report(self) -> ReadinessReport:
-        return build_readiness_snapshot(
-            repo_root=self.repo_root,
-            scanner=self.scanner,
-            agent_label=self.agent.label,
-            edit_drafter_label=self.edit_drafter.label if self.edit_drafter else None,
-        )
-
-    def handle_scanners(self) -> str:
-        return format_scanners_report(ALL_SCANNERS, self.repo_root)
-
-    def format_status(self) -> str:
-        if self.repo_root is None:
-            return (
-                "AutoPatch-J status:\n"
-                "- project: 未初始化\n"
-                "- next: 在 Java 仓库根目录执行 /init\n\n"
-                f"{format_readiness_report(self.build_readiness_report())}"
-            )
-
-        summary = summarize_index(self.index)
-        active_findings = self.format_active_findings_status()
-        pending_patch = (
-            f"{self.session.pending_edit.file_path} "
-            f"({self.session.pending_edit.validation_status})"
-            if self.session.pending_edit
-            else "(none)"
-        )
-        last_validation = self.format_last_validation_status()
-        return (
-            "AutoPatch-J status:\n"
-            f"- project: {self.repo_root}\n"
-            f"- index: {summary['entries']} 个索引项，{summary['java_files']} 个 Java 文件\n"
-            f"- active findings: {active_findings}\n"
-            f"- pending patch: {pending_patch}\n"
-            f"- last validation: {last_validation}\n\n"
-            f"{format_readiness_report(self.build_readiness_report())}"
-        )
-
-    def format_active_findings_status(self) -> str:
-        if self.repo_root is None or self.session.active_findings_id is None:
-            return "(none)"
-        result = load_scan_result(self.repo_root, self.session.active_findings_id)
-        if result is None:
-            return "已保存的扫描结果不可用"
-        return f"{len(result.findings)} finding(s), status {result.status}"
-
-    def format_last_validation_status(self) -> str:
-        if self.repo_root is None or self.session.last_validation_id is None:
-            return "(none)"
-        result = load_validation_result(self.repo_root, self.session.last_validation_id)
-        if result is None:
-            return "已保存的校验结果不可用"
-        return result.status
-
-    def store_pending_from_draft(
-        self,
-        drafted: DraftedEdit,
-        preview: PatchPreview | None = None,
-        retry_note: str | None = None,
-        source_artifact_id: str | None = None,
-        source_finding_index: int | None = None,
-        source_check_id: str | None = None,
-    ) -> str:
-        resolved_preview = preview or self.preview_drafted_edit(drafted)
-        header = [
-            "已生成编辑草稿：",
-            f"- file: {drafted.file_path}",
-            f"- rationale: {drafted.rationale or '(none)'}",
-        ]
-        if retry_note:
-            header.append(f"- retry: {retry_note}")
-        body = self.store_pending_from_preview(
-            file_path=drafted.file_path,
-            old_string=drafted.old_string,
-            new_string=drafted.new_string,
-            preview=resolved_preview,
-            prefix="已根据草稿更新待确认 patch。",
-            rationale=drafted.rationale,
-            source_artifact_id=source_artifact_id,
-            source_finding_index=source_finding_index,
-            source_check_id=source_check_id,
-        )
-        return "\n".join(header + ["", body])
-
-    def store_pending_from_preview(
-        self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        preview: PatchPreview,
-        prefix: str,
-        rationale: str | None = None,
-        source_artifact_id: str | None = None,
-        source_finding_index: int | None = None,
-        source_check_id: str | None = None,
-    ) -> str:
-        if preview.status == "ok":
-            self.session.pending_edit = PendingEdit(
-                file_path=file_path,
-                old_string=old_string,
-                new_string=new_string,
-                diff=preview.diff,
-                validation_status=preview.validation.status,
-                validation_message=preview.validation.message,
-                rationale=rationale,
-                source_artifact_id=source_artifact_id,
-                source_finding_index=source_finding_index,
-                source_check_id=source_check_id,
-            )
-            self.session.current_goal = "review_pending_edit"
-            save_session(self.repo_root, self.session)
-            return append_pending_patch_menu(format_edit_preview(preview, prefix=prefix))
-
-        self.session.pending_edit = None
-        save_session(self.repo_root, self.session)
-        return format_edit_preview(preview, prefix="预览失败，已清空待确认 patch。")
-
-    def handle_pending_menu_choice(self, raw: str) -> str | None:
-        choice = raw.strip().lower()
-        if choice == "apply":
-            return self.handle_apply_pending()
-        if choice == "discard":
-            return self.handle_discard_pending()
-        return None
-
-    def handle_apply_pending(self) -> str:
-        if self.repo_root is None:
-            return "当前没有已初始化项目，请先执行 /init。"
-        pending = self.session.pending_edit
-        if pending is None:
-            return "当前没有待应用的 patch。"
-
-        preview = apply_patch_preview(
-            self.repo_root,
-            SearchReplaceEdit(
-                file_path=pending.file_path,
-                old_string=pending.old_string,
-                new_string=pending.new_string,
-            ),
-        )
-        if preview.status == "ok":
-            rescan_output = self.run_post_apply_rescan(pending)
-            self.session.pending_edit = None
-            self.session.current_goal = "pending_edit_applied"
-            save_session(self.repo_root, self.session)
-            return (
-                f"{format_edit_preview(preview, prefix='待确认 patch 已应用。')}\n\n"
-                f"{rescan_output}"
-            )
-
-        save_session(self.repo_root, self.session)
-        return format_edit_preview(preview, prefix="待确认 patch 未应用。")
-
-    def handle_discard_pending(self) -> str:
-        if self.repo_root is None:
-            return "当前没有已初始化项目，请先执行 /init。"
-        if self.session.pending_edit is None:
-            return "当前没有待丢弃的 patch。"
-        self.session.pending_edit = None
-        save_session(self.repo_root, self.session)
-        return "已丢弃待确认 patch。"
-
-    def handle_agent_decision(
-        self,
-        parsed: ParsedPrompt,
-        preview: str,
-        decision: AgentResult,
-    ) -> str:
-        if decision.action == AgentAction.SCAN:
-            execution = self.run_tool(decision)
-            result = self.extract_scan_result(execution)
-            self.apply_scan_result(result)
-            return f"{preview}\n\n{format_scan_result(result)}"
-        if decision.action == AgentAction.PATCH:
-            body = self.handle_planned_patch(parsed, decision)
-            return self.render_prompt_response(parsed, body)
-        if decision.streamed:
-            return ""
-        return f"{preview}\n\n{decision.message}"
-
-    def handle_planned_patch(self, parsed: ParsedPrompt, decision: AgentResult) -> str:
-        if self.session.pending_edit is not None:
-            return self.handle_pending_patch_revision(parsed)
-        artifact_id = self.session.active_findings_id
-        if not artifact_id:
-            return (
-                "当前没有可用的扫描结果。请先扫描仓库，再让 AutoPatch-J 生成 patch。"
-            )
-        if self.edit_drafter is None:
-            return missing_llm_config_message("patch drafting")
-
-        result = load_scan_result(self.repo_root, artifact_id)
-        if result is None:
-            return f"找不到扫描结果 artifact：{artifact_id}"
-
-        finding_index = extract_planned_finding_index(decision.tool_args)
-        if finding_index is not None:
-            if finding_index < 1 or finding_index > len(result.findings):
-                return (
-                    f"指定的问题序号超出范围：{finding_index}。"
-                    f"可用范围：1..{len(result.findings)}"
-                )
-            selected: tuple[int, object] | str = (finding_index, result.findings[finding_index - 1])
-        else:
-            selected = self.select_patch_finding(parsed, result)
-        if isinstance(selected, str):
-            return selected
-
-        finding_position, _ = selected
-        mention_context = build_mention_context_text(self.repo_root, parsed)
-        return self.draft_fix_for_finding(
-            result,
-            artifact_id,
-            finding_position,
-            user_request=parsed.clean_text,
-            mention_context=mention_context,
-        )
-
-    def handle_pending_patch_revision(self, parsed: ParsedPrompt) -> str:
-        pending = self.session.pending_edit
-        if pending is None:
-            return "当前没有可修订的待确认 patch。"
-        if self.edit_drafter is None:
-            return missing_llm_config_message("patch revision")
-
-        repairing_drafter = self.repairing_edit_drafter()
-        if repairing_drafter is None:
-            return "当前 edit drafter 不支持修订待确认 patch。"
-
-        target = (self.repo_root / pending.file_path).resolve()
-        try:
-            target.relative_to(self.repo_root.resolve())
-        except ValueError:
-            return f"待确认 patch 路径不在仓库内：{pending.file_path}"
-        if not target.exists() or not target.is_file():
-            return f"待确认 patch 文件不存在：{pending.file_path}"
-
-        file_content = read_text(target)
-        previous_edit = DraftedEdit(
-            file_path=pending.file_path,
-            old_string=pending.old_string,
-            new_string=pending.new_string,
-            rationale=pending.rationale or "",
-        )
-        mention_context = build_mention_context_text(self.repo_root, parsed)
-        instruction = self.build_revision_instruction(
-            pending=pending,
-            user_request=parsed.clean_text,
-            mention_context=mention_context,
-        )
-        feedback = self.build_revision_feedback(
-            pending=pending,
-            user_request=parsed.clean_text,
-            mention_context=mention_context,
-        )
-
-        try:
-            drafted = repairing_drafter.redraft_edit(
-                file_path=pending.file_path,
-                instruction=instruction,
-                file_content=file_content,
-                previous_edit=previous_edit,
-                feedback=feedback,
-            )
-        except Exception as exc:
-            return f"Patch 修订失败，已保留原待确认 patch。\n- error: {exc}"
-
-        preview = self.preview_drafted_edit(drafted)
-        if self.should_retry_draft(preview, drafted.file_path):
-            retry_feedback = self.build_draft_retry_feedback(preview, drafted.file_path)
-            try:
-                drafted = repairing_drafter.redraft_edit(
+            # --- 门禁检查：是否存在待确认补丁 ---
+            pending = self.artifacts.load_pending_patch() if self.artifacts else None
+            prompt_prefix = "autopatch-j"
+            
+            if pending:
+                # 1. 渲染 Diff 预览
+                self.renderer.print_diff(pending.diff, title=f" 预览: {pending.file_path} ")
+                # 2. 渲染精美的浮动动作面板
+                self.renderer.print_action_panel(
                     file_path=pending.file_path,
-                    instruction=instruction,
-                    file_content=file_content,
-                    previous_edit=drafted,
-                    feedback=retry_feedback,
+                    diff=pending.diff,
+                    validation=pending.validation_status,
+                    rationale=pending.rationale or "无说明"
                 )
-                preview = self.preview_drafted_edit(drafted)
-            except Exception as exc:
-                return (
-                    "Patch 修订重试失败，已保留原待确认 patch。\n"
-                    f"- retry feedback: {retry_feedback}\n"
-                    f"- error: {exc}"
-                )
+                prompt_prefix = "[bold yellow]PENDING[/bold yellow] autopatch-j"
 
-        if preview.status != "ok":
-            return append_pending_patch_menu(
-                format_edit_preview(
-                    preview,
-                    prefix="修订后的 patch 预览失败，已保留原待确认 patch。",
-                )
-            )
-
-        return self.store_pending_from_draft(
-            drafted,
-            preview=preview,
-            retry_note="已根据用户反馈修订。",
-            source_artifact_id=pending.source_artifact_id,
-            source_finding_index=pending.source_finding_index,
-            source_check_id=pending.source_check_id,
-        )
-
-    def build_revision_instruction(
-        self,
-        pending: PendingEdit,
-        user_request: str | None,
-        mention_context: str | None,
-    ) -> str:
-        base = "根据用户反馈修订当前待确认的 search-replace edit。"
-        if pending.source_artifact_id and pending.source_finding_index:
-            result = load_scan_result(self.repo_root, pending.source_artifact_id)
-            if result is not None and 1 <= pending.source_finding_index <= len(result.findings):
-                finding = result.findings[pending.source_finding_index - 1]
-                base = build_finding_instruction(
-                    finding,
-                    user_request=user_request,
-                    mention_context=mention_context,
-                )
-        return (
-            f"{base}\n"
-            "修订约束：\n"
-            "- 保持单个最小 search-replace edit。\n"
-            "- 除非用户明确要求，不要引入新依赖。\n"
-            "- 尽量保留原始 finding 来源信息。\n"
-        )
-
-    def build_revision_feedback(
-        self,
-        pending: PendingEdit,
-        user_request: str | None,
-        mention_context: str | None,
-    ) -> str:
-        return (
-            f"user_feedback: {user_request or '(none)'}\n"
-            f"mention_context:\n{mention_context or '(none)'}\n\n"
-            "current_pending_patch:\n"
-            f"- file: {pending.file_path}\n"
-            f"- validation_status: {pending.validation_status}\n"
-            f"- validation_message: {pending.validation_message}\n"
-            f"- rationale: {pending.rationale or '(none)'}\n"
-            f"- source_artifact: {pending.source_artifact_id or '(none)'}\n"
-            f"- source_finding_index: {pending.source_finding_index or '(none)'}\n"
-            f"- source_check_id: {pending.source_check_id or '(none)'}\n"
-            "diff:\n"
-            f"{pending.diff}\n"
-        )
-
-    def select_patch_finding(
-        self,
-        parsed: ParsedPrompt,
-        result: ScanResult,
-    ) -> tuple[int, object] | str:
-        requested_index = extract_requested_finding_index(parsed.clean_text)
-        if requested_index is not None:
-            if requested_index < 1 or requested_index > len(result.findings):
-                return (
-                    f"指定的问题序号超出范围：{requested_index}。"
-                    f"可用范围：1..{len(result.findings)}"
-                )
-            return requested_index, result.findings[requested_index - 1]
-
-        scoped_candidates = [
-            (index, finding)
-            for index, finding in enumerate(result.findings, start=1)
-            if self.finding_matches_prompt_scope(parsed, finding.path)
-        ]
-        if parsed.mentions:
-            if not scoped_candidates:
-                return "当前 @mention 范围没有匹配到活跃问题。"
-            if len(scoped_candidates) == 1:
-                return scoped_candidates[0]
-            return format_finding_candidates(
-                scoped_candidates,
-                prefix=(
-                    "Multiple active findings matched the current @mention scope. "
-                    "请用序号指定一个，例如：'修复第2个问题'。"
-                ),
-            )
-
-        if len(result.findings) == 1:
-            return 1, result.findings[0]
-
-        return format_finding_candidates(
-            list(enumerate(result.findings, start=1)),
-            prefix=(
-                "当前有多个活跃问题。请用序号指定一个，例如：'修复第2个问题'，"
-                "或者通过 @mention 缩小范围。"
-            ),
-        )
-
-    def finding_matches_prompt_scope(self, parsed: ParsedPrompt, finding_path: str) -> bool:
-        if not parsed.mentions:
-            return True
-
-        for resolution in parsed.mentions:
-            entry = resolution.selected
-            if entry is None:
-                continue
-            if entry.kind == "file" and finding_path == entry.path:
-                return True
-            if entry.kind == "dir":
-                prefix = f"{entry.path.rstrip('/')}/"
-                if finding_path == entry.path or finding_path.startswith(prefix):
-                    return True
-        return False
-
-    def draft_fix_for_finding(
-        self,
-        result: ScanResult,
-        artifact_id: str,
-        finding_position: int,
-        user_request: str | None = None,
-        mention_context: str | None = None,
-    ) -> str:
-        finding = result.findings[finding_position - 1]
-        target = (self.repo_root / finding.path).resolve()
-        try:
-            target.relative_to(self.repo_root.resolve())
-        except ValueError:
-            return f"问题路径不在仓库内：{finding.path}"
-        if not target.exists() or not target.is_file():
-            return f"问题文件不存在：{finding.path}"
-
-        file_content = read_text(target)
-        instruction = build_finding_instruction(
-            finding,
-            user_request=user_request,
-            mention_context=mention_context,
-        )
-        header = [
-            "生成修复上下文：",
-            f"- artifact: {artifact_id}",
-            f"- finding index: {finding_position}",
-            f"- rule: {finding.check_id}",
-            f"- severity: {finding.severity}",
-            f"- message: {finding.message}",
-        ]
-        body = self.draft_pending_edit(
-            file_path=finding.path,
-            instruction=instruction,
-            file_content=file_content,
-            source_artifact_id=artifact_id,
-            source_finding_index=finding_position,
-            source_check_id=finding.check_id,
-        )
-        return "\n".join(header + ["", body])
-
-    def draft_pending_edit(
-        self,
-        file_path: str,
-        instruction: str,
-        file_content: str,
-        source_artifact_id: str | None = None,
-        source_finding_index: int | None = None,
-        source_check_id: str | None = None,
-    ) -> str:
-        assert self.edit_drafter is not None
-        try:
-            drafted = self.edit_drafter.draft_edit(file_path, instruction, file_content)
-        except Exception as exc:
-            return f"生成编辑草稿失败：{exc}"
-
-        preview = self.preview_drafted_edit(drafted)
-        retry_note: str | None = None
-        repairing_drafter = self.repairing_edit_drafter()
-        if repairing_drafter is not None and self.should_retry_draft(preview, drafted.file_path):
-            retry_feedback = self.build_draft_retry_feedback(preview, drafted.file_path)
-            retry_note = f"已根据反馈重试修复一次：{retry_feedback}"
             try:
-                drafted = repairing_drafter.redraft_edit(
-                    file_path=file_path,
-                    instruction=instruction,
-                    file_content=file_content,
-                    previous_edit=drafted,
-                    feedback=retry_feedback,
-                )
-                preview = self.preview_drafted_edit(drafted)
-            except Exception as exc:
-                retry_note = f"{retry_note}\n- retry error: {exc}"
+                user_input = self.prompt_session.prompt(f"{prompt_prefix}> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return 0
 
-        return self.store_pending_from_draft(
-            drafted,
-            preview=preview,
-            retry_note=retry_note,
-            source_artifact_id=source_artifact_id,
-            source_finding_index=source_finding_index,
-            source_check_id=source_check_id,
-        )
-
-    def render_prompt_response(self, parsed: ParsedPrompt, body: str) -> str:
-        if not parsed.mentions:
-            return body
-        preview = build_context_preview(self.repo_root, parsed)
-        return f"{preview}\n\n{body}"
-
-    def resolve_mentions_interactively(self, parsed: ParsedPrompt) -> bool:
-        for resolution in parsed.mentions:
-            if resolution.status == "resolved":
+            if not user_input:
                 continue
-            if resolution.status == "missing":
-                self.renderer.print(f"没有路径匹配 {resolution.raw}。")
-                return False
-            if resolution.status == "ambiguous":
-                selected = self.prompt_for_candidate(resolution)
-                if selected is None:
-                    return False
-                resolution.selected = selected
-                resolution.status = "resolved"
-        return True
 
-    def prompt_for_candidate(self, resolution: MentionResolution) -> IndexEntry | None:
-        self.renderer.print(f"{resolution.raw} matched multiple paths:")
-        for idx, candidate in enumerate(resolution.candidates, start=1):
-            self.renderer.print(
-                f"  {idx}. {candidate.entry.path} ({candidate.entry.kind}, score={candidate.score})"
-            )
+            # --- 处理门禁确认关键字 ---
+            if pending:
+                if user_input.lower() == "apply":
+                    self.handle_apply(pending)
+                    continue
+                elif user_input.lower() == "discard":
+                    self.handle_discard()
+                    continue
 
-        while True:
-            choice = self.prompt.prompt("请选择候选序号，或直接回车取消：").strip()
-            if not choice:
-                return None
-            if not choice.isdigit():
-                self.renderer.print("请输入数字。")
-                continue
-            index = int(choice)
-            if 1 <= index <= len(resolution.candidates):
-                return resolution.candidates[index - 1].entry
-            self.renderer.print("选择超出范围。")
+            # --- 处理指令或对话 ---
+            if user_input.startswith("/"):
+                self.handle_command(user_input)
+            else:
+                self.handle_chat(user_input)
 
-    def update_session_from_prompt(self, parsed: ParsedPrompt) -> None:
-        resolved_paths = [
-            resolution.selected.path
-            for resolution in parsed.mentions
-            if resolution.selected is not None
-        ]
-
-        if resolved_paths:
-            self.session.active_scope = resolved_paths
-            merged_mentions = resolved_paths + self.session.recent_mentions
-            deduped: list[str] = []
-            for path in merged_mentions:
-                if path not in deduped:
-                    deduped.append(path)
-            self.session.recent_mentions = deduped[:10]
-        self.session.current_goal = parsed.clean_text or self.session.current_goal
-
-    def effective_scope(self, parsed: ParsedPrompt) -> list[str]:
-        return [
-            resolution.selected.path
-            for resolution in parsed.mentions
-            if resolution.selected is not None
-        ]
-
-    def run_tool(self, decision: AgentResult) -> ToolExecutionResult:
-        return execute_tool(
-            repo_root=self.repo_root,
-            tool_name=decision.tool_name or "",
-            tool_args=dict(decision.tool_args),
-            tools=self.tools,
-        )
-
-    def extract_scan_result(self, execution: ToolExecutionResult) -> ScanResult:
-        if isinstance(execution.payload, ScanResult):
-            return execution.payload
-
-        return ScanResult(
-            engine="autopatch-j",
-            scope=[],
-            targets=[],
-            status="error",
-            message=execution.message,
-            summary={"total": 0},
-            findings=[],
-        )
-
-    def extract_edit_preview(self, execution: ToolExecutionResult, file_path: str) -> PatchPreview:
-        if isinstance(execution.payload, PatchPreview):
-            return execution.payload
-
-        return PatchPreview(
-            file_path=file_path,
-            status="error",
-            message=execution.message,
-            occurrences=0,
-            diff="",
-            validation=self.build_default_preview_validation(),
-        )
-
-    def preview_drafted_edit(self, drafted: DraftedEdit) -> PatchPreview:
-        execution = execute_tool(
-            repo_root=self.repo_root,
-            tool_name=ToolName.PREVIEW_PATCH,
-            tool_args={
-                "file_path": drafted.file_path,
-                "old_string": drafted.old_string,
-                "new_string": drafted.new_string,
-            },
-            tools=self.tools,
-        )
-        return self.extract_edit_preview(execution, drafted.file_path)
-
-    def repairing_edit_drafter(self) -> RepairingEditDrafter | None:
-        if self.edit_drafter is None or not hasattr(self.edit_drafter, "redraft_edit"):
-            return None
-        return cast(RepairingEditDrafter, self.edit_drafter)
-
-    def should_retry_draft(self, preview: PatchPreview, file_path: str) -> bool:
-        if preview.status != "ok":
-            return True
-        return Path(file_path).suffix.lower() == ".java" and preview.validation.status == "error"
-
-    def build_draft_retry_feedback(self, preview: PatchPreview, file_path: str) -> str:
-        lines = [
-            f"preview_status: {preview.status}",
-            f"preview_message: {preview.message}",
-        ]
-        if preview.occurrences:
-            lines.append(f"matched_occurrences: {preview.occurrences}")
-        if Path(file_path).suffix.lower() == ".java":
-            lines.append(f"validation_status: {preview.validation.status}")
-            lines.append(f"validation_message: {preview.validation.message}")
-        return "\n".join(lines)
-
-    def apply_scan_result(self, result: ScanResult) -> None:
-        if result.status == "ok":
-            artifact_id = save_scan_result(self.repo_root, result)
-            self.session.active_findings_id = artifact_id
-            self.session.current_goal = "review_findings"
-            if not self.session.active_scope:
-                self.session.active_scope = result.scope
+    def handle_chat(self, text: str) -> None:
+        """处理自然语言对话及上下文注入，支持平滑的流式反馈"""
+        if not self.agent:
+            self.renderer.print_error("Agent 未就绪。请先执行 /init。")
             return
 
-        self.session.active_findings_id = None
+        # 1. 上下文注入：识别文本中的 @mention
+        mentions = re.findall(r'@([\w\.]+)', text)
+        extra_context = ""
+        for m in mentions:
+            entries = self.indexer.search(m, limit=1)
+            if entries:
+                entry = entries[0]
+                code = self.fetcher.fetch_by_index_entry(entry)
+                extra_context += f"\n--- 引用代码片段 ({entry.kind}: {entry.name}) ---\n{code}\n"
+        
+        final_prompt = text
+        if extra_context:
+            self.renderer.print_step(f"已自动注入 {len(mentions)} 处代码上下文...")
+            final_prompt = f"{extra_context}\n--- 用户请求 ---\n{text}"
 
-    def run_post_apply_rescan(self, pending: PendingEdit) -> str:
-        validation, rescan = validate_post_apply_rescan(self.repo_root, pending, scanner=self.scanner.scan)
-        if rescan is not None:
-            rescan_artifact_id = save_scan_result(self.repo_root, rescan)
-            validation.rescan_artifact_id = rescan_artifact_id
+        # 2. 调用 Agent 决策并渲染平滑反馈
+        self.renderer.print() # 留出一点空行
+        
+        # 使用 rich 的 status 管理底部的动态 Spinner
+        with self.renderer.console.status("[bold yellow]Agent 正在思考修复路径...", spinner="dots") as status:
+            
+            def on_thought_token(token: str) -> None:
+                # 以淡灰色斜体打印 Agent 的内心独白
+                self.renderer.print(token, end="", style="dim italic")
 
-        validation_id = save_validation_result(self.repo_root, validation)
-        self.session.last_validation_id = validation_id
-        return format_rescan_validation(validation)
+            def on_tool_start(tool_name: str) -> None:
+                # 动态更新底部的状态行文字
+                # 这种原地刷新的效果能极大缓解用户焦躁
+                status.update(f"[bold blue]正在执行工具: {tool_name} [此过程可能耗时数秒]...")
 
-    def build_default_preview_validation(self) -> object:
-        return SyntaxValidationResult(
-            status="skipped",
-            message="本次工具执行没有可用的语法校验结果。",
+            # 执行 ReAct 循环
+            self.agent.chat(
+                final_prompt, 
+                on_thought_token=on_thought_token, 
+                on_tool_start=on_tool_start
+            )
+            
+        self.renderer.print() # 结束后的换行
+
+    def handle_command(self, raw_cmd: str) -> None:
+        """处理斜杠指令"""
+        parts = raw_cmd.split()
+        cmd = parts[0].lower()
+
+        if cmd == "/init":
+            self.handle_init()
+        elif cmd == "/status":
+            self.handle_status()
+        elif cmd == "/reindex":
+            self.handle_reindex()
+        elif cmd == "/help":
+            self.renderer.print_info("常用命令:\n  /init     初始化当前目录为 Java 项目\n  /status   查看运行环境及扫描器状态\n  /reindex  重新扫描符号索引 (@mention)\n  /help     显示此帮助\n  /quit     退出程序")
+        elif cmd in ("/quit", "/exit"):
+            sys.exit(0)
+        else:
+            self.renderer.print_error(f"未知命令: {cmd}")
+
+    def handle_init(self) -> None:
+        self.renderer.print_step("正在初始化 AutoPatch-J 环境...")
+        
+        # 1. 确认项目根目录
+        self.repo_root = self.cwd
+        self.indexer = IndexService(self.repo_root)
+        self.artifacts = ArtifactManager(self.repo_root)
+        self.agent = AutoPatchAgent(self.repo_root)
+        self.fetcher = CodeFetcher(self.repo_root)
+
+        # 2. 安装/自检扫描器运行时
+        from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
+        status, msg = install_managed_semgrep_runtime()
+        self.renderer.print_step(f"扫描器运行时自检: {status}")
+        
+        # 3. 建立符号索引
+        self.renderer.print_step("正在建立符号索引（类与方法）...")
+        stats = self.indexer.rebuild_index()
+        
+        self.renderer.print_success(f"初始化完成！索引项: {stats.get('total', 0)} (Java文件: {stats.get('file', 0)})")
+
+    def handle_status(self) -> None:
+        if not self.repo_root:
+            self.renderer.print_info("尚未加载项目。")
+            return
+        
+        stats = self.indexer.get_stats()
+        status_text = (
+            f"项目根目录: {self.repo_root}\n"
+            f"大模型模型: {self.agent.label}\n"
+            f"索引统计项: {stats}\n"
         )
+        self.renderer.print_panel(status_text, title="系统状态")
 
-    def rebuild_scanner(self) -> None:
-        scanner = get_scanner(DEFAULT_SCANNER_NAME)
-        if scanner is None:
-            raise RuntimeError(f"默认 scanner 不可用：{DEFAULT_SCANNER_NAME}")
-        self.scanner = cast(JavaScanner, scanner)
+    def handle_reindex(self) -> None:
+        if not self.indexer: return
+        self.renderer.print_step("正在重新构建索引...")
+        stats = self.indexer.rebuild_index()
+        self.renderer.print_success(f"索引刷新完成，共处理 {stats.get('total', 0)} 个项。")
 
+    def handle_apply(self, pending: Any) -> None:
+        engine = PatchEngine(self.repo_root)
+        self.renderer.print_step(f"正在应用补丁至 {pending.file_path}...")
+        
+        if engine.apply_patch(pending):
+            self.renderer.print_success("补丁物理应用成功！")
+            
+            # --- 自动化第三级门禁：语义重扫 ---
+            from autopatch_j.core.validator_service import SemanticValidator
+            from autopatch_j.scanners import get_scanner, DEFAULT_SCANNER_NAME
+            
+            scanner = get_scanner(DEFAULT_SCANNER_NAME)
+            if scanner:
+                self.renderer.print_step("正在执行语义验证（重新扫描）...")
+                validator = SemanticValidator(self.repo_root, scanner)
+                success, msg = validator.verify_fix(pending)
+                
+                if success:
+                    self.renderer.print_success(msg)
+                else:
+                    self.renderer.print_error(msg)
+            
+            self.artifacts.clear_pending_patch()
+        else:
+            self.renderer.print_error("补丁应用失败，文件可能已被外部修改或查找匹配失效。")
+
+    def handle_discard(self) -> None:
+        if self.artifacts:
+            self.artifacts.clear_pending_patch()
+            self.renderer.print_info("已丢弃当前补丁草案。")
 
 def main() -> int:
+    # 引导入口，默认使用当前路径
     cli = AutoPatchCLI(Path.cwd())
     return cli.run()

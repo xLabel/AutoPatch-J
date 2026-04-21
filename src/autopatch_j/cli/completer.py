@@ -1,45 +1,45 @@
 from __future__ import annotations
 
-import re
-from collections.abc import Callable, Iterator
-
-from prompt_toolkit.completion import Completer, Completion
+from typing import Iterable, Callable
+from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
-
-from autopatch_j.indexer import IndexEntry
-from autopatch_j.mentions import build_mention_completions
-
-
-MENTION_TOKEN_PATTERN = re.compile(r"(?<!\S)@([^\s]*)$")
+from autopatch_j.core.index_service import IndexEntry
 
 
 class MentionCompleter(Completer):
-    def __init__(
-        self,
-        index: Callable[[], list[IndexEntry]],
-        recent_paths: Callable[[], list[str]],
-    ) -> None:
-        self.index = index
-        self.recent_paths = recent_paths
+    """
+    智能补全器 (Interaction Layer)
+    职责：基于 ProjectIndexer 的查询结果提供 @ 符号的实时自动补全。
+    """
 
-    def get_completions(
-        self,
-        document: Document,
-        complete_event: object,
-    ) -> Iterator[Completion]:
-        del complete_event
-        match = MENTION_TOKEN_PATTERN.search(document.text_before_cursor)
-        if match is None:
+    def __init__(self, search_func: Callable[[str], list[IndexEntry]]) -> None:
+        self.search_func = search_func
+
+    def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterable[Completion]:
+        # 寻找光标前以 @ 开头的单词
+        text_before_cursor = document.get_word_before_cursor(pattern=r'@[\w\.]*')
+        if not text_before_cursor.startswith('@'):
             return
 
-        token = f"@{match.group(1)}"
-        for candidate in build_mention_completions(
-            index=self.index(),
-            token=token,
-            recent_paths=self.recent_paths(),
-        ):
+        query = text_before_cursor[1:]
+        results = self.search_func(query)
+
+        for entry in results:
+            # 根据符号类型选择图标
+            icon = {
+                "file": "📄",
+                "dir": "📁",
+                "class": "🏛️",
+                "method": "⚙️"
+            }.get(entry.kind, "•")
+
+            display_meta = f"{entry.kind} | {entry.path}"
+            display_text = f"{icon} {entry.name}"
+            
+            # 对于类和方法，补全后保留其完整名称，以便后续 fetcher 识别
             yield Completion(
-                candidate,
-                start_position=-len(token),
-                display=candidate.strip(),
+                entry.name,
+                start_position=-len(text_before_cursor) + 1, # 保留 @ 符号
+                display=display_text,
+                display_meta=display_meta
             )
