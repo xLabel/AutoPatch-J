@@ -1,36 +1,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
-
-
-class ValidatorName(StrEnum):
-    TREE_SITTER_JAVA = "tree-sitter-java"
+from typing import Any
 
 
 @dataclass(slots=True)
 class SyntaxValidationResult:
+    """Java 语法校验结果模型"""
     status: str
     message: str
     errors: list[str] = field(default_factory=list)
 
 
-class SyntaxValidator(Protocol):
-    def validate(self, file_path: str, source: str) -> SyntaxValidationResult:
-        """Validate source text for a given repository-relative file path."""
+class JavaSyntaxValidator:
+    """
+    Java 语法验证器 (Validator)
+    职责：使用 Tree-sitter 检查 Java 代码片段的合法性。
+    """
 
-
-class TreeSitterJavaValidator:
-    name = ValidatorName.TREE_SITTER_JAVA
-
-    def validate(self, file_path: str, source: str) -> SyntaxValidationResult:
-        if Path(file_path).suffix.lower() != ".java":
-            return SyntaxValidationResult(
-                status="skipped",
-                message="Syntax validation is only enforced for Java files.",
-            )
+    def validate(self, file_path: str, source_code: str) -> SyntaxValidationResult:
+        """验证给定文件的 Java 语法"""
+        if not file_path.lower().endswith(".java"):
+            return SyntaxValidationResult(status="skipped", message="非 Java 文件，跳过语法校验。")
 
         try:
             from tree_sitter import Language, Parser
@@ -38,46 +30,39 @@ class TreeSitterJavaValidator:
         except ImportError:
             return SyntaxValidationResult(
                 status="unavailable",
-                message="tree_sitter and tree_sitter_java are required for Java syntax validation.",
+                message="系统缺少 tree-sitter 或 tree-sitter-java 依赖，无法执行语法校验。"
             )
 
-        language = Language(tsjava.language())
-        parser = Parser(language)
-        tree = parser.parse(source.encode("utf-8"))
-        errors = collect_tree_errors(tree.root_node)
-        if errors:
-            return SyntaxValidationResult(
-                status="error",
-                message="Tree-sitter detected Java syntax errors in the edited content.",
-                errors=errors,
-            )
-        return SyntaxValidationResult(
-            status="ok",
-            message="Tree-sitter validated the edited Java source successfully.",
-        )
+        try:
+            language = Language(tsjava.language())
+            parser = Parser(language)
+            tree = parser.parse(source_code.encode("utf-8"))
+            
+            errors = self._collect_errors(tree.root_node)
+            if errors:
+                return SyntaxValidationResult(
+                    status="error",
+                    message=f"检测到 {len(errors)} 处 Java 语法错误。",
+                    errors=errors
+                )
+            
+            return SyntaxValidationResult(status="ok", message="Java 语法校验通过。")
+        except Exception as e:
+            return SyntaxValidationResult(status="error", message=f"语法分析过程出现异常：{str(e)}")
 
-
-def collect_tree_errors(node: object) -> list[str]:
-    errors: list[str] = []
-    walk_tree(node, errors)
-    return errors
-
-
-def walk_tree(node: object, errors: list[str]) -> None:
-    is_error = bool(getattr(node, "is_error", False))
-    is_missing = bool(getattr(node, "is_missing", False))
-    if is_error or is_missing:
-        node_type = str(getattr(node, "type", "unknown"))
-        start_point = getattr(node, "start_point", None)
-        if start_point is not None and len(start_point) >= 2:
-            row = int(start_point[0]) + 1
-            column = int(start_point[1]) + 1
-            location = f"{row}:{column}"
-        else:
-            location = "unknown"
-        kind = "MISSING" if is_missing else "ERROR"
-        errors.append(f"{kind} {node_type} at {location}")
-
-    children = getattr(node, "children", [])
-    for child in children:
-        walk_tree(child, errors)
+    def _collect_errors(self, node: Any) -> list[str]:
+        """递归遍历语法树，搜集 ERROR 或 MISSING 节点"""
+        errors = []
+        
+        def walk(n):
+            if n.is_error or n.is_missing:
+                line = n.start_point[0] + 1
+                col = n.start_point[1] + 1
+                kind = "缺失符号" if n.is_missing else "语法错误"
+                errors.append(f"[{line}:{col}] {kind} ({n.type})")
+            
+            for child in n.children:
+                walk(child)
+        
+        walk(node)
+        return errors
