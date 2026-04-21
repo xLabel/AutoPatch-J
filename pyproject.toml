@@ -18,6 +18,12 @@ dependencies = [
   "tree-sitter-java",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-mock",
+]
+
 [project.scripts]
 autopatch-j = "autopatch_j.cli:main"
 

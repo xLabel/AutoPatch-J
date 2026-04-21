@@ -57,41 +57,44 @@ class IndexService:
             conn.close()
 
     def rebuild_index(self) -> dict[str, int]:
-        """全量重建索引，采用稳健的 os.walk 算法"""
+        """全量重建索引，彻底解决跨平台路径兼容性问题"""
+        import os.path
         all_entries: list[IndexEntry] = []
-        repo_root_abs = os.path.abspath(str(self.repo_root))
+        root_dir = os.path.abspath(str(self.repo_root))
 
-        for root, dirs, files in os.walk(repo_root_abs):
-            # 1. 过滤黑名单
+        for root, dirs, files in os.walk(root_dir):
+            # 1. 过滤明确定义的黑名单目录 (如 .git, target, node_modules)
             dirs[:] = [d for d in dirs if d not in GlobalConfig.ignored_dirs]
             
-            # 2. 计算当前相对路径
-            rel_root = os.path.relpath(root, repo_root_abs).replace(os.sep, '/')
+            rel_root = os.path.relpath(root, root_dir).replace(os.sep, '/')
             if rel_root == ".": rel_root = ""
 
-            # 3. 索引目录
+            # 2. 索引子目录
             for d in dirs:
+                # 排除其他隐藏目录（除 .autopatch-j 外）
                 if d.startswith('.') and d != '.autopatch-j': continue
-                path = f"{rel_root}/{d}".lstrip('/')
+                path = os.path.join(rel_root, d).replace(os.sep, '/')
                 all_entries.append(IndexEntry(path=path, name=d, kind="dir"))
 
-            # 4. 索引文件
+            # 3. 索引文件
             for f in files:
+                # 排除其他隐藏文件
                 if f.startswith('.') and f != '.autopatch-j': continue
-                path = f"{rel_root}/{f}".lstrip('/')
+                
+                path = os.path.join(rel_root, f).replace(os.sep, '/')
                 all_entries.append(IndexEntry(path=path, name=f, kind="file"))
                 
                 if f.endswith(".java"):
-                    abs_f = os.path.join(root, f)
-                    all_entries.extend(self._extract_java_symbols(path, Path(abs_f)))
+                    full_abs_f = os.path.join(root, f)
+                    all_entries.extend(self._extract_java_symbols(path, Path(full_abs_f)))
 
-        # 5. 持久化到数据库
         with self._connect() as conn:
             conn.execute("DELETE FROM entries")
             conn.executemany(
-                "INSERT INTO entries (path, name, kind, line, container) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO entries VALUES (?, ?, ?, ?, ?)", 
                 [(e.path, e.name, e.kind, e.line, e.container) for e in all_entries]
             )
+            conn.commit()
         
         return self.get_stats()
 
