@@ -53,7 +53,7 @@ class AutoPatchCLI:
         sys.exit(0)
 
     def _init_services(self, repo_root: Path) -> None:
-        """初始化单例 Service 并注入 Context (JAVAer 风格的 DI)"""
+        """初始化单例 Service 并注入 Context (基于显式依赖注入)"""
         # 1. 显式创建各层 Service
         artifacts = ArtifactManager(repo_root)
         # 注入 GlobalConfig 里的参数，保持 Service 的纯净和可测试性
