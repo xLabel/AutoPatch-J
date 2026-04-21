@@ -28,8 +28,7 @@ class AutoPatchCompleter(Completer):
             "/scanner": "扫描器管理看板",
             "/reindex": "刷新代码符号索引",
             "/help": "显示指令看板",
-            "/quit": "退出程序",
-            "/exit": "退出程序"
+            "/quit": "退出程序"
         }
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterable[Completion]:

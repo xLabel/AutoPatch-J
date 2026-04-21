@@ -172,7 +172,7 @@ class AutoPatchCLI:
         elif cmd == "/reindex": self.handle_reindex()
         elif cmd == "/scanner": self.handle_scanners()
         elif cmd == "/help": self.handle_help()
-        elif cmd in ("/quit", "/exit"): sys.exit(0)
+        elif cmd == "/quit": sys.exit(0)
         else: self.renderer.print_error(f"未知命令: {cmd}")
 
     def handle_help(self) -> None:
