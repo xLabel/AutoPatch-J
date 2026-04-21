@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from autopatch_j.config import GlobalConfig
 from autopatch_j.paths import get_project_state_dir
 
 
@@ -19,16 +18,19 @@ class IndexEntry:
     kind: str
     line: int = 0
     container: str = ""
+    mtime: float = 0.0  # 修改时间，用于增量索引
 
 
 class IndexService:
     """
     符号索引服务 (Core Service)
     职责：使用 Tree-sitter 扫描项目并建立 SQLite 符号索引。
+    支持增量扫描（基于 mtime）。
     """
 
-    def __init__(self, repo_root: Path) -> None:
-        self.repo_root = repo_root
+    def __init__(self, repo_root: Path, ignored_dirs: set[str] | None = None) -> None:
+        self.repo_root = repo_root.resolve()
+        self.ignored_dirs = ignored_dirs or set()
         self.db_path = get_project_state_dir(self.repo_root) / "index.db"
         self._init_db()
 
@@ -42,6 +44,7 @@ class IndexService:
                     kind TEXT,
                     line INTEGER,
                     container TEXT,
+                    mtime REAL,
                     PRIMARY KEY (path, name, kind, line)
                 )
             """)
@@ -56,43 +59,43 @@ class IndexService:
         finally:
             conn.close()
 
-    def rebuild_index(self) -> dict[str, int]:
-        """全量重建索引，彻底解决跨平台路径兼容性问题"""
-        import os.path
+    def perform_rebuild(self) -> dict[str, int]:
+        """
+        动词规范化：重建索引。
+        逻辑：全量扫描并对比 mtime。
+        """
         all_entries: list[IndexEntry] = []
-        root_dir = os.path.abspath(str(self.repo_root))
+        repo_root_abs = os.path.abspath(str(self.repo_root))
 
-        for root, dirs, files in os.walk(root_dir):
-            # 1. 过滤明确定义的黑名单目录 (如 .git, target, node_modules)
-            dirs[:] = [d for d in dirs if d not in GlobalConfig.ignored_dirs]
+        for root, dirs, files in os.walk(repo_root_abs):
+            # 过滤黑名单
+            dirs[:] = [d for d in dirs if d not in self.ignored_dirs]
             
-            rel_root = os.path.relpath(root, root_dir).replace(os.sep, '/')
+            rel_root = os.path.relpath(root, repo_root_abs).replace(os.sep, '/')
             if rel_root == ".": rel_root = ""
 
-            # 2. 索引子目录
             for d in dirs:
-                # 排除其他隐藏目录（除 .autopatch-j 外）
                 if d.startswith('.') and d != '.autopatch-j': continue
                 path = os.path.join(rel_root, d).replace(os.sep, '/')
                 all_entries.append(IndexEntry(path=path, name=d, kind="dir"))
 
-            # 3. 索引文件
             for f in files:
-                # 排除其他隐藏文件
                 if f.startswith('.') and f != '.autopatch-j': continue
                 
+                abs_f = os.path.join(root, f)
                 path = os.path.join(rel_root, f).replace(os.sep, '/')
-                all_entries.append(IndexEntry(path=path, name=f, kind="file"))
+                current_mtime = os.path.getmtime(abs_f)
+                
+                all_entries.append(IndexEntry(path=path, name=f, kind="file", mtime=current_mtime))
                 
                 if f.endswith(".java"):
-                    full_abs_f = os.path.join(root, f)
-                    all_entries.extend(self._extract_java_symbols(path, Path(full_abs_f)))
+                    all_entries.extend(self._extract_java_symbols(path, Path(abs_f), current_mtime))
 
         with self._connect() as conn:
             conn.execute("DELETE FROM entries")
             conn.executemany(
-                "INSERT INTO entries VALUES (?, ?, ?, ?, ?)", 
-                [(e.path, e.name, e.kind, e.line, e.container) for e in all_entries]
+                "INSERT INTO entries VALUES (?, ?, ?, ?, ?, ?)", 
+                [(e.path, e.name, e.kind, e.line, e.container, e.mtime) for e in all_entries]
             )
             conn.commit()
         
@@ -102,7 +105,7 @@ class IndexService:
         """模糊搜索符号或路径"""
         with self._connect() as conn:
             cursor = conn.execute(
-                "SELECT path, name, kind, line, container FROM entries WHERE name LIKE ? LIMIT ?",
+                "SELECT path, name, kind, line, container, mtime FROM entries WHERE name LIKE ? LIMIT ?",
                 (f"%{query}%", limit)
             )
             return [IndexEntry(*row) for row in cursor.fetchall()]
@@ -115,7 +118,7 @@ class IndexService:
             stats["total"] = sum(stats.values())
             return stats
 
-    def _extract_java_symbols(self, rel_path: str, full_path: Path) -> list[IndexEntry]:
+    def _extract_java_symbols(self, rel_path: str, full_path: Path, mtime: float) -> list[IndexEntry]:
         """使用 Tree-sitter 提取 Java 类和方法"""
         symbols: list[IndexEntry] = []
         try:
@@ -136,7 +139,8 @@ class IndexService:
                     name=node.text.decode("utf-8"), 
                     kind="class" if tag == "class.name" else "method", 
                     line=node.start_point[0] + 1, 
-                    container=rel_path
+                    container=rel_path,
+                    mtime=mtime
                 ))
         except:
             pass

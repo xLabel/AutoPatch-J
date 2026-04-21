@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 from autopatch_j.tools.base import Tool, ToolResult
-from autopatch_j.core.service_context import ServiceContext
+
+if TYPE_CHECKING:
+    from autopatch_j.core.service_context import ServiceContext
 
 
 class FindingRetrieverTool(Tool):
@@ -23,8 +26,9 @@ class FindingRetrieverTool(Tool):
         "required": ["finding_id"]
     }
 
-    def execute(self, context: ServiceContext, finding_id: str) -> ToolResult:
-        am = context.artifacts
+    def execute(self, finding_id: str) -> ToolResult:
+        assert self.context is not None
+        am = self.context.artifacts
         
         match = re.match(r'[Ff](\d+)', finding_id)
         if not match:

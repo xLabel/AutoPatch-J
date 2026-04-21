@@ -18,7 +18,8 @@ from autopatch_j.core.service_context import ServiceContext
 
 class AutoPatchAgent:
     """
-    智能决策引擎 (V2.1 - 具备状态感知与历史脱水功能)
+    智能决策引擎 (V2.4 - 极致工程化版)
+    职责：实现 ReAct 循环，基于构造函数注入的 Service 调度工具。
     """
 
     def __init__(self, context: ServiceContext, llm: LLMClient | None = None) -> None:
@@ -28,18 +29,17 @@ class AutoPatchAgent:
         if not self.llm:
             raise ValueError("LLM 配置缺失。")
 
-        # 注册统一命名后的工具集
+        # 🚀 构造函数注入：在初始化时就将全量 Context 注入给工具小弟
         self.available_tools: dict[str, Tool] = {
             t.name: t for t in [
-                ProjectScannerTool(),
-                PatchProposalTool(),
-                SymbolSearchTool(),
-                SourceReaderTool(),
-                FindingRetrieverTool()
+                ProjectScannerTool(context),
+                PatchProposalTool(context),
+                SymbolSearchTool(context),
+                SourceReaderTool(context),
+                FindingRetrieverTool(context)
             ]
         }
         
-        # 原始对话历史（未压缩）
         self.messages: list[dict[str, Any]] = []
 
     def chat(
@@ -48,21 +48,17 @@ class AutoPatchAgent:
         on_thought_token: Callable[[str], None] | None = None,
         on_tool_start: Callable[[str], None] | None = None
     ) -> str:
-        """执行 ReAct 循环，并在发送前动态合成 Prompt 与管理历史"""
+        """执行 ReAct 循环"""
         self.messages.append({"role": "user", "content": user_text})
 
         for _ in range(5):
-            # --- 1. 动态合成系统提示词 (State Injection) ---
             full_system_prompt = self._synthesize_system_prompt()
-            
-            # --- 2. 历史脱水 (Context Dehydration) ---
             processed_messages = self._dehydrate_history(full_system_prompt)
 
-            # --- 3. 调用模型 (流式输出 Thought) ---
             response = self.llm.chat(
                 messages=processed_messages,
                 tools=self._get_tool_schemas(),
-                on_token=on_thought_token # 将流式 Token 传回给 CLI 渲染
+                on_token=on_thought_token
             )
 
             self.messages.append({
@@ -74,10 +70,10 @@ class AutoPatchAgent:
             if not response.tool_calls:
                 return response.content
 
-            # --- 4. 执行观察 (Observation) ---
+            # 执行观察 (Observation)
             for call in response.tool_calls:
                 if on_tool_start:
-                    on_tool_start(call.name) # 发出工具执行信号
+                    on_tool_start(call.name)
                 
                 observation = self._execute_tool_call(call)
                 self.messages.append({
@@ -89,9 +85,22 @@ class AutoPatchAgent:
 
         return "已达推理上限，请审核目前进展。"
 
+    def _execute_tool_call(self, call: ToolCall) -> ToolResult:
+        """
+        执行工具调用。
+        核心优化：execute 签名已经通过 DI 简化，直接传入业务参数即可。
+        """
+        tool = self.available_tools.get(call.name)
+        if not tool:
+            return ToolResult(status="error", message=f"未找到工具：{call.name}")
+        try:
+            return tool.execute(**call.arguments)
+        except Exception as e:
+            return ToolResult(status="error", message=f"执行异常：{str(e)}")
+
     def _synthesize_system_prompt(self) -> str:
-        """实时从 context 抓取项目状态，合成最新的 SYSTEM_PROMPT"""
-        pending = self.context.artifacts.load_pending_patch()
+        """从 context 抓取项目状态"""
+        pending = self.context.artifacts.fetch_pending_patch()
         scan_files = sorted(self.context.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
         last_scan_id = scan_files[0].stem if scan_files else None
         
@@ -102,38 +111,16 @@ class AutoPatchAgent:
         return SYSTEM_PROMPT + workbench
 
     def _dehydrate_history(self, current_system_prompt: str) -> list[dict[str, Any]]:
-        """
-        对历史消息进行压缩脱水：
-        - 始终使用最新的 System Prompt。
-        - 对超过 3 轮以前的 Observation（工具返回内容）进行截断或摘要化。
-        """
         result = [{"role": "system", "content": current_system_prompt}]
-        
-        # 仅处理最近的 N 条消息
         history_window = self.messages[-10:] 
-        
         for msg in history_window:
             new_msg = dict(msg)
-            # 如果是工具返回结果，且不在最近 3 条消息内，执行脱水
             if msg["role"] == "tool" and msg in self.messages[:-3]:
                 content = str(msg["content"])
                 if len(content) > 200:
-                    # 仅保留前 100 个字符并标记脱水
-                    new_msg["content"] = content[:100] + "\n... [此处内容已由于历史过久而脱水压缩] ..."
-            
+                    new_msg["content"] = content[:100] + "\n... [此处内容已脱水压缩] ..."
             result.append(new_msg)
-            
         return result
-
-    def _execute_tool_call(self, call: ToolCall) -> ToolResult:
-        """执行单个工具调用，将单例 context 注入其中"""
-        tool = self.available_tools.get(call.name)
-        if not tool:
-            return ToolResult(status="error", message=f"未找到工具：{call.name}")
-        try:
-            return tool.execute(self.context, **call.arguments)
-        except Exception as e:
-            return ToolResult(status="error", message=f"执行异常：{str(e)}")
 
     def _get_tool_schemas(self) -> list[dict[str, Any]]:
         return [{"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.parameters}} for t in self.available_tools.values()]

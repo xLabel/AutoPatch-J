@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from autopatch_j.tools.base import Tool, ToolResult
-from autopatch_j.core.service_context import ServiceContext
+
+if TYPE_CHECKING:
+    from autopatch_j.core.service_context import ServiceContext
 
 
 class SourceReaderTool(Tool):
@@ -24,15 +27,18 @@ class SourceReaderTool(Tool):
         "required": ["path"]
     }
 
-    def execute(self, context: ServiceContext, path: str, symbol: str | None = None, line: int | None = None) -> ToolResult:
+    def execute(self, path: str, symbol: str | None = None, line: int | None = None) -> ToolResult:
+        assert self.context is not None
+        fetcher = self.context.fetcher
+        
         if line:
             from autopatch_j.core.index_service import IndexEntry
             entry = IndexEntry(path=path, name=symbol or "targeted_code", kind="method" if symbol else "file", line=line)
-            code = context.fetcher.fetch_by_index_entry(entry)
+            code = fetcher.fetch_by_index_entry(entry)
         else:
             from autopatch_j.core.index_service import IndexEntry
             entry = IndexEntry(path=path, name=path, kind="file", line=0)
-            code = context.fetcher.fetch_by_index_entry(entry)
+            code = fetcher.fetch_by_index_entry(entry)
 
         if code.startswith("错误"):
             return ToolResult(status="error", message=code)

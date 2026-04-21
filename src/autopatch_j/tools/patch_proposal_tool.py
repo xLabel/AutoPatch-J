@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from autopatch_j.tools.base import Tool, ToolResult
-from autopatch_j.core.service_context import ServiceContext
+
+if TYPE_CHECKING:
+    from autopatch_j.core.service_context import ServiceContext
 
 
 class PatchProposalTool(Tool):
@@ -28,16 +31,15 @@ class PatchProposalTool(Tool):
 
     def execute(
         self, 
-        context: ServiceContext, 
         file_path: str, 
         old_string: str, 
         new_string: str, 
         rationale: str,
         associated_finding_id: str | None = None
     ) -> ToolResult:
-        # 使用 context 中的单例
-        engine = context.patch_engine
-        am = context.artifacts
+        assert self.context is not None
+        engine = self.context.patch_engine
+        am = self.context.artifacts
 
         target_rule = None
         target_snippet = None

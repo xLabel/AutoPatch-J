@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from autopatch_j.tools.base import Tool, ToolResult
-from autopatch_j.core.service_context import ServiceContext
+
+if TYPE_CHECKING:
+    from autopatch_j.core.service_context import ServiceContext
 
 
 class SymbolSearchTool(Tool):
@@ -19,8 +22,9 @@ class SymbolSearchTool(Tool):
         "required": ["query"]
     }
 
-    def execute(self, context: ServiceContext, query: str) -> ToolResult:
-        results = context.indexer.search(query, limit=10)
+    def execute(self, query: str) -> ToolResult:
+        assert self.context is not None
+        results = self.context.indexer.search(query, limit=10)
         
         if not results:
             return ToolResult(status="ok", message=f"未找到与 '{query}' 相关的符号。")

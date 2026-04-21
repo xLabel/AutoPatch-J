@@ -22,11 +22,11 @@ def test_fetch_logic(tmp_path: Path):
     
     # 1. 测试全文提取
     full_entry = IndexEntry(path=file_path, name="Demo.java", kind="file", line=0)
-    assert fetcher.fetch_by_index_entry(full_entry) == java_code
+    assert fetcher.fetch_entry(full_entry) == java_code
     
     # 2. 测试智能块提取 (行号 2 开始)
     method_entry = IndexEntry(path=file_path, name="run", kind="method", line=2)
-    snippet = fetcher.fetch_by_index_entry(method_entry)
+    snippet = fetcher.fetch_entry(method_entry)
     assert "public void run()" in snippet
     assert "// Line 3" in snippet
 
@@ -35,4 +35,4 @@ def test_fetch_range(tmp_path: Path):
     """验证物理行号区间提取"""
     (tmp_path / "L.txt").write_text("1\n2\n3\n4\n5", encoding="utf-8")
     fetcher = CodeFetcher(tmp_path)
-    assert fetcher.fetch_range("L.txt", 2, 4) == "2\n3\n4"
+    assert fetcher.fetch_lines("L.txt", 2, 4) == "2\n3\n4"

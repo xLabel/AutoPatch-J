@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import cast
+from typing import cast, TYPE_CHECKING
 
 from autopatch_j.scanners import DEFAULT_SCANNER_NAME, JavaScanner, get_scanner
 from autopatch_j.tools.base import Tool, ToolResult
-from autopatch_j.core.service_context import ServiceContext
+
+if TYPE_CHECKING:
+    from autopatch_j.core.service_context import ServiceContext
 
 
 class ProjectScannerTool(Tool):
@@ -30,13 +31,14 @@ class ProjectScannerTool(Tool):
         "required": ["scope"]
     }
 
-    def execute(self, context: ServiceContext, scope: list[str] | None = None) -> ToolResult:
+    def execute(self, scope: list[str] | None = None) -> ToolResult:
+        assert self.context is not None
         scanner = cast(JavaScanner | None, get_scanner(DEFAULT_SCANNER_NAME))
         if not scanner:
             return ToolResult(status="error", message=f"未找到默认扫描器：{DEFAULT_SCANNER_NAME}")
 
-        result = scanner.scan(context.repo_root, scope or ["."])
-        artifact_id = context.artifacts.save_scan_result(result)
+        result = scanner.scan(self.context.repo_root, scope or ["."])
+        artifact_id = self.context.artifacts.save_scan_result(result)
 
         findings_count = len(result.findings)
         summary = f"扫描完成 [ID: {artifact_id}]，共发现 {findings_count} 个问题。\n\n"

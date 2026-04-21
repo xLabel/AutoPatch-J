@@ -33,7 +33,7 @@ class ArtifactManager:
 
     # --- 扫描结果 (Findings) 管理 ---
 
-    def save_scan_result(self, result: ScanResult) -> str:
+    def persist_scan_result(self, result: ScanResult) -> str:
         """保存扫描结果，并返回一个唯一的 artifact_id"""
         artifact_id = self._generate_id("scan")
         target_path = self.findings_dir / f"{artifact_id}.json"
@@ -42,7 +42,7 @@ class ArtifactManager:
         target_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return artifact_id
 
-    def load_scan_result(self, artifact_id: str) -> ScanResult | None:
+    def fetch_scan_result(self, artifact_id: str) -> ScanResult | None:
         """根据 ID 加载扫描结果"""
         target_path = self.findings_dir / f"{artifact_id}.json"
         if not target_path.exists():
@@ -54,18 +54,18 @@ class ArtifactManager:
         except (json.JSONDecodeError, KeyError):
             return None
 
-    def get_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:
+    def fetch_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:
         """
         从特定的扫描快照中按索引提取单个 Finding。
         """
-        result = self.load_scan_result(artifact_id)
+        result = self.fetch_scan_result(artifact_id)
         if result and 0 <= index < len(result.findings):
             return result.findings[index]
         return None
 
     # --- 补丁草案 (Pending Patch) 管理 ---
 
-    def save_pending_patch(self, draft: PatchDraft) -> None:
+    def persist_pending_patch(self, draft: PatchDraft) -> None:
         """
         保存当前的待确认补丁。
         """
@@ -88,7 +88,7 @@ class ArtifactManager:
         }
         target_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def load_pending_patch(self) -> PatchDraft | None:
+    def fetch_pending_patch(self) -> PatchDraft | None:
         """加载当前活跃的 Pending Patch"""
         target_path = self.patches_dir / "current_pending.json"
         if not target_path.exists():

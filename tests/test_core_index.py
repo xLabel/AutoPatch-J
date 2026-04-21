@@ -19,10 +19,9 @@ def test_rebuild_index_and_stats(tmp_path: Path):
     )
     
     indexer = IndexService(tmp_path)
-    stats = indexer.rebuild_index()
+    stats = indexer.perform_rebuild()
     
     # 核心测试：验证物理文件和目录是否被发现
-    # 在这个结构下，应该有 1 个文件 (AuthService.java) 和 2 个目录 (com, demo)
     assert stats.get("file", 0) >= 1
     assert stats.get("dir", 0) >= 2
     assert stats.get("total", 0) >= 3
@@ -34,7 +33,7 @@ def test_search_symbols(tmp_path: Path):
     java_file.write_text("public class AuthService { public void login() {} }", encoding="utf-8")
     
     indexer = IndexService(tmp_path)
-    indexer.rebuild_index()
+    indexer.perform_rebuild()
     
     # 基础测试：搜索文件名
     results = indexer.search("AuthService")
@@ -43,15 +42,12 @@ def test_search_symbols(tmp_path: Path):
 
 def test_ignored_dirs(tmp_path: Path):
     """测试忽略目录功能"""
-    # 创建一个应该被忽略的目录 (如 .git)
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
     (git_dir / "config").write_text("...")
     
-    indexer = IndexService(tmp_path)
-    indexer.rebuild_index()
+    indexer = IndexService(tmp_path, ignored_dirs={".git"})
+    indexer.perform_rebuild()
     
-    # 搜索 .git，虽然物理存在，但由于在 GlobalConfig.ignored_dirs 中，结果应为空
-    # 注意：我们的 IndexService 会在 dirs[:] 中剔除黑名单，所以它根本不会进库
     results = indexer.search(".git")
     assert len(results) == 0

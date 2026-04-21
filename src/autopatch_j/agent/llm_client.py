@@ -9,6 +9,18 @@ from urllib import error, request
 from autopatch_j.config import GlobalConfig
 
 
+class LLMClientError(Exception):
+    """LLM 客户端通用异常"""
+
+
+class LLMConnectionError(LLMClientError):
+    """连接或超时异常"""
+
+
+class LLMResponseError(LLMClientError):
+    """模型返回内容解析异常"""
+
+
 @dataclass(slots=True)
 class ToolCall:
     name: str
@@ -108,20 +120,19 @@ class LLMClient:
                 if _should_retry_without_stream_options(exc, payload):
                     retry_payload = dict(payload)
                     retry_payload.pop("stream_options", None)
-                    return self._call_with_retry(
-                        retry_payload,
-                        stream=stream,
-                        on_token=on_token,
-                    )
-                last_error = exc
-            except (TimeoutError, OSError, json.JSONDecodeError, ValueError) as exc:
-                last_error = exc
+                    return self._call_with_retry(retry_payload, stream=stream, on_token=on_token)
+                last_error = LLMConnectionError(f"HTTP 错误: {exc.code} {exc.reason}")
+            except (TimeoutError, OSError) as exc:
+                last_error = LLMConnectionError(f"网络异常: {str(exc)}")
+            except (json.JSONDecodeError, ValueError) as exc:
+                last_error = LLMResponseError(f"数据解析失败: {str(exc)}")
 
             if attempt < self.max_retries:
-                time.sleep(self.retry_backoff_seconds * (attempt + 1))
+                # 🚀 指数退避逻辑
+                sleep_time = (2**attempt) * self.retry_backoff_seconds
+                time.sleep(sleep_time)
 
-        assert last_error is not None
-        raise last_error
+        raise last_error or LLMClientError("未知的客户端错误")
 
     def _call_once(
         self,

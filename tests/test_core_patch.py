@@ -15,12 +15,12 @@ def test_patch_lifecycle(tmp_path: Path):
     new = "System.out.println(\"new\");"
     
     # 1. 测试起草 (Draft)
-    draft = engine.create_draft("App.java", old, new)
+    draft = engine.perform_draft("App.java", old, new)
     assert draft.status in ("ok", "unavailable")
     
     # 2. 测试应用 (Apply)
     if draft.status == "ok":
-        success = engine.apply_patch(draft)
+        success = engine.perform_apply(draft)
         assert success
         updated_content = java_file.read_text(encoding="utf-8")
         assert "new" in updated_content
@@ -35,11 +35,11 @@ def test_create_draft_failures(tmp_path: Path):
     engine = PatchEngine(tmp_path)
     
     # 匹配不到
-    draft_missing = engine.create_draft("Test.java", "non-existent", "...")
+    draft_missing = engine.perform_draft("Test.java", "non-existent", "...")
     assert draft_missing.status == "error"
     
     # 匹配不唯一
-    draft_ambiguous = engine.create_draft("Test.java", "code();", "...")
+    draft_ambiguous = engine.perform_draft("Test.java", "code();", "...")
     assert draft_ambiguous.status == "error"
     assert "匹配了 2 处" in draft_ambiguous.message
 
@@ -48,5 +48,5 @@ def test_path_traversal_defense(tmp_path: Path):
     """验证安全底线：拦截路径穿越攻击"""
     engine = PatchEngine(tmp_path)
     with pytest.raises(PermissionError) as excinfo:
-        engine.create_draft("../../../etc/passwd", "any", "any")
+        engine.perform_draft("../../../etc/passwd", "any", "any")
     assert "安全风险拦截" in str(excinfo.value)

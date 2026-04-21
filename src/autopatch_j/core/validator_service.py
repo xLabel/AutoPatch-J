@@ -16,7 +16,7 @@ class SemanticValidator:
         self.repo_root = repo_root
         self.scanner = scanner
 
-    def verify_fix(self, draft: PatchDraft) -> tuple[bool, str]:
+    def perform_verification(self, draft: PatchDraft) -> tuple[bool, str]:
         """
         针对补丁草案执行重新扫描并验证漏洞是否消失。
         返回: (是否修好, 详细说明)

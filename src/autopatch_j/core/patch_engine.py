@@ -32,7 +32,7 @@ class PatchEngine:
         self.repo_root = repo_root
         self.validator = JavaSyntaxValidator()
 
-    def create_draft(
+    def perform_draft(
         self, 
         file_path: str, 
         old_string: str, 
@@ -87,7 +87,7 @@ class PatchEngine:
             target_snippet=target_snippet
         )
 
-    def apply_patch(self, draft: PatchDraft) -> bool:
+    def perform_apply(self, draft: PatchDraft) -> bool:
         """
         将经过确认的补丁物理落盘。
         """
@@ -123,11 +123,25 @@ class PatchEngine:
         return target_abs
 
     def _read_file_content(self, path: Path) -> str:
+        """
+        读取文件内容，支持编码自动探测（UTF-8, GBK 兼容）。
+        """
+        raw_bytes = path.read_bytes()
+        
+        # 1. 优先尝试 UTF-8
         try:
-            return path.read_text(encoding="utf-8")
+            return raw_bytes.decode("utf-8")
         except UnicodeDecodeError:
-            # 容错处理：对于非 UTF-8 编码尝试带替换的读取
-            return path.read_text(encoding="utf-8", errors="replace")
+            pass
+
+        # 2. 针对中文环境，尝试 GBK
+        try:
+            return raw_bytes.decode("gbk")
+        except UnicodeDecodeError:
+            pass
+
+        # 3. 兜底方案：带替换的解密
+        return raw_bytes.decode("utf-8", errors="replace")
 
     def _generate_unified_diff(self, file_path: str, old_text: str, new_text: str) -> str:
         old_lines = old_text.splitlines(keepends=True)

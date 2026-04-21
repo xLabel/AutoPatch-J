@@ -25,5 +25,10 @@ class Tool:
     description: str
     parameters: dict[str, Any]
 
-    def execute(self, context: ServiceContext, **kwargs: Any) -> ToolResult:
+    def __init__(self, context: ServiceContext | None = None) -> None:
+        # 允许在初始化时注入上下文单例
+        self.context = context
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        """执行逻辑，子类通过 self.context 访问服务，不再通过入参传递"""
         raise NotImplementedError

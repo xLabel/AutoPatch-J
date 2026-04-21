@@ -33,7 +33,7 @@ def test_verify_fix_logic():
         engine="semgrep", scope=[], targets=[], status="ok", message="",
         findings=[] 
     )
-    success, _ = validator.verify_fix(draft)
+    success, _ = validator.perform_verification(draft)
     assert success is True
 
     # 2. 测试失败场景：漏洞特征依然存在
@@ -45,6 +45,6 @@ def test_verify_fix_logic():
                     snippet="MessageDigest.getInstance(\"MD5\")")
         ]
     )
-    success, msg = validator.verify_fix(draft)
+    success, msg = validator.perform_verification(draft)
     assert success is False
     assert "语义校验失败" in msg

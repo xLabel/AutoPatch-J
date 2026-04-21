@@ -12,7 +12,7 @@ class CodeFetcher:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
 
-    def fetch_by_index_entry(self, entry: IndexEntry) -> str:
+    def fetch_entry(self, entry: IndexEntry) -> str:
         """
         根据索引项智能抓取代码。
         如果是类或方法，它会尝试定位完整的语法块。
@@ -31,7 +31,7 @@ class CodeFetcher:
 
         return ""
 
-    def fetch_range(self, file_path: str, start_line: int, end_line: int) -> str:
+    def fetch_lines(self, file_path: str, start_line: int, end_line: int) -> str:
         """
         根据物理行号区间提取代码（1-based, inclusive）。
         """
