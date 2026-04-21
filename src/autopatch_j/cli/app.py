@@ -171,8 +171,8 @@ class AutoPatchCLI:
         if cmd == "/init": self.handle_init()
         elif cmd == "/status": self.handle_status()
         elif cmd == "/reindex": self.handle_reindex()
-        elif cmd in ("/scanners", "/scanner"): self.handle_scanners()
-        elif cmd == "/help": self.renderer.print_info("常用命令:\n  /init, /status, /scanners, /reindex, /help, /quit")
+        elif cmd == "/scanner": self.handle_scanners()
+        elif cmd == "/help": self.renderer.print_info("常用命令:\n  /init, /status, /scanner, /reindex, /help, /quit")
         elif cmd in ("/quit", "/exit"): sys.exit(0)
         else: self.renderer.print_error(f"未知命令: {cmd}")
 
