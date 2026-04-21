@@ -95,10 +95,12 @@ class ScanResult:
 
 @dataclass(slots=True)
 class ScannerMeta:
+    """扫描器元数据，用于 CLI 展示"""
     name: ScannerName
-    selected: bool
-    status: str
-    message: str
+    is_implemented: bool  # 是否已完成适配
+    status: str          # 状态描述
+    version: str = "N/A"
+    description: str = "" # 功能简述
 
 
 class JavaScanner(Protocol):

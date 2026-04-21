@@ -99,25 +99,24 @@ class SemgrepScanner:
             return user_runtime, "AutoPatch-J 管理的 Semgrep"
         return None
 
-    def get_scanner(self, repo_root: Path | None = None) -> ScannerMeta:
+    def get_meta(self, repo_root: Path | None = None) -> ScannerMeta:
+        """获取 Semgrep 的详细状态元数据"""
         resolved = self.resolve_binary_with_source(repo_root)
         if resolved is None:
             return ScannerMeta(
                 name=self.name,
-                selected=True,
-                status="selected, runtime missing",
-                message=(
-                    "已默认选中；AutoPatch-J 管理的 Semgrep 环境缺失或不可执行。"
-                    "执行 /init 时会自动初始化到 ~/.autopatch-j。"
-                ),
+                is_implemented=True,
+                status="未就绪 (Runtime Missing)",
+                version=GlobalConfig.semgrep_version,
+                description="核心扫描引擎，支持自定义 Java 安全规则集。"
             )
 
-        semgrep_path, _source = resolved
         return ScannerMeta(
             name=self.name,
-            selected=True,
-            status="selected, ready",
-            message=f"已默认选中；使用 {semgrep_path}",
+            is_implemented=True,
+            status="就绪 (Ready)",
+            version=GlobalConfig.semgrep_version,
+            description="核心扫描引擎，支持自定义 Java 安全规则集。"
         )
 
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
