@@ -15,7 +15,7 @@ from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.service_context import ServiceContext
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.cli.render import CliRenderer
-from autopatch_j.cli.completer import MentionCompleter
+from autopatch_j.cli.completer import AutoPatchCompleter
 from autopatch_j.config import GlobalConfig
 
 
@@ -40,11 +40,10 @@ class AutoPatchCLI:
         # 注册信号处理器 (Ctrl+C)
         signal.signal(signal.SIGINT, self._handle_interrupt)
 
-        # 初始化交互会话
-        history_path = get_project_state_dir(self.repo_root) / "history.txt" if self.repo_root else None
+        # 🚀 接入升级后的全能补全器
         self.prompt_session = PromptSession(
-            completer=MentionCompleter(self.context.indexer.search if self.context else lambda _: []),
-            history=FileHistory(str(history_path)) if history_path else None
+            completer=AutoPatchCompleter(self.context.indexer.search if self.context else lambda _: []),
+            history=FileHistory(str(get_project_state_dir(self.repo_root) / "history.txt")) if self.repo_root else None
         )
 
     def _handle_interrupt(self, signum, frame):
@@ -172,9 +171,42 @@ class AutoPatchCLI:
         elif cmd == "/status": self.handle_status()
         elif cmd == "/reindex": self.handle_reindex()
         elif cmd == "/scanner": self.handle_scanners()
-        elif cmd == "/help": self.renderer.print_info("常用命令:\n  /init, /status, /scanner, /reindex, /help, /quit")
+        elif cmd == "/help": self.handle_help()
         elif cmd in ("/quit", "/exit"): sys.exit(0)
         else: self.renderer.print_error(f"未知命令: {cmd}")
+
+    def handle_help(self) -> None:
+        """展示精美的指令看板"""
+        from rich.table import Table
+        from rich.panel import Panel
+
+        # 1. 系统指令表
+        sys_table = Table(show_header=True, header_style="bold magenta", box=None)
+        sys_table.add_column("系统命令", style="cyan", width=15)
+        sys_table.add_column("功能描述")
+        
+        sys_table.add_row("/init", "初始化当前目录为 Java 项目并建立索引")
+        sys_table.add_row("/status", "查看当前项目状态、LLM 模型与索引统计")
+        sys_table.add_row("/scanner", "查看扫描器蓝图与运行时状态")
+        sys_table.add_row("/reindex", "强制重新扫描全项符号（适用于手动大改后）")
+        sys_table.add_row("/help", "显示此指令看板")
+        sys_table.add_row("/quit", "安全退出程序")
+
+        # 2. 交互指令表
+        act_table = Table(show_header=True, header_style="bold green", box=None)
+        act_table.add_column("交互关键字", style="yellow", width=15)
+        act_table.add_column("用法说明")
+        
+        act_table.add_row("@符号", "在对话中输入 @ 触发类/方法/路径的实时补全")
+        act_table.add_row("apply", "在补丁预览状态下输入，执行物理修复与三级验证")
+        act_table.add_row("discard", "在补丁预览状态下输入，丢弃当前草案并清空缓存")
+        act_table.add_row("自然语言", "直接输入您的意图，如 '扫描安全问题' 或 '解释这段代码'")
+
+        self.renderer.print_panel("AutoPatch-J 指令中心", style="bold blue")
+        self.renderer.console.print(sys_table)
+        self.renderer.print("\n[bold]💡 交互与门禁指引[/bold]")
+        self.renderer.console.print(act_table)
+        self.renderer.print("\n[dim]提示：输入指令时无需带参数。Agent 会根据上下文自动处理细节。[/dim]")
 
     def handle_scanners(self) -> None:
         """展示所有静态扫描器的状态与规划"""
