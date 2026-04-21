@@ -21,7 +21,7 @@ class AutoPatchCompleter(Completer):
         self.mention_pattern = re.compile(r'@[\w\.]*')
         self.command_pattern = re.compile(r'/[\w]*')
         
-        # 定义所有可用指令及其图标
+        # 定义所有可用指令及其描述
         self.commands = {
             "/init": "初始化项目环境",
             "/status": "查看系统状态",
@@ -48,19 +48,18 @@ class AutoPatchCompleter(Completer):
                             display=cmd,
                             display_meta=desc
                         )
-                return
+            return
 
-                # --- 场景 B: 代码上下文补全 (@) ---
-                mention_match = document.get_word_before_cursor(pattern=self.mention_pattern)
-                if mention_match.startswith('@'):
-                query = mention_match[1:]
-                results = self.search_func(query)
+        # --- 场景 B: 代码上下文补全 (@) ---
+        mention_match = document.get_word_before_cursor(pattern=self.mention_pattern)
+        if mention_match.startswith('@'):
+            query = mention_match[1:]
+            results = self.search_func(query)
 
-                for entry in results:
-                # 移除 Emoji 图标
+            for entry in results:
                 display_meta = f"{entry.kind} | {entry.path}"
                 display_text = f"{entry.name}"
-
+                
                 yield Completion(
                     entry.name,
                     start_position=-len(mention_match) + 1,
