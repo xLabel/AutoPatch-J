@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib import error, request
 
-from autopatch_j.llm_config import load_llm_config
+from autopatch_j.config import GlobalConfig
 
 
 @dataclass(slots=True)
@@ -25,7 +25,7 @@ class LLMResponse:
     raw: dict[str, Any] | None = None
 
 
-class LLM:
+class LLMClient:
     def __init__(
         self,
         api_key: str,
@@ -149,15 +149,14 @@ class LLM:
         )
 
 
-def build_default_llm() -> LLM | None:
-    config = load_llm_config()
-    if config is None:
+def build_default_llm_client() -> LLMClient | None:
+    if not GlobalConfig.is_llm_ready():
         return None
 
-    return LLM(
-        api_key=config.api_key,
-        model=config.model,
-        base_url=config.base_url,
+    return LLMClient(
+        api_key=GlobalConfig.llm_api_key,
+        model=GlobalConfig.llm_model,
+        base_url=GlobalConfig.llm_base_url,
     )
 
 
