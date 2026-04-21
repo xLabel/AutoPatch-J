@@ -9,13 +9,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from autopatch_j.config import GlobalConfig, SEMGREP_RULE_RELATIVE_PATH
 from autopatch_j.paths import project_state_dir, user_state_dir
 from autopatch_j.scanners.base import Finding, ScannerMeta, ScannerName, ScanResult
 
-DEFAULT_SEMGREP_VERSION = "1.160.0"
-DEFAULT_SEMGREP_RULE_PATH = Path("resources") / "semgrep" / "rules" / "java.yml"
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
-SEMGREP_INSTALL_LOCK_TIMEOUT_SECONDS = 600
 
 
 class SemgrepScanner:
@@ -52,14 +50,26 @@ class SemgrepScanner:
             return self.missing_binary_result(scope=list(scope), targets=targets)
 
         command = [resolved_binary, "scan", "--json", "--config", self.config, *targets]
-        completed = subprocess.run(
-            command,
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-            env=build_semgrep_subprocess_env(repo_root),
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=build_semgrep_subprocess_env(repo_root),
+                timeout=GlobalConfig.scanner_timeout
+            )
+        except subprocess.TimeoutExpired:
+            return ScanResult(
+                engine="semgrep",
+                scope=list(scope),
+                targets=targets,
+                status="error",
+                message=f"扫描执行超时（上限 {GlobalConfig.scanner_timeout}s），请尝试缩小扫描范围。",
+                summary={"total": 0},
+                findings=[],
+            )
 
         if completed.returncode not in {0, 1}:
             stderr = completed.stderr.strip() or completed.stdout.strip() or "semgrep failed"
@@ -180,7 +190,7 @@ def semgrep_rules_path() -> Path:
 
 
 def install_managed_semgrep_runtime(
-    version: str = DEFAULT_SEMGREP_VERSION,
+    version: str = GlobalConfig.semgrep_version,
     python_executable: str = sys.executable,
 ) -> tuple[str, str]:
     if resolve_user_runtime_binary() is not None:
