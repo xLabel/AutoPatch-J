@@ -1,348 +1,230 @@
 from __future__ import annotations
 
 import json
-import time
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 from typing import Any, Callable
-from urllib import error, request
-
-from autopatch_j.config import GlobalConfig
-
-
-class LLMClientError(Exception):
-    """LLM 客户端通用异常"""
-
-
-class LLMConnectionError(LLMClientError):
-    """连接或超时异常"""
-
-
-class LLMResponseError(LLMClientError):
-    """模型返回内容解析异常"""
+import openai
 
 
 @dataclass(slots=True)
 class ToolCall:
     name: str
-    arguments: dict[str, Any] = field(default_factory=dict)
+    arguments: dict[str, Any]
+    call_id: str
     raw_arguments: str = ""
-    call_id: str | None = None
 
 
 @dataclass(slots=True)
 class LLMResponse:
-    content: str = ""
-    tool_calls: list[ToolCall] = field(default_factory=list)
-    usage: dict[str, Any] | None = None
-    raw: dict[str, Any] | None = None
+    content: str
+    tool_calls: list[ToolCall] | None = None
+    reasoning_content: str | None = None
 
 
 class LLMClient:
-    def __init__(
-        self,
-        api_key: str,
-        model: str,
-        base_url: str,
-        timeout_seconds: int = 60,
-        max_retries: int = 2,
-        retry_backoff_seconds: float = 0.5,
-    ) -> None:
-        self.api_key = api_key
-        self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.timeout_seconds = timeout_seconds
-        self.max_retries = max_retries
-        self.retry_backoff_seconds = retry_backoff_seconds
+    """
+    LLM 通信客户端 (Infrastructure Layer)
+    职责：封装 OpenAI 兼容协议，处理流式响应与工具调用解析。
+    """
 
-    @property
-    def label(self) -> str:
-        return f"chat-completions:{self.model}"
+    # 临时关闭阿里云百炼 DeepSeek 的 DSML 兼容逻辑。
+    # 切回百炼网关时可重新打开。
+    ENABLE_DSML_COMPAT = False
+
+    def __init__(self, api_key: str, base_url: str, model: str) -> None:
+        self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+        self.model = model
+
+    _DSML_MARKER_PATTERN = re.compile(r"<\s*[｜|]\s*DSML\s*[｜|]")
+    _DSML_INVOKE_PATTERN = re.compile(
+        r"<\s*[｜|]\s*DSML\s*[｜|]\s*invoke\s+name=\"(?P<name>[^\"]+)\">\s*(?P<params>.*?)\s*</\s*[｜|]\s*DSML\s*[｜|]\s*invoke>",
+        re.DOTALL,
+    )
+    _DSML_PARAM_PATTERN = re.compile(
+        r"<\s*[｜|]\s*DSML\s*[｜|]\s*parameter\s+name=\"(?P<key>[^\"]+)\"[^>]*>(?P<value>.*?)</\s*[｜|]\s*DSML\s*[｜|]\s*parameter>",
+        re.DOTALL,
+    )
 
     def chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
-        response_format: dict[str, Any] | None = None,
-        stream: bool = True,
-        include_usage: bool = True,
-        temperature: float | None = None,
+        extra_body: dict[str, Any] | None = None,
         on_token: Callable[[str], None] | None = None,
+        on_reasoning_token: Callable[[str], None] | None = None,
     ) -> LLMResponse:
-        payload = self._build_payload(
+        """执行流式对话并解析响应"""
+        
+        # 针对百炼 DeepSeek 的特殊处理：必须在 body 中显式开启
+        stream_options = None
+        if extra_body and extra_body.get("enable_thinking"):
+             stream_options = {"include_usage": True}
+
+        response = self.client.chat.completions.create(
+            model=self.model,
             messages=messages,
             tools=tools,
-            tool_choice=tool_choice,
-            response_format=response_format,
-            stream=stream,
-            include_usage=include_usage,
-            temperature=temperature,
+            stream=True,
+            extra_body=extra_body,
+            stream_options=stream_options
         )
-        return self._call_with_retry(payload, stream=stream, on_token=on_token)
 
-    def _build_payload(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
-        response_format: dict[str, Any] | None = None,
-        stream: bool = True,
-        include_usage: bool = True,
-        temperature: float | None = None,
-    ) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "stream": stream,
-        }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = tool_choice or "auto"
-        if response_format is not None:
-            payload["response_format"] = response_format
-        if temperature is not None:
-            payload["temperature"] = temperature
-        if stream and include_usage:
-            payload["stream_options"] = {"include_usage": True}
-        return payload
+        full_content = ""
+        visible_content = ""
+        full_reasoning = ""
+        tool_calls_map: dict[int, dict[str, Any]] = {}
+        stream_state = {"suppressed": False, "pending": ""} if self.ENABLE_DSML_COMPAT else None
 
-    def _call_with_retry(
-        self,
-        payload: dict[str, Any],
-        stream: bool,
-        on_token: Callable[[str], None] | None,
-    ) -> LLMResponse:
-        last_error: Exception | None = None
-        for attempt in range(self.max_retries + 1):
+        for chunk in response:
+            if not chunk.choices:
+                continue
+            
+            delta = chunk.choices[0].delta
+            
+            # 1. 解析思考链 (Reasoning)
+            # 兼容不同厂商的字段名 (reasoning_content 或 reasoning)
+            reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+            if reasoning:
+                full_reasoning += reasoning
+                if on_reasoning_token:
+                    on_reasoning_token(reasoning)
+
+            # 2. 解析文本内容 (Content)
+            if delta.content:
+                full_content += delta.content
+                visible_piece = (
+                    self._consume_visible_text(delta.content, stream_state)
+                    if self.ENABLE_DSML_COMPAT and stream_state is not None
+                    else delta.content
+                )
+                if visible_piece:
+                    visible_content += visible_piece
+                    if on_token:
+                        on_token(visible_piece)
+
+            # 3. 解析标准工具调用 (Tool Calls)
+            if delta.tool_calls:
+                for tc in delta.tool_calls:
+                    index = tc.index
+                    if index not in tool_calls_map:
+                        tool_calls_map[index] = {"id": tc.id, "name": "", "args": ""}
+                    
+                    if tc.function.name:
+                        tool_calls_map[index]["name"] = tc.function.name
+                    if tc.function.arguments:
+                        tool_calls_map[index]["args"] += tc.function.arguments
+
+        # 刷新最后一段尚未输出的普通文本
+        tail_piece = self._flush_visible_text(stream_state) if self.ENABLE_DSML_COMPAT and stream_state is not None else ""
+        if tail_piece:
+            visible_content += tail_piece
+            if on_token:
+                on_token(tail_piece)
+
+        # 4. 🚀 工业级增强：处理非标 DSML XML 标签
+        # 如果标准 tool_calls 为空，但 content 中包含 <｜DSML｜> 标签，执行正则提取
+        final_tool_calls: list[ToolCall] = []
+        
+        # 先处理标准的
+        for tc_data in tool_calls_map.values():
             try:
-                return self._call_once(payload, stream=stream, on_token=on_token)
-            except error.HTTPError as exc:
-                if _should_retry_without_stream_options(exc, payload):
-                    retry_payload = dict(payload)
-                    retry_payload.pop("stream_options", None)
-                    return self._call_with_retry(retry_payload, stream=stream, on_token=on_token)
-                last_error = LLMConnectionError(f"HTTP 错误: {exc.code} {exc.reason}")
-            except (TimeoutError, OSError) as exc:
-                last_error = LLMConnectionError(f"网络异常: {str(exc)}")
-            except (json.JSONDecodeError, ValueError) as exc:
-                last_error = LLMResponseError(f"数据解析失败: {str(exc)}")
+                args = json.loads(tc_data["args"]) if tc_data["args"] else {}
+                final_tool_calls.append(ToolCall(
+                    name=tc_data["name"],
+                    arguments=args,
+                    call_id=tc_data["id"],
+                    raw_arguments=tc_data["args"]
+                ))
+            except json.JSONDecodeError:
+                continue
 
-            if attempt < self.max_retries:
-                # 🚀 指数退避逻辑
-                sleep_time = (2**attempt) * self.retry_backoff_seconds
-                time.sleep(sleep_time)
+        # 兜底处理：正则提取 DSML 标签
+        if self.ENABLE_DSML_COMPAT and not final_tool_calls and self._contains_dsml_markup(full_content):
+            dsml_calls = self._parse_dsml_tags(full_content)
+            final_tool_calls.extend(dsml_calls)
 
-        raise last_error or LLMClientError("未知的客户端错误")
+        final_content = self._strip_dsml_markup(full_content) if self.ENABLE_DSML_COMPAT and final_tool_calls else visible_content
 
-    def _call_once(
-        self,
-        payload: dict[str, Any],
-        stream: bool,
-        on_token: Callable[[str], None] | None,
-    ) -> LLMResponse:
-        http_request = self._build_request(payload)
-        with request.urlopen(http_request, timeout=self.timeout_seconds) as response:
-            if stream:
-                return _parse_stream(response, on_token=on_token)
-            raw = response.read().decode("utf-8")
-        return _parse_response(json.loads(raw))
-
-    def _build_request(self, payload: dict[str, Any]) -> request.Request:
-        body = json.dumps(payload).encode("utf-8")
-        return request.Request(
-            f"{self.base_url}/chat/completions",
-            data=body,
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
+        return LLMResponse(
+            content=final_content,
+            tool_calls=final_tool_calls if final_tool_calls else None,
+            reasoning_content=full_reasoning if full_reasoning else None
         )
+
+    def _contains_dsml_markup(self, text: str) -> bool:
+        return self._DSML_MARKER_PATTERN.search(text) is not None
+
+    def _strip_dsml_markup(self, text: str) -> str:
+        match = self._DSML_MARKER_PATTERN.search(text)
+        return text[:match.start()].rstrip() if match else text
+
+    def _consume_visible_text(self, chunk: str, state: dict[str, Any]) -> str:
+        """
+        在流式输出中隐藏 DeepSeek 的 DSML 标签。
+        一旦检测到 <｜DSML｜，后续内容全部视为工具调用载荷并停止向用户透传。
+        """
+        if state["suppressed"]:
+            return ""
+
+        marker = "<｜DSML｜"
+        combined = f"{state['pending']}{chunk}"
+        marker_index = combined.find(marker)
+        if marker_index >= 0:
+            state["suppressed"] = True
+            state["pending"] = ""
+            return combined[:marker_index]
+
+        keep = min(len(marker) - 1, len(combined))
+        if len(combined) <= keep:
+            state["pending"] = combined
+            return ""
+
+        emit = combined[:-keep]
+        state["pending"] = combined[-keep:]
+        return emit
+
+    def _flush_visible_text(self, state: dict[str, Any]) -> str:
+        if state["suppressed"]:
+            state["pending"] = ""
+            return ""
+        pending = str(state["pending"])
+        state["pending"] = ""
+        return pending
+
+    def _parse_dsml_tags(self, text: str) -> list[ToolCall]:
+        """使用正则表达式从文本中提取 DeepSeek 特有的 DSML 工具调用标签"""
+        calls = []
+
+        for i, match in enumerate(self._DSML_INVOKE_PATTERN.finditer(text)):
+            name = match.group("name")
+            params_raw = match.group("params")
+            arguments = {}
+            
+            # 提取每一个参数
+            for p_match in self._DSML_PARAM_PATTERN.finditer(params_raw):
+                val = p_match.group("value").strip()
+                # 简单处理：如果是 true/false/数字，进行转换
+                if val.lower() == "true": val = True
+                elif val.lower() == "false": val = False
+                elif val.isdigit(): val = int(val)
+                arguments[p_match.group("key")] = val
+            
+            calls.append(ToolCall(
+                name=name,
+                arguments=arguments,
+                call_id=f"dsml-{i}",
+                raw_arguments=params_raw
+            ))
+        return calls
 
 
 def build_default_llm_client() -> LLMClient | None:
-    if not GlobalConfig.is_llm_ready():
+    from autopatch_j.config import GlobalConfig
+    if not GlobalConfig.llm_api_key:
         return None
-
     return LLMClient(
         api_key=GlobalConfig.llm_api_key,
-        model=GlobalConfig.llm_model,
         base_url=GlobalConfig.llm_base_url,
+        model=GlobalConfig.llm_model
     )
-
-
-def _parse_response(payload: dict[str, Any]) -> LLMResponse:
-    choices = payload.get("choices", [])
-    if not isinstance(choices, list) or not choices:
-        return LLMResponse(raw=payload, usage=_extract_usage(payload))
-
-    first_choice = choices[0]
-    if not isinstance(first_choice, dict):
-        return LLMResponse(raw=payload, usage=_extract_usage(payload))
-
-    message = first_choice.get("message", {})
-    if not isinstance(message, dict):
-        return LLMResponse(raw=payload, usage=_extract_usage(payload))
-
-    return LLMResponse(
-        content=str(message.get("content") or ""),
-        tool_calls=parse_tool_calls(message.get("tool_calls", [])),
-        usage=_extract_usage(payload),
-        raw=payload,
-    )
-
-
-def _parse_stream(
-    response: Any,
-    on_token: Callable[[str], None] | None = None,
-) -> LLMResponse:
-    content_parts: list[str] = []
-    tool_accumulator: dict[int, dict[str, Any]] = {}
-    usage: dict[str, Any] | None = None
-    last_event: dict[str, Any] | None = None
-
-    for raw_line in response:
-        line = _decode_sse_line(raw_line)
-        if not line or not line.startswith("data:"):
-            continue
-        data = line.removeprefix("data:").strip()
-        if data == "[DONE]":
-            break
-
-        event = json.loads(data)
-        last_event = event
-        event_usage = _extract_usage(event)
-        if event_usage is not None:
-            usage = event_usage
-
-        choices = event.get("choices", [])
-        if not isinstance(choices, list) or not choices:
-            continue
-        first_choice = choices[0]
-        if not isinstance(first_choice, dict):
-            continue
-        delta = first_choice.get("delta", {})
-        if not isinstance(delta, dict):
-            continue
-
-        content_delta = delta.get("content")
-        if content_delta:
-            text = str(content_delta)
-            content_parts.append(text)
-            if on_token is not None:
-                on_token(text)
-
-        _merge_tool_call_deltas(tool_accumulator, delta.get("tool_calls", []))
-
-    return LLMResponse(
-        content="".join(content_parts),
-        tool_calls=_build_stream_tool_calls(tool_accumulator),
-        usage=usage,
-        raw=last_event,
-    )
-
-
-def parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
-    if not isinstance(raw_tool_calls, list):
-        return []
-    parsed: list[ToolCall] = []
-    for item in raw_tool_calls:
-        if not isinstance(item, dict):
-            continue
-        function = item.get("function", {})
-        if not isinstance(function, dict):
-            continue
-        name = str(function.get("name") or "")
-        raw_arguments = str(function.get("arguments") or "")
-        parsed.append(
-            ToolCall(
-                call_id=str(item.get("id")) if item.get("id") else None,
-                name=name,
-                raw_arguments=raw_arguments,
-                arguments=_parse_json_object(raw_arguments),
-            )
-        )
-    return parsed
-
-
-def _merge_tool_call_deltas(accumulator: dict[int, dict[str, Any]], raw_tool_calls: Any) -> None:
-    if not isinstance(raw_tool_calls, list):
-        return
-    for item in raw_tool_calls:
-        if not isinstance(item, dict):
-            continue
-        try:
-            index = int(item.get("index", 0))
-        except (TypeError, ValueError):
-            index = 0
-        current = accumulator.setdefault(
-            index,
-            {
-                "id": None,
-                "name": "",
-                "arguments": [],
-            },
-        )
-        if item.get("id"):
-            current["id"] = str(item["id"])
-        function = item.get("function", {})
-        if not isinstance(function, dict):
-            continue
-        if function.get("name"):
-            current["name"] += str(function["name"])
-        if function.get("arguments"):
-            current["arguments"].append(str(function["arguments"]))
-
-
-def _build_stream_tool_calls(accumulator: dict[int, dict[str, Any]]) -> list[ToolCall]:
-    calls: list[ToolCall] = []
-    for index in sorted(accumulator):
-        item = accumulator[index]
-        raw_arguments = "".join(item["arguments"])
-        calls.append(
-            ToolCall(
-                call_id=item["id"],
-                name=str(item["name"]),
-                raw_arguments=raw_arguments,
-                arguments=_parse_json_object(raw_arguments),
-            )
-        )
-    return calls
-
-
-def _parse_json_object(raw: str) -> dict[str, Any]:
-    if not raw:
-        return {}
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
-
-
-def _extract_usage(payload: dict[str, Any]) -> dict[str, Any] | None:
-    usage = payload.get("usage")
-    return usage if isinstance(usage, dict) else None
-
-
-def _decode_sse_line(raw_line: bytes | str) -> str:
-    if isinstance(raw_line, bytes):
-        return raw_line.decode("utf-8").strip()
-    return raw_line.strip()
-
-
-def _should_retry_without_stream_options(
-    exc: error.HTTPError,
-    payload: dict[str, Any],
-) -> bool:
-    if "stream_options" not in payload:
-        return False
-    if exc.code not in {400, 422}:
-        return False
-    try:
-        body = exc.read().decode("utf-8", errors="replace").lower()
-    except OSError:
-        return True
-    finally:
-        exc.close()
-    return "stream_options" in body or "include_usage" in body or "unknown" in body

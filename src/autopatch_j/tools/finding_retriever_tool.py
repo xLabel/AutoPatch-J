@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from autopatch_j.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
-    from autopatch_j.core.service_context import ServiceContext
+    from autopatch_j.agent.agent import AutoPatchAgent
 
 
 class FindingRetrieverTool(Tool):
@@ -41,12 +41,15 @@ class FindingRetrieverTool(Tool):
             return ToolResult(status="error", message="系统中未找到扫描记录，请先执行 scan_project。")
         
         active_scan_id = scan_files[0].stem
-        finding = am.get_finding_by_index(active_scan_id, idx)
+        finding = am.fetch_finding_by_index(active_scan_id, idx)
         
         if not finding:
             return ToolResult(status="error", message=f"无法从快照 {active_scan_id} 中取回句柄为 {finding_id} 的详情。")
+        if not self.context.is_path_in_focus(finding.path):
+            allowed = ", ".join(self.context.focus_paths)
+            return ToolResult(status="error", message=f"焦点约束阻止越界取证：{finding.path} 不在当前允许范围内。允许路径：{allowed}")
 
-        msg = f"🔍 漏洞详情取回成功 ({finding_id})\n"
+        msg = f"漏洞详情取回成功 ({finding_id})\n"
         msg += f"- **规则 ID**: {finding.check_id}\n"
         msg += f"- **文件位置**: {finding.path}:{finding.start_line}\n"
         msg += f"- **漏洞描述**: {finding.message}\n"

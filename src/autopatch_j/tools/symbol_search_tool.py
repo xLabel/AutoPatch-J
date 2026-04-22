@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from autopatch_j.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
-    from autopatch_j.core.service_context import ServiceContext
+    from autopatch_j.agent.agent import AutoPatchAgent
 
 
 class SymbolSearchTool(Tool):

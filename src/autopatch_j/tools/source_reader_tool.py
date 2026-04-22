@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 from autopatch_j.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
-    from autopatch_j.core.service_context import ServiceContext
+    from autopatch_j.agent.agent import AutoPatchAgent
 
 
 class SourceReaderTool(Tool):
@@ -31,14 +32,27 @@ class SourceReaderTool(Tool):
         assert self.context is not None
         fetcher = self.context.fetcher
         
+        # 🚀 路径自愈逻辑
+        full_path = self.context.repo_root / path
+        if not full_path.exists():
+            # 尝试从文件名查找真实路径
+            filename = Path(path).name
+            results = self.context.indexer.search(filename, limit=1)
+            if results:
+                path = results[0].path
+
+        if not self.context.is_path_in_focus(path):
+            allowed = ", ".join(self.context.focus_paths)
+            return ToolResult(status="error", message=f"焦点约束阻止越界读取：{path} 不在当前允许范围内。允许路径：{allowed}")
+
         if line:
             from autopatch_j.core.index_service import IndexEntry
             entry = IndexEntry(path=path, name=symbol or "targeted_code", kind="method" if symbol else "file", line=line)
-            code = fetcher.fetch_by_index_entry(entry)
+            code = fetcher.fetch_entry(entry)
         else:
             from autopatch_j.core.index_service import IndexEntry
             entry = IndexEntry(path=path, name=path, kind="file", line=0)
-            code = fetcher.fetch_by_index_entry(entry)
+            code = fetcher.fetch_entry(entry)
 
         if code.startswith("错误"):
             return ToolResult(status="error", message=code)
