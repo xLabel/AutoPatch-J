@@ -78,7 +78,7 @@ class AutoPatchCLI:
         signal.signal(signal.SIGINT, self._handle_interrupt)
 
     def _handle_interrupt(self, signum: int, frame: Any) -> None:
-        self.renderer.print("\n[bold yellow]检测到中断信号，正在安全退出...[/bold yellow]")
+        self.renderer.print(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
         sys.exit(0)
 
     def _create_prompt_session(self) -> PromptSession[str]:
@@ -215,11 +215,11 @@ class AutoPatchCLI:
 
         self.renderer.print_panel(
             "AutoPatch-J: Java 安全与正确性修复智能体\n输入 /help 查看命令，使用 @ 符号绑定上下文。",
-            title="欢迎使用",
+            title="AutoPatch-J",
             style=SYSTEM_STYLE,
         )
         if not self.repo_root:
-            self.renderer.print_info("未检测到 Java 项目。请进入项目目录并执行 /init。")
+            self.renderer.print_info("未检测到 Java 项目，请进入项目目录后执行 /init")
         else:
             self.renderer.print(
                 f"[{MUTED_STYLE}]当前项目:[/] [bold {SYSTEM_STYLE}]{self.repo_root}[/]"
@@ -281,14 +281,14 @@ class AutoPatchCLI:
             self.handle_apply(current_draft)
             self.workflow_service.persist_applied_current_patch()
             if not self.workflow_service.verify_has_pending_patch():
-                self.renderer.print_info("补丁队列已清空。")
+                self.renderer.print_info("补丁队列已清空")
             return
 
         if user_input.lower() == "discard":
             self.handle_discard()
             self.workflow_service.persist_discarded_current_patch()
             if not self.workflow_service.verify_has_pending_patch():
-                self.renderer.print_info("补丁队列已清空。")
+                self.renderer.print_info("补丁队列已清空")
             return
 
         self.handle_chat(user_input)
@@ -304,12 +304,12 @@ class AutoPatchCLI:
                 self.workflow_service,
             ]
         ):
-            self.renderer.print_error("系统未就绪。请先执行 /init。")
+            self.renderer.print_error("系统未初始化，请先执行 /init")
             return
 
         stripped_instruction = re.sub(r"@([^\s@]+)", "", text).strip()
         if "@" in text and not stripped_instruction:
-            self.renderer.print_info("请继续输入对这些代码的指令。")
+            self.renderer.print_info("请继续输入代码指令")
             return
 
         has_pending_review = self.workflow_service.verify_has_pending_patch()
@@ -332,7 +332,7 @@ class AutoPatchCLI:
             self.agent.reset_history()
             if has_pending_review:
                 self.workflow_service.clear_workspace()
-                self.renderer.print_info("检测到新任务，已退出当前补丁审核上下文。")
+                self.renderer.print_info("已切换到新任务")
             intent = self.intent_service.fetch_intent(text, has_pending_review=False)
         else:
             intent = self.intent_service.fetch_intent(text, has_pending_review=True)
@@ -360,7 +360,7 @@ class AutoPatchCLI:
 
         scope = self.scope_service.fetch_scope(text, default_to_project=True)
         if scope is None:
-            self.renderer.print_error("未解析到可审计的代码范围。")
+            self.renderer.print_error("未解析到可检查范围")
             return
 
         self.agent.set_focus_paths(scope.focus_files if scope.is_locked else [])
@@ -483,7 +483,7 @@ class AutoPatchCLI:
 
         current_item = self.workflow_service.fetch_current_patch_item()
         if current_item is None:
-            self.renderer.print_error("当前没有待审核补丁。")
+            self.renderer.print_error("当前没有待确认补丁")
             return
 
         focus_paths = self._fetch_review_scope_paths(current_item)
@@ -500,7 +500,7 @@ class AutoPatchCLI:
 
         current_item = self.workflow_service.fetch_current_patch_item()
         if current_item is None:
-            self.renderer.print_error("当前没有待审核补丁。")
+            self.renderer.print_error("当前没有待确认补丁")
             return
 
         remaining_items = self.workflow_service.fetch_remaining_patch_items()
@@ -516,7 +516,7 @@ class AutoPatchCLI:
             agent_call=self.agent.perform_patch_revise,
         )
         if not self.workflow_service.verify_has_pending_patch():
-            self.renderer.print_info("补丁队列已清空。")
+            self.renderer.print_info("补丁队列已清空")
 
     def _run_agent_request(
         self,
@@ -603,7 +603,7 @@ class AutoPatchCLI:
         elif cmd == "/quit":
             sys.exit(0)
         else:
-            self.renderer.print_error(f"未知命令: {cmd}")
+            self.renderer.print_error(f"未知命令：{cmd}")
 
     def _sanitize_assistant_output(self, text: str) -> str:
         match = DSML_MARKER_PATTERN.search(text)
@@ -817,9 +817,9 @@ class AutoPatchCLI:
         sys_table.add_column("功能描述")
         sys_table.add_row("/init", "初始化当前目录为 Java 项目并建立索引")
         sys_table.add_row("/status", "查看当前项目状态与索引统计")
-        sys_table.add_row("/scanner", "查看扫描器蓝图与运行时状态")
+        sys_table.add_row("/scanner", "查看扫描器状态")
         sys_table.add_row("/reindex", "强制重新扫描全项符号")
-        sys_table.add_row("/help", "显示此指令看板")
+        sys_table.add_row("/help", "显示命令帮助")
         sys_table.add_row("/quit", "安全退出程序")
 
         act_table = Table(show_header=True, header_style=f"bold {DECISION_STYLE}", box=None)
@@ -829,9 +829,9 @@ class AutoPatchCLI:
         act_table.add_row("apply", "应用当前补丁预览")
         act_table.add_row("discard", "丢弃当前补丁草案")
 
-        self.renderer.print_panel("AutoPatch-J 指令中心", style=SYSTEM_STYLE)
+        self.renderer.print_panel("命令帮助", style=SYSTEM_STYLE)
         self.renderer.console.print(sys_table)
-        self.renderer.print("\n[bold]交互指引[/bold]")
+        self.renderer.print("\n[bold]交互说明[/bold]")
         self.renderer.console.print(act_table)
 
     def handle_scanners(self) -> None:
@@ -839,7 +839,7 @@ class AutoPatchCLI:
 
         from autopatch_j.scanners import ALL_SCANNERS
 
-        table = Table(title="Java 静态扫描器看板", show_header=True, header_style=f"bold {SYSTEM_STYLE}")
+        table = Table(title="扫描器状态", show_header=True, header_style=f"bold {SYSTEM_STYLE}")
         table.add_column("名称", style=SYSTEM_STYLE, width=12)
         table.add_column("状态", width=25)
         table.add_column("版本", justify="center")
@@ -870,11 +870,11 @@ class AutoPatchCLI:
 
         assert self.indexer is not None
         stats = self.indexer.perform_rebuild()
-        self.renderer.print_success(f"初始化完成！索引项: {stats.get('total', 0)}")
+        self.renderer.print_success(f"初始化完成，索引 {stats.get('total', 0)} 项")
 
     def handle_status(self) -> None:
         if not self.indexer or not self.workflow_service:
-            self.renderer.print_error("系统未就绪。请先执行 /init。")
+            self.renderer.print_error("系统未初始化，请先执行 /init")
             return
 
         from rich.table import Table
@@ -910,14 +910,14 @@ class AutoPatchCLI:
         )
         table.add_row("[bold]符号索引[/]", stats_str)
 
-        self.renderer.print_panel(table, title="[bold] AutoPatch-J 系统驾驶舱 [/]", style=SYSTEM_STYLE)
+        self.renderer.print_panel(table, title="[bold] 项目状态 [/]", style=SYSTEM_STYLE)
 
     def handle_reindex(self) -> None:
         if not self.indexer:
             return
         self.renderer.print_step("正在重新构建索引...")
         stats = self.indexer.perform_rebuild()
-        self.renderer.print_success(f"索引刷新完成 ({stats.get('total', 0)})")
+        self.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
 
     def handle_apply(self, pending: PatchDraft) -> None:
         assert self.patch_engine is not None
@@ -926,7 +926,7 @@ class AutoPatchCLI:
             self.renderer.print_error("应用失败。")
             return
 
-        self.renderer.print_success("物理应用成功！")
+        self.renderer.print_success("补丁已应用")
         scanner = get_scanner(DEFAULT_SCANNER_NAME)
         if scanner:
             validator = SemanticValidator(self.repo_root, scanner)
@@ -937,7 +937,7 @@ class AutoPatchCLI:
                 self.renderer.print_error(message)
 
     def handle_discard(self) -> None:
-        self.renderer.print_info("已丢弃当前补丁草案。")
+        self.renderer.print_info("已丢弃当前草案")
 
 
 def main() -> int:

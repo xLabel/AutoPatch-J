@@ -25,9 +25,9 @@ class AutoPatchCompleter(Completer):
         self.commands = {
             "/init": "初始化项目环境",
             "/status": "查看系统状态",
-            "/scanner": "扫描器管理看板",
+            "/scanner": "查看扫描器状态",
             "/reindex": "刷新代码符号索引",
-            "/help": "显示指令看板",
+            "/help": "显示命令帮助",
             "/quit": "退出程序"
         }
 

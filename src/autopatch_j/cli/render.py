@@ -45,13 +45,13 @@ class CliRenderer:
         self.console.print(f"\n{message}\n", style=BODY_STYLE)
 
     def print_success(self, message: str) -> None:
-        self.console.print(f"[bold {SUCCESS_STYLE}]成功: {message}[/]")
+        self.console.print(f"[bold {SUCCESS_STYLE}]{message}[/]")
 
     def print_error(self, message: str) -> None:
-        self.console.print(f"[bold {ERROR_STYLE}]错误: {message}[/]")
+        self.console.print(f"[bold {ERROR_STYLE}]{message}[/]")
 
     def print_info(self, message: str) -> None:
-        self.console.print(f"[bold {MUTED_STYLE}]提示: {message}[/]")
+        self.console.print(f"[bold {MUTED_STYLE}]{message}[/]")
 
     def print_diff(self, diff: str, title: str = "预览") -> None:
         """渲染带语法高亮的补丁差异"""
@@ -83,7 +83,7 @@ class CliRenderer:
         self.print_panel(diff_text, title=title, style=DECISION_STYLE)
 
     def print_action_panel(self, file_path: str, diff: str, validation: str, rationale: str, current_idx: int = 1, total_count: int = 1) -> None:
-        """展示补丁审核决策面板"""
+        """展示补丁确认决策面板"""
         # 计算统计
         add_lines = diff.count("\n+") - diff.count("\n+++")
         del_lines = diff.count("\n-") - diff.count("\n---")
@@ -123,7 +123,7 @@ class CliRenderer:
             Text("\n")
         )
 
-        title = f"补丁待审核 (PENDING) [{current_idx}/{total_count}]" if total_count > 1 else "补丁待审核 (PENDING)"
+        title = f"待确认补丁 (PENDING) [{current_idx}/{total_count}]" if total_count > 1 else "待确认补丁 (PENDING)"
         self.print_panel(content, title=title, style=DECISION_STYLE)
 
     def print_no_issue_panel(self, scope_paths: list[str], scanner_summary: str, llm_summary: str) -> None:
@@ -153,4 +153,4 @@ class CliRenderer:
             llm,
             Text("\n"),
         )
-        self.print_panel(content, title="检查结论", style=SUCCESS_STYLE)
+        self.print_panel(content, title="检查结果", style=SUCCESS_STYLE)
