@@ -45,6 +45,7 @@ class AutoPatchAgent:
             "propose_patch",
         ),
     }
+    CODE_EXPLAIN_SINGLE_FILE_TOOL_NAMES: tuple[str, ...] = ("read_source_code",)
 
     def __init__(
         self,
@@ -74,6 +75,8 @@ class AutoPatchAgent:
         }
         self.messages: list[dict[str, Any]] = []
         self.focus_paths: list[str] = []
+        self.source_read_cache: dict[tuple[str, str | None, int | None], ToolResult] = {}
+        self.code_explain_allow_symbol_search = True
 
     def chat(
         self,
@@ -111,11 +114,22 @@ class AutoPatchAgent:
     def perform_code_explain(
         self,
         user_text: str,
+        allow_symbol_search: bool | None = None,
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
         on_observation: ToolCallback | None = None,
         on_tool_start: ToolCallback | None = None,
     ) -> str:
+        effective_allow_symbol_search = (
+            self.code_explain_allow_symbol_search
+            if allow_symbol_search is None
+            else allow_symbol_search
+        )
+        tool_names = (
+            self.TASK_TOOL_NAMES[IntentType.CODE_EXPLAIN]
+            if effective_allow_symbol_search
+            else self.CODE_EXPLAIN_SINGLE_FILE_TOOL_NAMES
+        )
         return self._run_task(
             intent=IntentType.CODE_EXPLAIN,
             user_text=user_text,
@@ -123,6 +137,7 @@ class AutoPatchAgent:
             on_reasoning=on_reasoning,
             on_observation=on_observation,
             on_tool_start=on_tool_start,
+            tool_names_override=tool_names,
         )
 
     def perform_general_chat(
@@ -204,9 +219,10 @@ class AutoPatchAgent:
         on_reasoning: ToolCallback | None,
         on_observation: ToolCallback | None,
         on_tool_start: ToolCallback | None,
+        tool_names_override: tuple[str, ...] | None = None,
     ) -> str:
         system_prompt = self._build_task_system_prompt(intent)
-        tool_names = self.TASK_TOOL_NAMES[intent]
+        tool_names = tool_names_override or self.TASK_TOOL_NAMES[intent]
         return self._run_react_loop(
             user_text=user_text,
             system_prompt=system_prompt,
@@ -401,12 +417,36 @@ class AutoPatchAgent:
 
     def reset_history(self) -> None:
         self.messages = []
+        self.source_read_cache = {}
+        self.code_explain_allow_symbol_search = True
+
+    def set_code_explain_symbol_search_enabled(self, enabled: bool) -> None:
+        self.code_explain_allow_symbol_search = enabled
 
     def normalize_repo_path(self, path: str) -> str:
         clean = path.replace("\\", "/").strip()
         if clean.startswith("./"):
             clean = clean[2:]
         return clean
+
+    def fetch_cached_source_read(
+        self,
+        path: str,
+        symbol: str | None,
+        line: int | None,
+    ) -> ToolResult | None:
+        key = (self.normalize_repo_path(path), symbol, line)
+        return self.source_read_cache.get(key)
+
+    def persist_cached_source_read(
+        self,
+        path: str,
+        symbol: str | None,
+        line: int | None,
+        result: ToolResult,
+    ) -> None:
+        key = (self.normalize_repo_path(path), symbol, line)
+        self.source_read_cache[key] = result
 
     def is_focus_locked(self) -> bool:
         return bool(self.focus_paths)

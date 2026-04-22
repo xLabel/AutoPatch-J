@@ -27,6 +27,7 @@ from autopatch_j.core.models import (
     AuditAttemptOutcome,
     AuditFindingItem,
     CodeScope,
+    CodeScopeKind,
     ConversationRoute,
     IntentType,
     PatchReviewItem,
@@ -445,13 +446,17 @@ class AutoPatchCLI:
         scope = self.scope_service.fetch_scope(text, default_to_project=False)
         if scope is not None and scope.is_locked:
             self.agent.set_focus_paths(scope.focus_files)
+            prompt = self._build_code_explain_prompt(text=text, scope=scope)
+            allow_symbol_search = scope.kind is not CodeScopeKind.SINGLE_FILE
+            self.agent.set_code_explain_symbol_search_enabled(allow_symbol_search)
             self._run_agent_request(
-                prompt=text,
+                prompt=prompt,
                 agent_call=self.agent.perform_code_explain,
             )
             return
 
         self.agent.set_focus_paths([])
+        self.agent.set_code_explain_symbol_search_enabled(True)
         self._run_agent_request(
             prompt=text,
             agent_call=self.agent.perform_general_chat,
@@ -696,6 +701,25 @@ class AutoPatchCLI:
 
     def _build_static_scan_summary(self) -> str:
         return "当前范围未发现安全或正确性问题。"
+
+    def _build_code_explain_prompt(self, text: str, scope: CodeScope) -> str:
+        if scope.kind is CodeScopeKind.SINGLE_FILE:
+            return (
+                f"当前解释范围仅限文件: {scope.focus_files[0]}\n"
+                "请只基于当前文件可见内容解释代码功能，不要主动搜索、读取或推断焦点范围外的类型实现、调用方或配置来源。"
+                "如果出现外部类型名，只能基于当前文件里的使用方式做保守说明。"
+                "回答默认控制在 2 到 4 句；除非用户明确要求详细展开，否则不要输出分节报告。\n\n"
+                f"用户问题:\n{text}"
+            )
+
+        joined_paths = "\n".join(f"- {path}" for path in scope.focus_files)
+        return (
+            "当前任务是代码讲解。你可以在当前焦点范围内使用 search_symbols 和 read_source_code 辅助解释，"
+            "但不要越过当前 focus scope。回答默认控制在 1 段或 3 个要点以内；"
+            "除非用户明确要求详细展开，否则不要输出长篇报告。\n"
+            f"当前焦点范围:\n{joined_paths}\n\n"
+            f"用户问题:\n{text}"
+        )
 
     def _build_code_audit_prompt(
         self,

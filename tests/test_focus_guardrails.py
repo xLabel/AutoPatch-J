@@ -12,6 +12,7 @@ from autopatch_j.scanners.base import Finding, ScanResult
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
 from autopatch_j.tools.project_scanner_tool import ProjectScannerTool
 from autopatch_j.tools.source_reader_tool import SourceReaderTool
+from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 
 
 def _build_agent(repo_root: Path) -> AutoPatchAgent:
@@ -71,11 +72,11 @@ def test_focus_lock_blocks_unrelated_read_and_patch(tmp_path: Path) -> None:
     user_service = tmp_path / "src" / "main" / "java" / "demo" / "UserService.java"
     legacy.parent.mkdir(parents=True)
     legacy.write_text(
-        "public class LegacyConfig { boolean isDebug(AppConfig config) { return config.getMode().equals(\"debug\"); } }",
+        'public class LegacyConfig { boolean isDebug(AppConfig config) { return config.getMode().equals("debug"); } }',
         encoding="utf-8",
     )
     user_service.write_text(
-        "public class UserService { boolean isAdmin(User user) { return user.getName().equals(\"admin\"); } }",
+        'public class UserService { boolean isAdmin(User user) { return user.getName().equals("admin"); } }',
         encoding="utf-8",
     )
 
@@ -90,8 +91,54 @@ def test_focus_lock_blocks_unrelated_read_and_patch(tmp_path: Path) -> None:
         file_path="src/main/java/demo/UserService.java",
         old_string='user.getName().equals("admin")',
         new_string='"admin".equals(user.getName())',
-        rationale="不应允许越界修复",
+        rationale="should stay in focus scope",
         associated_finding_id=None,
     )
     assert patch_result.status == "error"
     assert "焦点约束阻止越界修复" in patch_result.message
+
+
+def test_focus_lock_filters_symbol_search_results(tmp_path: Path) -> None:
+    legacy = tmp_path / "src" / "main" / "java" / "demo" / "LegacyConfig.java"
+    app_config = tmp_path / "src" / "main" / "java" / "demo" / "AppConfig.java"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("public class LegacyConfig {}", encoding="utf-8")
+    app_config.write_text("public class AppConfig {}", encoding="utf-8")
+
+    agent = _build_agent(tmp_path)
+    agent.set_focus_paths(["src/main/java/demo/LegacyConfig.java"])
+
+    blocked = SymbolSearchTool(agent).execute("AppConfig")
+    assert blocked.status == "ok"
+    assert "未找到与 'AppConfig' 相关的符号。" in blocked.message
+
+    allowed = SymbolSearchTool(agent).execute("LegacyConfig")
+    assert allowed.status == "ok"
+    assert "LegacyConfig.java" in allowed.message
+    assert "AppConfig.java" not in allowed.message
+
+
+def test_source_reader_uses_same_turn_cache(tmp_path: Path) -> None:
+    legacy = tmp_path / "src" / "main" / "java" / "demo" / "LegacyConfig.java"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("public class LegacyConfig {}", encoding="utf-8")
+
+    agent = _build_agent(tmp_path)
+    agent.set_focus_paths(["src/main/java/demo/LegacyConfig.java"])
+
+    calls: list[str] = []
+
+    def fake_fetch_entry(entry: object) -> str:
+        calls.append("fetch")
+        return "public class LegacyConfig {}"
+
+    agent.fetcher.fetch_entry = fake_fetch_entry  # type: ignore[method-assign]
+    tool = SourceReaderTool(agent)
+
+    first = tool.execute("src/main/java/demo/LegacyConfig.java")
+    second = tool.execute("src/main/java/demo/LegacyConfig.java")
+
+    assert first.status == "ok"
+    assert second.status == "ok"
+    assert calls == ["fetch"]
+    assert first.message == second.message

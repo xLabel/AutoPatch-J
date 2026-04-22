@@ -27,22 +27,32 @@ def _fetch_tool_names(mock_llm: MagicMock) -> list[str]:
     return [tool["function"]["name"] for tool in tools]
 
 
-def test_perform_code_explain_uses_read_only_tool_profile(tmp_path: Path) -> None:
+def test_perform_code_explain_uses_navigation_tool_profile_by_default(tmp_path: Path) -> None:
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = LLMResponse(content="解释完成")
+    mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_code_explain("@User.java 解释一下代码")
+    agent.perform_code_explain("@User.java explain code")
 
     assert _fetch_tool_names(mock_llm) == ["search_symbols", "read_source_code"]
 
 
-def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> None:
+def test_perform_code_explain_disables_symbol_search_in_single_file_mode(tmp_path: Path) -> None:
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = LLMResponse(content="审计完成")
+    mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_code_audit("@User.java 检查代码")
+    agent.perform_code_explain("@User.java explain code", allow_symbol_search=False)
+
+    assert _fetch_tool_names(mock_llm) == ["read_source_code"]
+
+
+def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="done")
+    agent = _build_agent(tmp_path, mock_llm)
+
+    agent.perform_code_audit("@User.java audit code")
 
     assert _fetch_tool_names(mock_llm) == [
         "get_finding_detail",
@@ -53,10 +63,10 @@ def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> 
 
 def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = LLMResponse(content="重写完成")
+    mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_patch_revise("加一句注释")
+    agent.perform_patch_revise("add one comment")
 
     assert _fetch_tool_names(mock_llm) == [
         "search_symbols",
@@ -68,10 +78,10 @@ def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
 
 def test_chat_keeps_legacy_full_tool_profile(tmp_path: Path) -> None:
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = LLMResponse(content="legacy done")
+    mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.chat("检查代码")
+    agent.chat("audit code")
 
     assert _fetch_tool_names(mock_llm) == [
         "scan_project",
@@ -84,10 +94,10 @@ def test_chat_keeps_legacy_full_tool_profile(tmp_path: Path) -> None:
 
 def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:
     mock_llm = MagicMock()
-    mock_llm.chat.return_value = LLMResponse(content="闲聊回答")
+    mock_llm.chat.return_value = LLMResponse(content="chat answer")
     agent = _build_agent(tmp_path, mock_llm)
 
-    response = agent.perform_general_chat("这个项目复杂吗")
+    response = agent.perform_general_chat("what does this project do")
 
-    assert response == "闲聊回答"
+    assert response == "chat answer"
     assert _fetch_tool_names(mock_llm) == []
