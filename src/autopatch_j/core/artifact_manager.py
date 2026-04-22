@@ -4,23 +4,28 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from autopatch_j.config import get_project_state_dir
-from autopatch_j.core.models import ActiveWorkspace
+from autopatch_j.core.models import (
+    ActiveWorkspace,
+    PatchDraftData,
+    PatchReviewItem,
+    PatchReviewStatus,
+    WorkspaceStatus,
+)
 from autopatch_j.core.patch_engine import PatchDraft
 from autopatch_j.scanners.base import Finding, ScanResult
+from autopatch_j.validators.java_syntax import SyntaxValidationResult
 
 
 @dataclass(slots=True)
 class ArtifactManager:
     """
     状态持久化管家 (Core Service)
-    职责：管理项目本地状态 (.autopatch-j/) 下的文件存储与读取。
-    主要处理：扫描结果 (findings) 和 待确认补丁 (pending_patch)。
+    职责：统一管理 .autopatch-j 下的扫描快照、工作台快照与兼容层补丁存储。
     """
+
     repo_root: Path
-    # 显式声明字段，以便 slots 能够预留空间
     state_dir: Path = field(init=False)
     findings_dir: Path = field(init=False)
     patches_dir: Path = field(init=False)
@@ -34,32 +39,33 @@ class ArtifactManager:
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
-        """确保必要的存储目录存在"""
         self.findings_dir.mkdir(parents=True, exist_ok=True)
         self.patches_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- 扫描结果 (Findings) 管理 ---
-
     def persist_scan_result(self, result: ScanResult) -> str:
-        """保存扫描结果，并返回一个唯一的 artifact_id"""
         artifact_id = self._generate_id("scan")
         target_path = self.findings_dir / f"{artifact_id}.json"
-        
-        data = result.to_dict()
-        target_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        target_path.write_text(
+            json.dumps(result.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
         return artifact_id
 
     def fetch_scan_result(self, artifact_id: str) -> ScanResult | None:
-        """根据 ID 加载扫描结果"""
         target_path = self.findings_dir / f"{artifact_id}.json"
         if not target_path.exists():
             return None
-        
         try:
             data = json.loads(target_path.read_text(encoding="utf-8"))
             return ScanResult.from_dict(data)
         except (json.JSONDecodeError, KeyError):
             return None
+
+    def fetch_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:
+        result = self.fetch_scan_result(artifact_id)
+        if result is None or index < 0 or index >= len(result.findings):
+            return None
+        return result.findings[index]
 
     def persist_workspace(self, workspace: ActiveWorkspace) -> None:
         self.workspace_file.write_text(
@@ -80,155 +86,159 @@ class ArtifactManager:
         if self.workspace_file.exists():
             self.workspace_file.unlink()
 
-    def fetch_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:
-        """
-        从特定的扫描快照中按索引提取单个 Finding。
-        """
-        result = self.fetch_scan_result(artifact_id)
-        if result and 0 <= index < len(result.findings):
-            return result.findings[index]
-        return None
-
-    # --- 补丁草案 (Pending Patch) 队列管理 ---
+    # --- Pending Patch compatibility layer ---
 
     def persist_pending_patch(self, draft: PatchDraft) -> None:
-        """
-        将补丁草案插入到队列首部 (LIFO栈模式)。
-        这样当用户要求修改当前补丁时，新生成的补丁能立即出现在最前面。
-        """
-        target_path = self.patches_dir / "pending_queue.json"
-        queue = []
-        if target_path.exists():
-            try:
-                queue = json.loads(target_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, KeyError):
-                pass
-        
-        data = {
-            "file_path": draft.file_path,
-            "old_string": draft.old_string,
-            "new_string": draft.new_string,
-            "diff": draft.diff,
-            "status": draft.status,
-            "message": draft.message,
-            "rationale": draft.rationale,
-            "target_check_id": draft.target_check_id,
-            "target_snippet": draft.target_snippet,
-            "validation": {
-                "status": draft.validation.status,
-                "message": draft.validation.message,
-                "errors": draft.validation.errors
-            }
-        }
-        # 🚀 栈模式：新补丁永远在最上面
-        queue.insert(0, data)
-        target_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
+        workspace = self.fetch_workspace()
+        if workspace is None:
+            pending_drafts = [draft] + self._fetch_legacy_pending_patches()
+            self._persist_workspace_pending_drafts([], pending_drafts, None)
+            self._clear_legacy_pending_files()
+            return
+
+        head_items = list(workspace.patch_items[: workspace.current_patch_index])
+        pending_drafts = [draft] + [
+            self._build_patch_draft_from_review_item(item)
+            for item in workspace.fetch_remaining_patch_items()
+        ]
+        self._persist_workspace_pending_drafts(head_items, pending_drafts, workspace)
+        self._clear_legacy_pending_files()
 
     def fetch_pending_patches(self) -> list[PatchDraft]:
-        """加载队列中所有活跃的 Pending Patch"""
-        target_path = self.patches_dir / "pending_queue.json"
-        if not target_path.exists():
-            return []
-
-        try:
-            queue_data = json.loads(target_path.read_text(encoding="utf-8"))
-            from autopatch_j.validators.java_syntax import SyntaxValidationResult
-            
-            patches = []
-            for data in queue_data:
-                val_data = data.get("validation", {})
-                validation = SyntaxValidationResult(
-                    status=val_data.get("status", "unknown"),
-                    message=val_data.get("message", ""),
-                    errors=val_data.get("errors", [])
-                )
-                patches.append(PatchDraft(
-                    file_path=data["file_path"],
-                    old_string=data["old_string"],
-                    new_string=data["new_string"],
-                    diff=data["diff"],
-                    validation=validation,
-                    status=data["status"],
-                    message=data["message"],
-                    rationale=data.get("rationale"),
-                    target_check_id=data.get("target_check_id"),
-                    target_snippet=data.get("target_snippet")
-                ))
-            return patches
-        except (json.JSONDecodeError, KeyError):
-            return []
+        workspace = self.fetch_workspace()
+        if workspace is not None and workspace.verify_has_pending_patch():
+            return [
+                self._build_patch_draft_from_review_item(item)
+                for item in workspace.fetch_remaining_patch_items()
+            ]
+        return self._fetch_legacy_pending_patches()
 
     def fetch_pending_patch(self) -> PatchDraft | None:
-        """获取队列首部的补丁（向后兼容）"""
         queue = self.fetch_pending_patches()
         return queue[0] if queue else None
 
     def pop_pending_patch(self) -> None:
-        """移除队列首部的补丁"""
-        target_path = self.patches_dir / "pending_queue.json"
-        if not target_path.exists():
+        workspace = self.fetch_workspace()
+        if workspace is None:
+            pending_drafts = self._fetch_legacy_pending_patches()
+            if pending_drafts:
+                pending_drafts.pop(0)
+            self._persist_workspace_pending_drafts([], pending_drafts, None)
+            self._clear_legacy_pending_files()
             return
-        try:
-            queue = json.loads(target_path.read_text(encoding="utf-8"))
-            if queue:
-                queue.pop(0)
-                target_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
-        except (json.JSONDecodeError, KeyError):
-            pass
+
+        head_items = list(workspace.patch_items[: workspace.current_patch_index])
+        pending_drafts = [
+            self._build_patch_draft_from_review_item(item)
+            for item in workspace.fetch_remaining_patch_items()
+        ]
+        if pending_drafts:
+            pending_drafts.pop(0)
+        self._persist_workspace_pending_drafts(head_items, pending_drafts, workspace)
+        self._clear_legacy_pending_files()
 
     def discard_followup_patches(self) -> list[PatchDraft]:
-        """
-        丢弃当前补丁之后的所有后续补丁。
-        返回实际被丢弃的补丁列表，顺序与原队列中的后续顺序一致。
-        """
+        pending_drafts = self.fetch_pending_patches()
+        if len(pending_drafts) <= 1:
+            return []
+
+        workspace = self.fetch_workspace()
+        if workspace is None:
+            self._persist_workspace_pending_drafts([], pending_drafts[:1], None)
+            self._clear_legacy_pending_files()
+            return list(pending_drafts[1:])
+
+        head_items = list(workspace.patch_items[: workspace.current_patch_index])
+        self._persist_workspace_pending_drafts(head_items, pending_drafts[:1], workspace)
+        self._clear_legacy_pending_files()
+        return list(pending_drafts[1:])
+
+    def clear_pending_patch(self) -> None:
+        self.clear_workspace()
+        self._clear_legacy_pending_files()
+
+    # --- helpers ---
+
+    def _persist_workspace_pending_drafts(
+        self,
+        head_items: list[PatchReviewItem],
+        pending_drafts: list[PatchDraft],
+        base_workspace: ActiveWorkspace | None,
+    ) -> None:
+        pending_items = [
+            self._build_patch_review_item_from_draft(
+                draft=draft,
+                item_index=len(head_items) + offset,
+            )
+            for offset, draft in enumerate(pending_drafts, start=1)
+        ]
+        all_items = list(head_items) + pending_items
+        current_patch_index = len(head_items) if all_items else 0
+        workspace = ActiveWorkspace(
+            mode=WorkspaceStatus.REVIEWING if pending_items else WorkspaceStatus.IDLE,
+            scope=base_workspace.scope if base_workspace else None,
+            latest_scan_id=base_workspace.latest_scan_id if base_workspace else None,
+            patch_items=all_items,
+            current_patch_index=current_patch_index,
+        )
+        self.persist_workspace(workspace)
+
+    def _build_patch_review_item_from_draft(self, draft: PatchDraft, item_index: int) -> PatchReviewItem:
+        finding_ids: list[str] = [draft.target_check_id] if draft.target_check_id else []
+        return PatchReviewItem(
+            item_id=f"item-{item_index}",
+            file_path=draft.file_path,
+            finding_ids=finding_ids,
+            status=PatchReviewStatus.PENDING,
+            draft=PatchDraftData.fetch_from_patch_draft(draft),
+        )
+
+    def _build_patch_draft_from_review_item(self, item: PatchReviewItem) -> PatchDraft:
+        return item.draft.fetch_patch_draft()
+
+    def _fetch_legacy_pending_patches(self) -> list[PatchDraft]:
         target_path = self.patches_dir / "pending_queue.json"
         if not target_path.exists():
             return []
-
         try:
-            queue = json.loads(target_path.read_text(encoding="utf-8"))
-            if len(queue) <= 1:
-                return []
-            from autopatch_j.validators.java_syntax import SyntaxValidationResult
-
-            discarded: list[PatchDraft] = []
-            for data in queue[1:]:
-                val_data = data.get("validation", {})
+            queue_data = json.loads(target_path.read_text(encoding="utf-8"))
+            drafts: list[PatchDraft] = []
+            for data in queue_data:
                 validation = SyntaxValidationResult(
-                    status=val_data.get("status", "unknown"),
-                    message=val_data.get("message", ""),
-                    errors=val_data.get("errors", []),
+                    status=str(data.get("validation", {}).get("status", "unknown")),
+                    message=str(data.get("validation", {}).get("message", "")),
+                    errors=[str(item) for item in data.get("validation", {}).get("errors", [])],
                 )
-                discarded.append(PatchDraft(
-                    file_path=data["file_path"],
-                    old_string=data["old_string"],
-                    new_string=data["new_string"],
-                    diff=data["diff"],
-                    validation=validation,
-                    status=data["status"],
-                    message=data["message"],
-                    rationale=data.get("rationale"),
-                    target_check_id=data.get("target_check_id"),
-                    target_snippet=data.get("target_snippet"),
-                ))
-            queue = queue[:1]
-            target_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
-            return discarded
-        except (json.JSONDecodeError, KeyError):
+                drafts.append(
+                    PatchDraft(
+                        file_path=str(data["file_path"]),
+                        old_string=str(data["old_string"]),
+                        new_string=str(data["new_string"]),
+                        diff=str(data["diff"]),
+                        validation=validation,
+                        status=str(data.get("status", "unknown")),
+                        message=str(data.get("message", "")),
+                        rationale=str(data["rationale"]) if data.get("rationale") is not None else None,
+                        target_check_id=(
+                            str(data["target_check_id"]) if data.get("target_check_id") is not None else None
+                        ),
+                        target_snippet=(
+                            str(data["target_snippet"]) if data.get("target_snippet") is not None else None
+                        ),
+                    )
+                )
+            return drafts
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return []
 
-    def clear_pending_patch(self) -> None:
-        """清空所有的 Pending Patch"""
-        target_path = self.patches_dir / "pending_queue.json"
-        if target_path.exists():
-            target_path.unlink()
-        legacy_path = self.patches_dir / "current_pending.json"
-        if legacy_path.exists():
-            legacy_path.unlink()
-
-    # --- 辅助方法 ---
+    def _clear_legacy_pending_files(self) -> None:
+        for legacy_path in [
+            self.patches_dir / "pending_queue.json",
+            self.patches_dir / "current_pending.json",
+        ]:
+            if legacy_path.exists():
+                legacy_path.unlink()
 
     def _generate_id(self, prefix: str) -> str:
-        """生成带时间戳的唯一 ID"""
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         return f"{prefix}-{timestamp}"
