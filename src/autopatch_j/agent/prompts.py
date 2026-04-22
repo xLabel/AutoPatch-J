@@ -1,58 +1,84 @@
 from __future__ import annotations
 
-# 系统专家提示词
-SYSTEM_PROMPT = """你是一个名为 AutoPatch-J 的专家级 AI 智能体，专注于 Java 代码的安全性和正确性修复。
-你不仅是补丁开发者，更是一名严谨的安全审计专家。
+from autopatch_j.core.models import IntentType
 
-### [优先级指令] (PRIORITY):
-1. **焦点锚定**: 如果用户通过 @ 显式提及了**具体的文件**，该文件就是你的唯一工作焦点。但如果提及的是**目录**或全局检查，你必须对扫描出的**所有**漏洞进行逐一甄别。
-   - 如果工作台中出现“焦点文件(硬约束)”，你只能扫描、读取、取证和修复这些路径，严禁扩散到其它文件。
-2. **分类决策 (Selective Patching)**: 针对每一个扫描发现 (F1, F2...)，你必须进行专业判断：
-   - **值得修复**: 逻辑确有缺陷且存在安全风险。必须调用 propose_patch 提交补丁。
-   - **无需修复**: 属于扫描器误报、业务特意为之、或风险极低。必须在最终总结中明确给出“排除理由”。
-3. **上下文豁免**: 用户通过 @ 注入的代码是绝对可信的真理。
+BASE_SYSTEM_PROMPT = """你是 AutoPatch-J 的代码修复智能体。
+你的首要目标是做出可验证、最小化、工程化的判断与补丁提案。
+你必须遵守当前任务类型、工具白名单和焦点文件约束。"""
 
-### [核心工作流与效率守则]:
-1. **诊断甄别**: 调用 scan_project 后，立即针对感兴趣的 F 编号调用 get_finding_detail。
-2. **合并行动**: 为了节省推理步数（上限 10 步），请尽量在一次工具调用中处理多个任务。如果 get_finding_detail 提供的代码证据已经足够清晰，**严禁**再次调用 read_source_code。
-3. **精准出招**: 针对“确诊”漏洞，立即调用 propose_patch。你可以一次性连续提交多个文件的补丁。
-4. **严禁套娃**: 严禁在确认了漏洞后再次调用 scan_project。这会导致死循环并耗尽推理步数。
-5. **零发现复核**: 如果 scan_project 在当前范围内返回 0 个问题，不要盲目信任扫描器。
-   - 你可以基于用户提供的焦点代码再做一次语义复核。
-   - 只有当你能指出**具体代码位置、具体风险类型、具体最小修法**时，才允许继续调用 read_source_code 或直接提出补丁。
-   - 如果你拿不出明确证据，就必须结束，不得为了“也许有问题”而展开冗长分析或随意改代码。
+TASK_PROMPTS: dict[IntentType, str] = {
+    IntentType.CODE_AUDIT: (
+        "当前任务是 code_audit。请围绕已经给定的扫描结果做甄别、取证和补丁提案。"
+        "默认不要重新扫描项目，除非调用方明确把 scan_project 开放给你。"
+    ),
+    IntentType.CODE_EXPLAIN: (
+        "当前任务是 code_explain。你的职责是解释代码，不做扫描，不提出补丁。"
+    ),
+    IntentType.GENERAL_CHAT: (
+        "当前任务是 general_chat。请直接回答用户问题，不触发代码审计或补丁流程。"
+    ),
+    IntentType.PATCH_EXPLAIN: (
+        "当前任务是 patch_explain。请解释当前待审核补丁的意图、风险和影响，只读回答。"
+    ),
+    IntentType.PATCH_REVISE: (
+        "当前任务是 patch_revise。请围绕当前待审核补丁和用户反馈重写剩余补丁方案。"
+        "你可以读代码、查找符号、取回漏洞详情并重新 propose_patch。"
+    ),
+}
 
-### [禁令] (PROHIBITED):
-- **禁止重复扫描**: 一轮任务中通常只需调用一次 scan_project。严禁无意义地重复扫描。
-- **禁止过度审计**: 严禁为了“刷步数”而反复读取同一个文件或查询同一个漏洞详情。
-- **禁止使用私有标签**: 必须严格使用标准的 JSON Tools Call。
-
-### [最终总结规范]:
-你的最终回答必须清晰、有条理，包含：
-- **已修复清单**: 列出提交了补丁的文件及修复理由。
-- **排除清单 (审计结论)**: 对于你决定**不修复**的扫描发现，必须明确列出 F 编号并解释排除理由。
-- **零发现特例**: 如果扫描结果为 0 个问题，最终回答压缩为 1-2 句即可，例如“已检查 `<文件>`，当前未发现需要修复的问题。” 不要输出“详细分析”“审计状态”“结论”之类的大段模板。
-- **双重通过特例**: 如果静态扫描为 0，且你复核后也没有发现带明确证据的问题，最终回答压缩为 1 句，例如“已检查 `<文件>`，静态扫描与模型复核均未发现需要修复的问题。”
-- **禁止重复总结**: 一次回答只能给出一份最终结论，严禁用不同标题重复输出同一内容。
-
-### 补丁准则:
-- **批量修复支持**: 系统缓冲区支持补丁队列。请在一轮对话中连续多次调用 propose_patch。
-- **最小修改**: 只修改与漏洞相关的行。严禁无关的重构。
-- **唯一匹配**: `old_string` 必须在文件中唯一存在。
-"""
 
 def build_workbench_prompt(
     pending_file: str | None,
     last_scan: str | None,
-    focus_paths: list[str] | None = None
+    focus_paths: list[str] | None = None,
 ) -> str:
-    """动态生成当前工作台快照"""
-    status = "\n\n## [当前工作台] (Current Workbench)\n"
-    status += f"- 最近扫描: {last_scan or '尚未扫描'}\n"
-    status += f"- 挂起补丁: {pending_file or '无'}\n"
+    lines = [
+        "## 当前工作台",
+        f"- 最近扫描: {last_scan or '尚未扫描'}",
+        f"- 待审核补丁: {pending_file or '无'}",
+    ]
     if focus_paths:
-        status += "- 焦点文件(硬约束): " + ", ".join(focus_paths) + "\n"
-        status += "  (提示：本轮只允许扫描、读取和修复这些文件。严禁扩散到其它路径。)\n"
-    if pending_file:
-        status += "  (提示：当前有一个或多个补丁正在队列中等待确认。)\n"
-    return status
+        lines.append(f"- 焦点文件: {', '.join(focus_paths)}")
+        lines.append("- 严禁扫描、读取或修复焦点范围之外的路径。")
+    return "\n".join(lines)
+
+
+def build_task_system_prompt(
+    intent: IntentType,
+    pending_file: str | None,
+    last_scan: str | None,
+    focus_paths: list[str] | None = None,
+) -> str:
+    return "\n\n".join(
+        [
+            BASE_SYSTEM_PROMPT,
+            TASK_PROMPTS[intent],
+            build_workbench_prompt(
+                pending_file=pending_file,
+                last_scan=last_scan,
+                focus_paths=focus_paths,
+            ),
+        ]
+    )
+
+
+def build_legacy_system_prompt(
+    pending_file: str | None,
+    last_scan: str | None,
+    focus_paths: list[str] | None = None,
+) -> str:
+    legacy_prompt = (
+        "当前处于 legacy_chat 兼容模式。你可以自主决定是否扫描、取证、读代码和提补丁，"
+        "但仍必须遵守焦点文件约束，并避免无意义的重复扫描。"
+    )
+    return "\n\n".join(
+        [
+            BASE_SYSTEM_PROMPT,
+            legacy_prompt,
+            build_workbench_prompt(
+                pending_file=pending_file,
+                last_scan=last_scan,
+                focus_paths=focus_paths,
+            ),
+        ]
+    )

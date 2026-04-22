@@ -1,34 +1,60 @@
 from __future__ import annotations
 
-import json
-import re
 from pathlib import Path
 from typing import Any, Callable
 
-from autopatch_j.agent.llm_client import LLMClient, LLMResponse, ToolCall, build_default_llm_client
+from autopatch_j.agent.llm_client import LLMClient, ToolCall, build_default_llm_client
+from autopatch_j.agent.prompts import build_legacy_system_prompt, build_task_system_prompt
+from autopatch_j.config import GlobalConfig
+from autopatch_j.core.models import IntentType
 from autopatch_j.tools.base import Tool, ToolResult
-from autopatch_j.tools.project_scanner_tool import ProjectScannerTool
-from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
-from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
-from autopatch_j.tools.source_reader_tool import SourceReaderTool
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
-from autopatch_j.agent.prompts import SYSTEM_PROMPT, build_workbench_prompt
+from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
+from autopatch_j.tools.project_scanner_tool import ProjectScannerTool
+from autopatch_j.tools.source_reader_tool import SourceReaderTool
+from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
+
+ToolCallback = Callable[[str], None]
 
 
 class AutoPatchAgent:
     """
-    智能决策引擎 (ReAct 控制器)
-    职责：实现 ReAct 循环，直接持有核心 Service 实例。
+    智能决策引擎
+    职责：在明确任务类型下执行 ReAct 循环，并遵守任务级工具白名单。
     """
 
+    TASK_TOOL_NAMES: dict[IntentType, tuple[str, ...]] = {
+        IntentType.CODE_AUDIT: (
+            "get_finding_detail",
+            "search_symbols",
+            "read_source_code",
+            "propose_patch",
+        ),
+        IntentType.CODE_EXPLAIN: (
+            "search_symbols",
+            "read_source_code",
+        ),
+        IntentType.GENERAL_CHAT: (),
+        IntentType.PATCH_EXPLAIN: (
+            "search_symbols",
+            "read_source_code",
+        ),
+        IntentType.PATCH_REVISE: (
+            "search_symbols",
+            "read_source_code",
+            "get_finding_detail",
+            "propose_patch",
+        ),
+    }
+
     def __init__(
-        self, 
+        self,
         repo_root: Path,
         artifacts: Any,
         indexer: Any,
         patch_engine: Any,
         fetcher: Any,
-        llm: LLMClient | None = None
+        llm: LLMClient | None = None,
     ) -> None:
         self.repo_root = repo_root
         self.artifacts = artifacts
@@ -36,145 +62,311 @@ class AutoPatchAgent:
         self.patch_engine = patch_engine
         self.fetcher = fetcher
         self.llm = llm or build_default_llm_client()
-        
-        # 注册工具集
+
         self.available_tools: dict[str, Tool] = {
-            t.name: t for t in [
+            tool.name: tool
+            for tool in [
                 ProjectScannerTool(self),
                 PatchProposalTool(self),
                 SymbolSearchTool(self),
                 SourceReaderTool(self),
-                FindingRetrieverTool(self)
+                FindingRetrieverTool(self),
             ]
         }
-        
         self.messages: list[dict[str, Any]] = []
         self.focus_paths: list[str] = []
 
     def chat(
-        self, 
-        user_text: str, 
-        on_token: Callable[[str], None] | None = None,
-        on_reasoning: Callable[[str], None] | None = None,
-        on_observation: Callable[[str], None] | None = None,
-        on_tool_start: Callable[[str], None] | None = None
+        self,
+        user_text: str,
+        on_token: ToolCallback | None = None,
+        on_reasoning: ToolCallback | None = None,
+        on_observation: ToolCallback | None = None,
+        on_tool_start: ToolCallback | None = None,
     ) -> str:
-        """执行 ReAct 循环"""
+        return self._run_legacy_chat(
+            user_text=user_text,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def perform_code_audit(
+        self,
+        user_text: str,
+        on_token: ToolCallback | None = None,
+        on_reasoning: ToolCallback | None = None,
+        on_observation: ToolCallback | None = None,
+        on_tool_start: ToolCallback | None = None,
+    ) -> str:
+        return self._run_task(
+            intent=IntentType.CODE_AUDIT,
+            user_text=user_text,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def perform_code_explain(
+        self,
+        user_text: str,
+        on_token: ToolCallback | None = None,
+        on_reasoning: ToolCallback | None = None,
+        on_observation: ToolCallback | None = None,
+        on_tool_start: ToolCallback | None = None,
+    ) -> str:
+        return self._run_task(
+            intent=IntentType.CODE_EXPLAIN,
+            user_text=user_text,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def perform_general_chat(
+        self,
+        user_text: str,
+        on_token: ToolCallback | None = None,
+        on_reasoning: ToolCallback | None = None,
+        on_observation: ToolCallback | None = None,
+        on_tool_start: ToolCallback | None = None,
+    ) -> str:
+        return self._run_task(
+            intent=IntentType.GENERAL_CHAT,
+            user_text=user_text,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def perform_patch_explain(
+        self,
+        user_text: str,
+        on_token: ToolCallback | None = None,
+        on_reasoning: ToolCallback | None = None,
+        on_observation: ToolCallback | None = None,
+        on_tool_start: ToolCallback | None = None,
+    ) -> str:
+        return self._run_task(
+            intent=IntentType.PATCH_EXPLAIN,
+            user_text=user_text,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def perform_patch_revise(
+        self,
+        user_text: str,
+        on_token: ToolCallback | None = None,
+        on_reasoning: ToolCallback | None = None,
+        on_observation: ToolCallback | None = None,
+        on_tool_start: ToolCallback | None = None,
+    ) -> str:
+        return self._run_task(
+            intent=IntentType.PATCH_REVISE,
+            user_text=user_text,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def _run_legacy_chat(
+        self,
+        user_text: str,
+        on_token: ToolCallback | None,
+        on_reasoning: ToolCallback | None,
+        on_observation: ToolCallback | None,
+        on_tool_start: ToolCallback | None,
+    ) -> str:
+        system_prompt = self._build_legacy_system_prompt()
+        tool_names = tuple(self.available_tools.keys())
+        return self._run_react_loop(
+            user_text=user_text,
+            system_prompt=system_prompt,
+            allowed_tool_names=tool_names,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def _run_task(
+        self,
+        intent: IntentType,
+        user_text: str,
+        on_token: ToolCallback | None,
+        on_reasoning: ToolCallback | None,
+        on_observation: ToolCallback | None,
+        on_tool_start: ToolCallback | None,
+    ) -> str:
+        system_prompt = self._build_task_system_prompt(intent)
+        tool_names = self.TASK_TOOL_NAMES[intent]
+        return self._run_react_loop(
+            user_text=user_text,
+            system_prompt=system_prompt,
+            allowed_tool_names=tool_names,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def _run_react_loop(
+        self,
+        user_text: str,
+        system_prompt: str,
+        allowed_tool_names: tuple[str, ...],
+        on_token: ToolCallback | None,
+        on_reasoning: ToolCallback | None,
+        on_observation: ToolCallback | None,
+        on_tool_start: ToolCallback | None,
+    ) -> str:
         if not self.llm:
-            return "LLM 配置缺失。请设置 LLM_API_KEY 环境变量后重启。"
+            return "LLM 配置缺失。请设置 LLM_API_KEY 后重启。"
 
         self.messages.append({"role": "user", "content": user_text})
-
-        # 智能适配：如果是百炼 DeepSeek，开启思考链
-        extra_body = {}
-        from autopatch_j.config import GlobalConfig
-        if "deepseek" in GlobalConfig.llm_model.lower() and "aliyuncs" in GlobalConfig.llm_base_url:
-            extra_body["enable_thinking"] = True
+        extra_body = self._build_extra_body()
 
         for _ in range(10):
-            full_system_prompt = self._synthesize_system_prompt()
-            processed_messages = self._dehydrate_history(full_system_prompt)
-
+            processed_messages = self._dehydrate_history(system_prompt)
             response = self.llm.chat(
                 messages=processed_messages,
-                tools=self._get_tool_schemas(),
+                tools=self._get_tool_schemas(allowed_tool_names),
                 extra_body=extra_body,
                 on_token=on_token,
-                on_reasoning_token=on_reasoning
+                on_reasoning_token=on_reasoning,
             )
 
-            # 🚀 健壮性：如果 content 为空（仅有 tool_calls），部分网关会报错，填充占位符
             assistant_content = response.content or "..."
-
-            self.messages.append({
-                "role": "assistant",
-                "content": assistant_content,
-                "tool_calls": self._serialize_tool_calls(response.tool_calls) if response.tool_calls else None
-            })
+            self.messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_content,
+                    "tool_calls": self._serialize_tool_calls(response.tool_calls) if response.tool_calls else None,
+                }
+            )
 
             if not response.tool_calls:
                 return response.content
 
-            # 执行观察 (Observation)
             for call in response.tool_calls:
                 if on_tool_start:
                     on_tool_start(call.name)
-                
-                observation = self._execute_tool_call(call)
-                
+                observation = self._execute_tool_call(call, set(allowed_tool_names))
                 if on_observation:
                     on_observation(observation.message)
+                self.messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.call_id,
+                        "name": call.name,
+                        "content": observation.message,
+                    }
+                )
 
-                self.messages.append({
-                    "role": "tool",
-                    "tool_call_id": call.call_id,
-                    "name": call.name,
-                    "content": observation.message
-                })
+        return "已达推理上限，请审阅当前结果。"
 
-        return "已达推理上限，请审核目前进展。"
-
-    def _execute_tool_call(self, call: ToolCall) -> ToolResult:
-        """执行工具调用"""
+    def _execute_tool_call(self, call: ToolCall, allowed_tool_names: set[str]) -> ToolResult:
+        if call.name not in allowed_tool_names:
+            return ToolResult(
+                status="error",
+                message=f"当前任务未开放工具：{call.name}",
+            )
         tool = self.available_tools.get(call.name)
-        if not tool:
+        if tool is None:
             return ToolResult(status="error", message=f"未找到工具：{call.name}")
         try:
             return tool.execute(**call.arguments)
-        except Exception as e:
-            return ToolResult(status="error", message=f"执行异常：{str(e)}")
+        except Exception as exc:
+            return ToolResult(status="error", message=f"执行异常：{exc}")
 
-    def _synthesize_system_prompt(self) -> str:
-        """抓取项目状态"""
+    def _build_task_system_prompt(self, intent: IntentType) -> str:
         pending = self.artifacts.fetch_pending_patch()
-        scan_files = sorted(self.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
-        last_scan_id = scan_files[0].stem if scan_files else None
-        
-        workbench = build_workbench_prompt(
+        last_scan_id = self._fetch_latest_scan_id()
+        return build_task_system_prompt(
+            intent=intent,
             pending_file=pending.file_path if pending else None,
             last_scan=last_scan_id,
-            focus_paths=self.focus_paths
+            focus_paths=self.focus_paths,
         )
-        return SYSTEM_PROMPT + workbench
+
+    def _build_legacy_system_prompt(self) -> str:
+        pending = self.artifacts.fetch_pending_patch()
+        last_scan_id = self._fetch_latest_scan_id()
+        return build_legacy_system_prompt(
+            pending_file=pending.file_path if pending else None,
+            last_scan=last_scan_id,
+            focus_paths=self.focus_paths,
+        )
+
+    def _fetch_latest_scan_id(self) -> str | None:
+        scan_files = sorted(self.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
+        return scan_files[0].stem if scan_files else None
+
+    def _build_extra_body(self) -> dict[str, Any]:
+        if "deepseek" in GlobalConfig.llm_model.lower() and "aliyuncs" in GlobalConfig.llm_base_url:
+            return {"enable_thinking": True}
+        return {}
 
     def _dehydrate_history(self, current_system_prompt: str) -> list[dict[str, Any]]:
-        """
-        物理级历史脱水：
-        1. 确保历史永远从 'user' 角色开始。
-        2. 保护 scan_project 的结果不被压缩。
-        """
-        raw_window = self.messages[-14:] # 稍微扩大
-        
-        # 🚀 核心对齐逻辑：寻找窗口内第一个 user 消息
-        start_idx = 0
-        for i, msg in enumerate(raw_window):
-            if msg.get("role") == "user":
-                start_idx = i
+        raw_window = self.messages[-14:]
+        start_index = 0
+        for index, message in enumerate(raw_window):
+            if message.get("role") == "user":
+                start_index = index
                 break
-        
-        history_window = raw_window[start_idx:]
-        
-        result = [{"role": "system", "content": current_system_prompt}]
-        for msg in history_window:
-            new_msg = dict(msg)
-            # 保护扫描结果
-            if msg.get("role") == "tool" and msg.get("name") == "scan_project":
-                result.append(new_msg)
-                continue
 
-            # 压缩旧的工具观察
-            if msg["role"] == "tool" and msg in self.messages[:-3]:
-                content = str(msg["content"])
+        history_window = raw_window[start_index:]
+        result: list[dict[str, Any]] = [{"role": "system", "content": current_system_prompt}]
+        for message in history_window:
+            new_message = dict(message)
+            if message.get("role") == "tool" and message.get("name") == "scan_project":
+                result.append(new_message)
+                continue
+            if message.get("role") == "tool" and message in self.messages[:-3]:
+                content = str(message.get("content", ""))
                 if len(content) > 200:
-                    new_msg["content"] = content[:100] + "\n... [此处内容已脱水压缩] ..."
-            result.append(new_msg)
+                    new_message["content"] = content[:100] + "\n... [已压缩旧工具输出] ..."
+            result.append(new_message)
         return result
 
-    def _get_tool_schemas(self) -> list[dict[str, Any]]:
-        return [{"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.parameters}} for t in self.available_tools.values()]
+    def _get_tool_schemas(self, allowed_tool_names: tuple[str, ...]) -> list[dict[str, Any]]:
+        schemas: list[dict[str, Any]] = []
+        for tool_name in allowed_tool_names:
+            tool = self.available_tools.get(tool_name)
+            if tool is None:
+                continue
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    },
+                }
+            )
+        return schemas
 
     def _serialize_tool_calls(self, calls: list[ToolCall]) -> list[dict[str, Any]]:
-        return [{"id": c.call_id, "type": "function", "function": {"name": c.name, "arguments": c.raw_arguments}} for c in calls]
+        return [
+            {
+                "id": call.call_id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": call.raw_arguments,
+                },
+            }
+            for call in calls
+        ]
 
     def set_focus_paths(self, paths: list[str] | None) -> None:
         normalized: list[str] = []
