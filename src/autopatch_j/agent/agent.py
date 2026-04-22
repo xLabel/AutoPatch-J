@@ -26,7 +26,6 @@ class AutoPatchAgent:
     TASK_TOOL_NAMES: dict[IntentType, tuple[str, ...]] = {
         IntentType.CODE_AUDIT: (
             "get_finding_detail",
-            "search_symbols",
             "read_source_code",
             "propose_patch",
         ),
@@ -268,6 +267,8 @@ class AutoPatchAgent:
                         "tool_call_id": call.call_id,
                         "name": call.name,
                         "content": observation.message,
+                        "tool_status": observation.status,
+                        "tool_payload": observation.payload,
                     }
                 )
 
@@ -326,7 +327,7 @@ class AutoPatchAgent:
         history_window = raw_window[start_index:]
         result: list[dict[str, Any]] = [{"role": "system", "content": current_system_prompt}]
         for message in history_window:
-            new_message = dict(message)
+            new_message = self._fetch_llm_message(message)
             if message.get("role") == "tool" and message.get("name") == "scan_project":
                 result.append(new_message)
                 continue
@@ -336,6 +337,28 @@ class AutoPatchAgent:
                     new_message["content"] = content[:100] + "\n... [已压缩旧工具输出] ..."
             result.append(new_message)
         return result
+
+    def _fetch_llm_message(self, message: dict[str, Any]) -> dict[str, Any]:
+        role = str(message.get("role", ""))
+        if role == "assistant":
+            llm_message: dict[str, Any] = {
+                "role": "assistant",
+                "content": message.get("content", ""),
+            }
+            if message.get("tool_calls") is not None:
+                llm_message["tool_calls"] = message["tool_calls"]
+            return llm_message
+        if role == "tool":
+            return {
+                "role": "tool",
+                "tool_call_id": message.get("tool_call_id", ""),
+                "name": message.get("name", ""),
+                "content": message.get("content", ""),
+            }
+        return {
+            "role": role,
+            "content": message.get("content", ""),
+        }
 
     def _get_tool_schemas(self, allowed_tool_names: tuple[str, ...]) -> list[dict[str, Any]]:
         schemas: list[dict[str, Any]] = []
@@ -375,6 +398,9 @@ class AutoPatchAgent:
             if clean and clean not in normalized:
                 normalized.append(clean)
         self.focus_paths = normalized
+
+    def reset_history(self) -> None:
+        self.messages = []
 
     def normalize_repo_path(self, path: str) -> str:
         clean = path.replace("\\", "/").strip()

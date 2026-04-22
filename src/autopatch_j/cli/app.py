@@ -13,20 +13,31 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 
 from autopatch_j.agent.agent import AutoPatchAgent
+from autopatch_j.agent.llm_client import build_default_llm_client
 from autopatch_j.cli.completer import AutoPatchCompleter
 from autopatch_j.cli.render import CliRenderer
 from autopatch_j.config import GlobalConfig, discover_repo_root, get_project_state_dir
 from autopatch_j.core.artifact_manager import ArtifactManager
+from autopatch_j.core.audit_backlog_service import AuditBacklogService
 from autopatch_j.core.code_fetcher import CodeFetcher
+from autopatch_j.core.continuity_judge_service import ContinuityJudgeService
 from autopatch_j.core.index_service import IndexService
 from autopatch_j.core.intent_service import IntentService
-from autopatch_j.core.models import CodeScope, IntentType, PatchReviewItem
+from autopatch_j.core.models import (
+    AuditAttemptOutcome,
+    AuditFindingItem,
+    CodeScope,
+    ConversationRoute,
+    IntentType,
+    PatchReviewItem,
+)
 from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
 from autopatch_j.core.scan_service import ScanService
 from autopatch_j.core.scope_service import ScopeService
 from autopatch_j.core.validator_service import SemanticValidator
 from autopatch_j.core.workflow_service import WorkflowService
 from autopatch_j.scanners import DEFAULT_SCANNER_NAME, get_scanner
+from autopatch_j.scanners.base import ScanResult
 
 DSML_MARKER_PATTERN = re.compile(r"<[^>\n]*DSML[^>\n]*>", re.IGNORECASE)
 
@@ -47,6 +58,8 @@ class AutoPatchCLI:
         self.patch_engine: PatchEngine | None = None
         self.fetcher: CodeFetcher | None = None
         self.intent_service: IntentService | None = None
+        self.continuity_judge_service: ContinuityJudgeService | None = None
+        self.audit_backlog_service: AuditBacklogService | None = None
         self.scope_service: ScopeService | None = None
         self.scan_service: ScanService | None = None
         self.workflow_service: WorkflowService | None = None
@@ -175,6 +188,9 @@ class AutoPatchCLI:
         self.patch_engine = PatchEngine(repo_root)
         self.fetcher = CodeFetcher(repo_root)
         self.intent_service = IntentService()
+        self.audit_backlog_service = AuditBacklogService()
+        shared_llm = build_default_llm_client()
+        self.continuity_judge_service = ContinuityJudgeService(llm=shared_llm)
         self.scope_service = ScopeService(repo_root, self.indexer, ignored_dirs=GlobalConfig.ignored_dirs)
         self.scan_service = ScanService(repo_root, self.artifacts)
         self.workflow_service = WorkflowService(self.artifacts)
@@ -184,6 +200,7 @@ class AutoPatchCLI:
             indexer=self.indexer,
             patch_engine=self.patch_engine,
             fetcher=self.fetcher,
+            llm=shared_llm,
         )
 
     def run(self) -> int:
@@ -202,9 +219,10 @@ class AutoPatchCLI:
 
         while True:
             try:
-                current_item = self.workflow_service.fetch_current_patch_item() if self.workflow_service else None
+                workspace = self.workflow_service.fetch_workspace() if self.workflow_service else None
+                current_item = workspace.fetch_current_patch_item() if workspace else None
                 pending_draft = current_item.draft.fetch_patch_draft() if current_item else None
-                remaining_count = len(self.workflow_service.fetch_remaining_patch_items()) if current_item else 0
+                current_idx, total_count = workspace.fetch_review_progress() if workspace else (0, 0)
                 prompt_prefix = "autopatch-j"
 
                 if pending_draft:
@@ -214,8 +232,8 @@ class AutoPatchCLI:
                         diff=pending_draft.diff,
                         validation=pending_draft.validation.status,
                         rationale=pending_draft.rationale or "无说明",
-                        current_idx=1,
-                        total_count=remaining_count,
+                        current_idx=current_idx,
+                        total_count=total_count,
                     )
                     prompt_prefix = "<style fg='yellow' font_weight='bold'>PENDING</style> autopatch-j"
 
@@ -272,6 +290,7 @@ class AutoPatchCLI:
             [
                 self.agent,
                 self.intent_service,
+                self.continuity_judge_service,
                 self.scope_service,
                 self.scan_service,
                 self.workflow_service,
@@ -286,7 +305,29 @@ class AutoPatchCLI:
             return
 
         has_pending_review = self.workflow_service.verify_has_pending_patch()
-        intent = self.intent_service.fetch_intent(text, has_pending_review=has_pending_review)
+        requested_scope = self.scope_service.fetch_scope(text, default_to_project=False)
+        current_item = self.workflow_service.fetch_current_patch_item() if has_pending_review else None
+        current_workspace = self.workflow_service.fetch_workspace() if has_pending_review else None
+        route = self.continuity_judge_service.fetch_route(
+            user_text=text,
+            has_pending_review=has_pending_review,
+            requested_scope=requested_scope,
+            current_patch_file=current_item.file_path if current_item else None,
+            current_scope=current_workspace.scope if current_workspace else None,
+        )
+
+        if route is ConversationRoute.COMMAND:
+            self.handle_command(text)
+            return
+
+        if route is ConversationRoute.NEW_TASK:
+            self.agent.reset_history()
+            if has_pending_review:
+                self.workflow_service.clear_workspace()
+                self.renderer.print_info("检测到新任务，已退出当前补丁审核上下文。")
+            intent = self.intent_service.fetch_intent(text, has_pending_review=False)
+        else:
+            intent = self.intent_service.fetch_intent(text, has_pending_review=True)
 
         if intent is IntentType.CODE_AUDIT:
             self._handle_code_audit(text)
@@ -307,6 +348,7 @@ class AutoPatchCLI:
         assert self.scan_service is not None
         assert self.workflow_service is not None
         assert self.agent is not None
+        assert self.audit_backlog_service is not None
 
         scope = self.scope_service.fetch_scope(text, default_to_project=True)
         if scope is None:
@@ -315,20 +357,85 @@ class AutoPatchCLI:
 
         self.agent.set_focus_paths(scope.focus_files if scope.is_locked else [])
         try:
+            self.renderer.print_tool_start("scan_project", caller="AGENT")
             scan_id, scan_result = self.scan_service.fetch_scan_snapshot(scope)
         except RuntimeError as exc:
             self.renderer.print_error(str(exc))
             return
 
         self.workflow_service.persist_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
-        zero_finding_scan = len(scan_result.findings) == 0
-        self._run_agent_request(
-            prompt=text,
-            agent_call=self.agent.perform_code_audit,
-            scope_paths=self._describe_scope_paths(scope),
-            render_no_issue_panel=zero_finding_scan,
-        )
-        if zero_finding_scan and not self.workflow_service.verify_has_pending_patch():
+        backlog = self.audit_backlog_service.fetch_backlog(scan_result)
+        if not backlog:
+            self._run_agent_request(
+                prompt=text,
+                agent_call=self.agent.perform_code_audit,
+                scope_paths=self._describe_scope_paths(scope),
+                render_no_issue_panel=True,
+            )
+            if not self.workflow_service.verify_has_pending_patch():
+                self.workflow_service.clear_workspace()
+            return
+
+        while self.audit_backlog_service.verify_has_pending_finding(backlog):
+            current_finding = self.audit_backlog_service.fetch_current_finding(backlog)
+            if current_finding is None:
+                break
+
+            self.agent.reset_history()
+            prompt = self._build_code_audit_prompt(
+                text=text,
+                current_finding=current_finding,
+                force_reread=False,
+            )
+            new_messages = self._run_agent_request(
+                prompt=prompt,
+                agent_call=self.agent.perform_code_audit,
+            ) or []
+            decision = self.audit_backlog_service.fetch_attempt_decision(current_finding, new_messages)
+            if decision.outcome is AuditAttemptOutcome.PATCH_READY:
+                self.audit_backlog_service.persist_mark_patch_ready(backlog, current_finding.finding_id)
+                continue
+
+            if (
+                decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
+                and self.audit_backlog_service.verify_can_retry(current_finding)
+            ):
+                self.audit_backlog_service.persist_mark_retry(
+                    backlog=backlog,
+                    finding_id=current_finding.finding_id,
+                    error_code=decision.error_code,
+                    error_message=decision.error_message,
+                )
+                self.agent.reset_history()
+                retry_prompt = self._build_code_audit_prompt(
+                    text=text,
+                    current_finding=current_finding,
+                    force_reread=True,
+                )
+                retry_messages = self._run_agent_request(
+                    prompt=retry_prompt,
+                    agent_call=self.agent.perform_code_audit,
+                ) or []
+                retry_decision = self.audit_backlog_service.fetch_attempt_decision(current_finding, retry_messages)
+                if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
+                    self.audit_backlog_service.persist_mark_patch_ready(backlog, current_finding.finding_id)
+                else:
+                    self.audit_backlog_service.persist_mark_failed(
+                        backlog=backlog,
+                        finding_id=current_finding.finding_id,
+                        error_code=retry_decision.error_code,
+                        error_message=retry_decision.error_message,
+                    )
+                continue
+
+            self.audit_backlog_service.persist_mark_failed(
+                backlog=backlog,
+                finding_id=current_finding.finding_id,
+                error_code=decision.error_code,
+                error_message=decision.error_message,
+            )
+
+        if not self.workflow_service.verify_has_pending_patch():
             self.workflow_service.clear_workspace()
 
     def _handle_code_explain(self, text: str) -> None:
@@ -405,13 +512,14 @@ class AutoPatchCLI:
         agent_call: Callable[..., str],
         scope_paths: list[str] | None = None,
         render_no_issue_panel: bool = False,
-    ) -> None:
+    ) -> list[dict[str, Any]]:
         assert self.agent is not None
         assert self.workflow_service is not None
 
         self.renderer.print()
         stream_state = {"in_reasoning": False, "answer_after_reasoning": False}
         buffered_answer_parts: list[str] = []
+        start_index = len(self.agent.messages)
 
         def on_token(token: str) -> None:
             if stream_state["in_reasoning"]:
@@ -421,13 +529,13 @@ class AutoPatchCLI:
 
         def on_reasoning(token: str) -> None:
             stream_state["in_reasoning"] = True
-            self.renderer.print(token, end="", style="dim italic")
+            self.renderer.print_reasoning(token, end="")
 
         def on_tool_start(tool_name: str) -> None:
-            self.renderer.print(f"\n[bold blue]正在执行工具: {tool_name}...[/bold blue]")
+            self.renderer.print_tool_start(tool_name, caller="LLM")
 
         def on_observation(message: str) -> None:
-            self.renderer.print(f"\n[dim]{message}[/dim]\n")
+            self.renderer.print_observation(message)
 
         final_answer = agent_call(
             prompt,
@@ -436,11 +544,12 @@ class AutoPatchCLI:
             on_observation=on_observation,
             on_tool_start=on_tool_start,
         )
+        new_messages = list(self.agent.messages[start_index:])
 
         has_pending_patches = self.workflow_service.verify_has_pending_patch()
         if has_pending_patches:
             self.renderer.print()
-            return
+            return new_messages
 
         if render_no_issue_panel:
             if buffered_answer_parts or final_answer:
@@ -451,7 +560,7 @@ class AutoPatchCLI:
                 llm_summary=self._build_local_no_issue_summary(),
             )
             self.renderer.print()
-            return
+            return new_messages
 
         buffered_answer = self._sanitize_assistant_output("".join(buffered_answer_parts))
         if buffered_answer:
@@ -463,6 +572,7 @@ class AutoPatchCLI:
             if sanitized_final_answer:
                 self.renderer.print(f"\n{sanitized_final_answer}")
         self.renderer.print()
+        return new_messages
 
     def handle_command(self, raw_cmd: str) -> None:
         parts = raw_cmd.split()
@@ -486,6 +596,31 @@ class AutoPatchCLI:
     def _sanitize_assistant_output(self, text: str) -> str:
         match = DSML_MARKER_PATTERN.search(text)
         return text[:match.start()].rstrip() if match else text
+
+    def _build_code_audit_summary_prompt_legacy(self, text: str, scan_result: ScanResult) -> str:
+        if not scan_result.findings:
+            return text
+
+        summary_lines = [
+            "系统已完成本地静态扫描，请优先围绕以下扫描结果继续处理：",
+            "扫描摘要：",
+        ]
+        for index, finding in enumerate(scan_result.findings, start=1):
+            summary_lines.append(
+                f"- F{index}: {finding.path}:{finding.start_line} ({finding.check_id})"
+            )
+        summary_lines.extend(
+            [
+                "",
+                "执行要求：",
+                "1. 优先根据 F 编号调用 get_finding_detail 获取详情。",
+                "2. 仅在需要确认最新源码时调用 read_source_code。",
+                "3. 如果能够形成补丁，直接 propose_patch，不要输出长篇分析。",
+                "",
+                f"用户原始请求：{text}",
+            ]
+        )
+        return "\n".join(summary_lines)
 
     def _should_render_local_no_issue_summary(self, new_messages: list[dict[str, Any]]) -> bool:
         saw_zero_scan = False
@@ -561,6 +696,39 @@ class AutoPatchCLI:
 
     def _build_static_scan_summary(self) -> str:
         return "当前范围未发现安全或正确性问题。"
+
+    def _build_code_audit_prompt(
+        self,
+        text: str,
+        current_finding: AuditFindingItem,
+        force_reread: bool,
+    ) -> str:
+        lines = [
+            "系统已完成本地静态扫描。你当前只允许处理一个 finding，不要切换到其他目标。",
+            f"当前目标: {current_finding.finding_id}",
+            f"文件位置: {current_finding.file_path}:{current_finding.start_line}",
+            f"规则 ID: {current_finding.check_id}",
+            f"问题描述: {current_finding.message}",
+            f"代码证据:\n```java\n{current_finding.snippet}\n```",
+            "",
+            "执行要求：",
+            f"1. 只处理 {current_finding.finding_id}，不要切换到其他 F 编号。",
+            "2. 优先根据 F 编号调用 get_finding_detail 获取详情。",
+            f"3. 如需漏洞详情，associated_finding_id 必须使用 {current_finding.finding_id}。",
+            f"4. 如需最新源码，可读取 {current_finding.file_path}。",
+            f"5. 如果形成补丁，propose_patch 时必须传 associated_finding_id={current_finding.finding_id}。",
+            "6. 如果你判断当前目标不值得修复，只输出一句短结论，不要展开长篇分析。",
+        ]
+        if force_reread:
+            lines.extend(
+                [
+                    "",
+                    "上一次 propose_patch 因 old_string 不匹配失败。",
+                    f"这一次你必须先 read_source_code({current_finding.file_path})，再重新 propose_patch。",
+                ]
+            )
+        lines.extend(["", f"用户原始请求: {text}"])
+        return "\n".join(lines)
 
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
         assert self.workflow_service is not None

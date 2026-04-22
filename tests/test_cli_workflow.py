@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from autopatch_j.cli.app import AutoPatchCLI
+from autopatch_j.core.continuity_judge_service import ContinuityJudgeService
+from autopatch_j.core.patch_engine import PatchDraft
 from autopatch_j.core.models import (
     CodeScope,
     CodeScopeKind,
+    ConversationRoute,
     IntentType,
     PatchDraftData,
     PatchReviewItem,
     PatchReviewStatus,
 )
 from autopatch_j.scanners.base import Finding, ScanResult
+from autopatch_j.validators.java_syntax import SyntaxValidationResult
 
 
 def _make_cli(tmp_path: Path) -> AutoPatchCLI:
@@ -47,6 +51,22 @@ def _review_item(item_id: str, file_path: str) -> PatchReviewItem:
             target_check_id="F1",
             target_snippet="snippet",
         ),
+    )
+
+
+def _patch_draft(file_path: str, finding_id: str) -> PatchDraft:
+    return PatchDraft(
+        file_path=file_path,
+        old_string="old",
+        new_string="new",
+        diff=f"diff-{finding_id}",
+        validation=SyntaxValidationResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+        rationale=f"fix {finding_id}",
+        error_code=None,
+        target_check_id=finding_id,
+        target_snippet="snippet",
     )
 
 
@@ -86,14 +106,14 @@ def test_cli_code_audit_triggers_local_scan_then_agent(tmp_path: Path) -> None:
 
     cli.handle_chat("@User.java 检查代码")
 
-    cli.scope_service.fetch_scope.assert_called_once()
+    assert cli.scope_service.fetch_scope.call_count == 2
     cli.scan_service.fetch_scan_snapshot.assert_called_once()
     cli.renderer.print_tool_start.assert_called_once_with("scan_project", caller="AGENT")
     assert captured["agent_call"] == cli.agent.perform_code_audit
     assert captured["render_no_issue_panel"] is True
 
 
-def test_cli_code_audit_injects_scan_digest_into_prompt(tmp_path: Path) -> None:
+def test_cli_code_audit_targets_single_finding_prompt(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
     assert cli.intent_service is not None
     assert cli.scope_service is not None
@@ -140,7 +160,7 @@ def test_cli_code_audit_injects_scan_digest_into_prompt(tmp_path: Path) -> None:
     cli.handle_chat("@User.java 检查代码")
 
     prompt = str(captured["prompt"])
-    assert "F1: src/main/java/demo/User.java:5" in prompt
+    assert "当前目标: F1" in prompt
     assert "优先根据 F 编号调用 get_finding_detail" in prompt
     assert captured["render_no_issue_panel"] is False
 
@@ -166,9 +186,14 @@ def test_cli_code_explain_skips_scan_and_uses_explain_entry(tmp_path: Path) -> N
     assert captured["agent_call"] == cli.agent.perform_code_explain
 
 
-def test_cli_patch_revise_clears_remaining_tail_before_agent_call(tmp_path: Path) -> None:
+@patch.object(ContinuityJudgeService, "fetch_route", return_value=ConversationRoute.REVIEW_CONTINUE)
+def test_cli_patch_revise_clears_remaining_tail_before_agent_call(
+    _mock_route: MagicMock,
+    tmp_path: Path,
+) -> None:
     cli = _make_cli(tmp_path)
     assert cli.intent_service is not None
+    assert cli.continuity_judge_service is not None
     assert cli.workflow_service is not None
     assert cli.agent is not None
 
@@ -194,8 +219,13 @@ def test_cli_patch_revise_clears_remaining_tail_before_agent_call(tmp_path: Path
     assert captured["agent_call"] == cli.agent.perform_patch_revise
 
 
-def test_cli_review_mixed_feedback_routes_to_patch_revise(tmp_path: Path) -> None:
+@patch.object(ContinuityJudgeService, "fetch_route", return_value=ConversationRoute.REVIEW_CONTINUE)
+def test_cli_review_mixed_feedback_routes_to_patch_revise(
+    _mock_route: MagicMock,
+    tmp_path: Path,
+) -> None:
     cli = _make_cli(tmp_path)
+    assert cli.continuity_judge_service is not None
     assert cli.workflow_service is not None
     assert cli.agent is not None
 
@@ -213,6 +243,167 @@ def test_cli_review_mixed_feedback_routes_to_patch_revise(tmp_path: Path) -> Non
 
     assert captured["agent_call"] == cli.agent.perform_patch_revise
     assert "加一行注释说明原因" in str(captured["prompt"])
+
+
+def test_cli_new_task_in_review_state_resets_review_context(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    assert cli.intent_service is not None
+    assert cli.continuity_judge_service is not None
+    assert cli.scope_service is not None
+    assert cli.scan_service is not None
+    assert cli.workflow_service is not None
+    assert cli.agent is not None
+
+    cli.workflow_service.persist_review_workspace(
+        scope=_scope(),
+        latest_scan_id="scan-1",
+        patch_items=[_review_item("item-1", "src/main/java/demo/User.java")],
+    )
+    cli.agent.messages = [{"role": "user", "content": "old review"}]
+    cli.intent_service.fetch_intent = MagicMock(return_value=IntentType.CODE_AUDIT)
+    cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
+    cli.scan_service.fetch_scan_snapshot = MagicMock(
+        return_value=(
+            "scan-2",
+            ScanResult(
+                engine="semgrep",
+                scope=["src/main/java/demo/User.java"],
+                targets=["src/main/java/demo/User.java"],
+                status="ok",
+                message="ok",
+                findings=[],
+            ),
+        )
+    )
+    cli.renderer.print_info = MagicMock()
+    captured: dict[str, object] = {}
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False: captured.update(
+        {
+            "prompt": prompt,
+            "agent_call": agent_call,
+            "scope_paths": scope_paths,
+            "render_no_issue_panel": render_no_issue_panel,
+        }
+    )
+
+    with patch.object(
+        ContinuityJudgeService,
+        "fetch_route",
+        return_value=ConversationRoute.NEW_TASK,
+    ):
+        cli.handle_chat("@demo 检查代码")
+
+    assert cli.agent.messages == []
+    cli.renderer.print_info.assert_called_once()
+    assert captured["agent_call"] == cli.agent.perform_code_audit
+
+
+def test_cli_code_audit_retries_current_finding_then_continues_remaining(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    assert cli.intent_service is not None
+    assert cli.scope_service is not None
+    assert cli.scan_service is not None
+    assert cli.workflow_service is not None
+    assert cli.agent is not None
+
+    cli.intent_service.fetch_intent = MagicMock(return_value=IntentType.CODE_AUDIT)
+    cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
+    cli.scan_service.fetch_scan_snapshot = MagicMock(
+        return_value=(
+            "scan-1",
+            ScanResult(
+                engine="semgrep",
+                scope=["src/main/java/demo"],
+                targets=["src/main/java/demo"],
+                status="ok",
+                message="ok",
+                findings=[
+                    Finding(
+                        check_id="rule-a",
+                        path="src/main/java/demo/User.java",
+                        start_line=6,
+                        end_line=6,
+                        severity="warning",
+                        message="missing constructor null check",
+                        snippet="this.name = name;",
+                    ),
+                    Finding(
+                        check_id="rule-b",
+                        path="src/main/java/demo/UserService.java",
+                        start_line=5,
+                        end_line=5,
+                        severity="warning",
+                        message="unsafe equals order",
+                        snippet='return user.getName().equals("admin");',
+                    ),
+                ],
+            ),
+        )
+    )
+
+    run_count = {"value": 0}
+
+    def fake_run_agent_request(
+        prompt: str,
+        agent_call,
+        scope_paths=None,
+        render_no_issue_panel: bool = False,
+    ) -> list[dict[str, object]]:
+        run_count["value"] += 1
+        if run_count["value"] == 1:
+            return [
+                {
+                    "role": "tool",
+                    "name": "propose_patch",
+                    "tool_status": "error",
+                    "tool_payload": {
+                        "file_path": "src/main/java/demo/User.java",
+                        "associated_finding_id": "F1",
+                        "error_code": "OLD_STRING_NOT_FOUND",
+                        "error_message": "old string not found",
+                    },
+                    "content": "error",
+                }
+            ]
+        if run_count["value"] == 2:
+            cli.artifacts.persist_pending_patch(_patch_draft("src/main/java/demo/User.java", "F1"))
+            return [
+                {
+                    "role": "tool",
+                    "name": "propose_patch",
+                    "tool_status": "ok",
+                    "tool_payload": {
+                        "file_path": "src/main/java/demo/User.java",
+                        "associated_finding_id": "F1",
+                    },
+                    "content": "ok",
+                }
+            ]
+        cli.artifacts.persist_pending_patch(_patch_draft("src/main/java/demo/UserService.java", "F2"))
+        return [
+            {
+                "role": "tool",
+                "name": "propose_patch",
+                "tool_status": "ok",
+                "tool_payload": {
+                    "file_path": "src/main/java/demo/UserService.java",
+                    "associated_finding_id": "F2",
+                },
+                "content": "ok",
+            }
+        ]
+
+    cli._run_agent_request = fake_run_agent_request
+
+    cli.handle_chat("@demo 检查代码")
+
+    pending = cli.artifacts.fetch_pending_patches()
+    assert run_count["value"] == 3
+    assert len(pending) == 2
+    assert [draft.file_path for draft in pending] == [
+        "src/main/java/demo/UserService.java",
+        "src/main/java/demo/User.java",
+    ]
 
 
 def test_cli_can_initialize_without_prompt_session(tmp_path: Path) -> None:

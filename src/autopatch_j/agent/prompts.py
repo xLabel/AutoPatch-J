@@ -10,6 +10,8 @@ TASK_PROMPTS: dict[IntentType, str] = {
     IntentType.CODE_AUDIT: (
         "当前任务是 code_audit。请围绕已经给定的扫描结果做甄别、取证和补丁提案。"
         "默认不要重新扫描项目，除非调用方明确把 scan_project 开放给你。"
+        "如果调用方已经在用户消息中提供 F 编号摘要，你应优先基于这些 F 编号调用 get_finding_detail，"
+        "不要先做无关的代码讲解，也不要搜索焦点范围之外的符号。"
     ),
     IntentType.CODE_EXPLAIN: (
         "当前任务是 code_explain。你的职责是解释代码，不做扫描，不提出补丁。"

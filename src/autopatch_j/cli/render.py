@@ -27,6 +27,17 @@ class CliRenderer:
     def print_step(self, message: str) -> None:
         self.console.print(f"> [dim]{message}[/dim]")
 
+    def print_tool_start(self, tool_name: str, caller: str) -> None:
+        caller_upper = caller.upper()
+        style = "bold cyan" if caller_upper == "AGENT" else "bold blue"
+        self.console.print(f"\n[{style}]正在执行工具 [{caller_upper}]: {tool_name}...[/]")
+
+    def print_reasoning(self, message: str, end: str = "") -> None:
+        self.console.print(message, end=end, style="dim italic")
+
+    def print_observation(self, message: str) -> None:
+        self.console.print(f"\n{message}\n", style="cyan")
+
     def print_success(self, message: str) -> None:
         # 🚀 视觉加固：前缀与内容颜色统一
         self.console.print(f"[bold green]成功: {message}[/bold green]")

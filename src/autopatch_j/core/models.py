@@ -16,6 +16,12 @@ class IntentType(StrEnum):
     PATCH_REVISE = "patch_revise"
 
 
+class ConversationRoute(StrEnum):
+    NEW_TASK = "new_task"
+    REVIEW_CONTINUE = "review_continue"
+    COMMAND = "command"
+
+
 class WorkspaceStatus(StrEnum):
     IDLE = "idle"
     REVIEWING = "reviewing"
@@ -31,6 +37,18 @@ class PatchReviewStatus(StrEnum):
     PENDING = "pending"
     APPLIED = "applied"
     DISCARDED = "discarded"
+
+
+class AuditFindingStatus(StrEnum):
+    PENDING = "pending"
+    PATCH_READY = "patch_ready"
+    FAILED = "failed"
+
+
+class AuditAttemptOutcome(StrEnum):
+    PATCH_READY = "patch_ready"
+    RETRYABLE_ERROR = "retryable_error"
+    NO_PATCH = "no_patch"
 
 
 @dataclass(slots=True)
@@ -166,6 +184,31 @@ class PatchReviewItem:
 
 
 @dataclass(slots=True)
+class AuditFindingItem:
+    finding_id: str
+    file_path: str
+    check_id: str
+    start_line: int
+    end_line: int
+    message: str
+    snippet: str
+    status: AuditFindingStatus = AuditFindingStatus.PENDING
+    retry_count: int = 0
+    last_error_code: str | None = None
+    last_error_message: str | None = None
+
+    def verify_pending(self) -> bool:
+        return self.status is AuditFindingStatus.PENDING
+
+
+@dataclass(slots=True)
+class AuditAttemptDecision:
+    outcome: AuditAttemptOutcome
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(slots=True)
 class ActiveWorkspace:
     mode: WorkspaceStatus
     scope: CodeScope | None
@@ -205,6 +248,12 @@ class ActiveWorkspace:
         if self.current_patch_index < 0:
             return list(self.patch_items)
         return list(self.patch_items[self.current_patch_index :])
+
+    def fetch_review_progress(self) -> tuple[int, int]:
+        total_count = len(self.patch_items)
+        if self.fetch_current_patch_item() is None or total_count == 0:
+            return 0, total_count
+        return self.current_patch_index + 1, total_count
 
     def verify_has_pending_patch(self) -> bool:
         return self.fetch_current_patch_item() is not None

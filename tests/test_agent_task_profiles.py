@@ -37,6 +37,20 @@ def test_perform_code_explain_uses_read_only_tool_profile(tmp_path: Path) -> Non
     assert _fetch_tool_names(mock_llm) == ["search_symbols", "read_source_code"]
 
 
+def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="审计完成")
+    agent = _build_agent(tmp_path, mock_llm)
+
+    agent.perform_code_audit("@User.java 检查代码")
+
+    assert _fetch_tool_names(mock_llm) == [
+        "get_finding_detail",
+        "read_source_code",
+        "propose_patch",
+    ]
+
+
 def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     mock_llm.chat.return_value = LLMResponse(content="重写完成")

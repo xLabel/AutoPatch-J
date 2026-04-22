@@ -31,6 +31,9 @@ class WorkflowService:
     def fetch_remaining_patch_items(self) -> list[PatchReviewItem]:
         return self.fetch_workspace().fetch_remaining_patch_items()
 
+    def fetch_review_progress(self) -> tuple[int, int]:
+        return self.fetch_workspace().fetch_review_progress()
+
     def verify_has_pending_patch(self) -> bool:
         return self.fetch_workspace().verify_has_pending_patch()
 

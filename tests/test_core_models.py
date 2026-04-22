@@ -72,3 +72,61 @@ def test_fetch_current_patch_item_returns_none_for_out_of_bounds_cursor() -> Non
     )
 
     assert workspace.fetch_current_patch_item() is None
+
+
+def test_fetch_review_progress_uses_absolute_patch_index() -> None:
+    workspace = ActiveWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=None,
+        latest_scan_id="scan-1",
+        patch_items=[
+            PatchReviewItem(
+                item_id="item-1",
+                file_path="src/main/java/demo/User.java",
+                finding_ids=["F1"],
+                status=PatchReviewStatus.APPLIED,
+                draft=PatchDraftData(
+                    file_path="src/main/java/demo/User.java",
+                    old_string="old-1",
+                    new_string="new-1",
+                    diff="diff-1",
+                    validation_status="ok",
+                    validation_message="ok",
+                    validation_errors=[],
+                ),
+            ),
+            PatchReviewItem(
+                item_id="item-2",
+                file_path="src/main/java/demo/UserService.java",
+                finding_ids=["F2"],
+                status=PatchReviewStatus.PENDING,
+                draft=PatchDraftData(
+                    file_path="src/main/java/demo/UserService.java",
+                    old_string="old-2",
+                    new_string="new-2",
+                    diff="diff-2",
+                    validation_status="ok",
+                    validation_message="ok",
+                    validation_errors=[],
+                ),
+            ),
+            PatchReviewItem(
+                item_id="item-3",
+                file_path="src/main/java/demo/AppConfig.java",
+                finding_ids=["F3"],
+                status=PatchReviewStatus.PENDING,
+                draft=PatchDraftData(
+                    file_path="src/main/java/demo/AppConfig.java",
+                    old_string="old-3",
+                    new_string="new-3",
+                    diff="diff-3",
+                    validation_status="ok",
+                    validation_message="ok",
+                    validation_errors=[],
+                ),
+            ),
+        ],
+        current_patch_index=1,
+    )
+
+    assert workspace.fetch_review_progress() == (2, 3)
