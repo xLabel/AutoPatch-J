@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from autopatch_j.paths import get_project_state_dir
+from autopatch_j.config import get_project_state_dir
 from autopatch_j.scanners.base import ScanResult
 from autopatch_j.core.patch_engine import PatchDraft
 
@@ -19,7 +19,7 @@ class ArtifactManager:
     主要处理：扫描结果 (findings) 和 待确认补丁 (pending_patch)。
     """
     repo_root: Path
-    # 🚀 显式声明字段，以便 slots 能够预留空间
+    # 显式声明字段，以便 slots 能够预留空间
     state_dir: Path = field(init=False)
     findings_dir: Path = field(init=False)
     patches_dir: Path = field(init=False)
@@ -67,13 +67,20 @@ class ArtifactManager:
             return result.findings[index]
         return None
 
-    # --- 补丁草案 (Pending Patch) 管理 ---
+    # --- 补丁草案 (Pending Patch) 队列管理 ---
 
     def persist_pending_patch(self, draft: PatchDraft) -> None:
         """
-        保存当前的待确认补丁。
+        将补丁草案插入到队列首部 (LIFO栈模式)。
+        这样当用户要求修改当前补丁时，新生成的补丁能立即出现在最前面。
         """
-        target_path = self.patches_dir / "current_pending.json"
+        target_path = self.patches_dir / "pending_queue.json"
+        queue = []
+        if target_path.exists():
+            try:
+                queue = json.loads(target_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, KeyError):
+                pass
         
         data = {
             "file_path": draft.file_path,
@@ -82,6 +89,7 @@ class ArtifactManager:
             "diff": draft.diff,
             "status": draft.status,
             "message": draft.message,
+            "rationale": draft.rationale,
             "target_check_id": draft.target_check_id,
             "target_snippet": draft.target_snippet,
             "validation": {
@@ -90,44 +98,111 @@ class ArtifactManager:
                 "errors": draft.validation.errors
             }
         }
-        target_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        # 🚀 栈模式：新补丁永远在最上面
+        queue.insert(0, data)
+        target_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def fetch_pending_patch(self) -> PatchDraft | None:
-        """加载当前活跃的 Pending Patch"""
-        target_path = self.patches_dir / "current_pending.json"
+    def fetch_pending_patches(self) -> list[PatchDraft]:
+        """加载队列中所有活跃的 Pending Patch"""
+        target_path = self.patches_dir / "pending_queue.json"
         if not target_path.exists():
-            return None
+            return []
 
         try:
-            data = json.loads(target_path.read_text(encoding="utf-8"))
+            queue_data = json.loads(target_path.read_text(encoding="utf-8"))
             from autopatch_j.validators.java_syntax import SyntaxValidationResult
             
-            val_data = data.get("validation", {})
-            validation = SyntaxValidationResult(
-                status=val_data.get("status", "unknown"),
-                message=val_data.get("message", ""),
-                errors=val_data.get("errors", [])
-            )
-            
-            return PatchDraft(
-                file_path=data["file_path"],
-                old_string=data["old_string"],
-                new_string=data["new_string"],
-                diff=data["diff"],
-                validation=validation,
-                status=data["status"],
-                message=data["message"],
-                target_check_id=data.get("target_check_id"),
-                target_snippet=data.get("target_snippet")
-            )
+            patches = []
+            for data in queue_data:
+                val_data = data.get("validation", {})
+                validation = SyntaxValidationResult(
+                    status=val_data.get("status", "unknown"),
+                    message=val_data.get("message", ""),
+                    errors=val_data.get("errors", [])
+                )
+                patches.append(PatchDraft(
+                    file_path=data["file_path"],
+                    old_string=data["old_string"],
+                    new_string=data["new_string"],
+                    diff=data["diff"],
+                    validation=validation,
+                    status=data["status"],
+                    message=data["message"],
+                    rationale=data.get("rationale"),
+                    target_check_id=data.get("target_check_id"),
+                    target_snippet=data.get("target_snippet")
+                ))
+            return patches
         except (json.JSONDecodeError, KeyError):
-            return None
+            return []
+
+    def fetch_pending_patch(self) -> PatchDraft | None:
+        """获取队列首部的补丁（向后兼容）"""
+        queue = self.fetch_pending_patches()
+        return queue[0] if queue else None
+
+    def pop_pending_patch(self) -> None:
+        """移除队列首部的补丁"""
+        target_path = self.patches_dir / "pending_queue.json"
+        if not target_path.exists():
+            return
+        try:
+            queue = json.loads(target_path.read_text(encoding="utf-8"))
+            if queue:
+                queue.pop(0)
+                target_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    def discard_followup_patches(self) -> list[PatchDraft]:
+        """
+        丢弃当前补丁之后的所有后续补丁。
+        返回实际被丢弃的补丁列表，顺序与原队列中的后续顺序一致。
+        """
+        target_path = self.patches_dir / "pending_queue.json"
+        if not target_path.exists():
+            return []
+
+        try:
+            queue = json.loads(target_path.read_text(encoding="utf-8"))
+            if len(queue) <= 1:
+                return []
+            from autopatch_j.validators.java_syntax import SyntaxValidationResult
+
+            discarded: list[PatchDraft] = []
+            for data in queue[1:]:
+                val_data = data.get("validation", {})
+                validation = SyntaxValidationResult(
+                    status=val_data.get("status", "unknown"),
+                    message=val_data.get("message", ""),
+                    errors=val_data.get("errors", []),
+                )
+                discarded.append(PatchDraft(
+                    file_path=data["file_path"],
+                    old_string=data["old_string"],
+                    new_string=data["new_string"],
+                    diff=data["diff"],
+                    validation=validation,
+                    status=data["status"],
+                    message=data["message"],
+                    rationale=data.get("rationale"),
+                    target_check_id=data.get("target_check_id"),
+                    target_snippet=data.get("target_snippet"),
+                ))
+            queue = queue[:1]
+            target_path.write_text(json.dumps(queue, indent=2, ensure_ascii=False), encoding="utf-8")
+            return discarded
+        except (json.JSONDecodeError, KeyError):
+            return []
 
     def clear_pending_patch(self) -> None:
-        """清空当前的 Pending Patch (例如在 Apply 或 Discard 之后)"""
-        target_path = self.patches_dir / "current_pending.json"
+        """清空所有的 Pending Patch"""
+        target_path = self.patches_dir / "pending_queue.json"
         if target_path.exists():
             target_path.unlink()
+        legacy_path = self.patches_dir / "current_pending.json"
+        if legacy_path.exists():
+            legacy_path.unlink()
 
     # --- 辅助方法 ---
 

@@ -41,9 +41,12 @@ class AutoPatchCompleter(Completer):
                 query = cmd_match.group(0).lower()
                 for cmd, desc in self.commands.items():
                     if cmd.startswith(query):
+                        # '/' 已经在输入框里，补全时只替换其后的命令主体，避免出现 //init
+                        command_body = cmd[1:]
+                        typed_body = query[1:]
                         yield Completion(
-                            cmd,
-                            start_position=-len(query),
+                            command_body,
+                            start_position=-len(typed_body),
                             display=cmd,
                             display_meta=desc
                         )

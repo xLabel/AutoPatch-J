@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from autopatch_j.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
-    from autopatch_j.core.service_context import ServiceContext
+    from autopatch_j.agent.agent import AutoPatchAgent
 
 
 class PatchProposalTool(Tool):
@@ -41,6 +41,10 @@ class PatchProposalTool(Tool):
         engine = self.context.patch_engine
         am = self.context.artifacts
 
+        if not self.context.is_path_in_focus(file_path):
+            allowed = ", ".join(self.context.focus_paths)
+            return ToolResult(status="error", message=f"焦点约束阻止越界修复：{file_path} 不在当前允许范围内。允许路径：{allowed}")
+
         target_rule = None
         target_snippet = None
 
@@ -51,15 +55,16 @@ class PatchProposalTool(Tool):
                 idx = int(match.group(1)) - 1
                 scan_files = sorted(am.findings_dir.glob("scan-*.json"), reverse=True)
                 if scan_files:
-                    finding = am.get_finding_by_index(scan_files[0].stem, idx)
+                    finding = am.fetch_finding_by_index(scan_files[0].stem, idx)
                     if finding:
                         target_rule = finding.check_id
                         target_snippet = finding.snippet
 
-        draft = engine.create_draft(
+        draft = engine.perform_draft(
             file_path, 
             old_string, 
             new_string,
+            rationale=rationale,
             target_check_id=target_rule,
             target_snippet=target_snippet
         )
@@ -67,18 +72,17 @@ class PatchProposalTool(Tool):
         if draft.status == "error":
             return ToolResult(status="error", message=f"补丁提案生成失败：{draft.message}")
 
-        # 持久化草案
-        am.save_pending_patch(draft)
+        # 持久化草案到队列
+        am.persist_pending_patch(draft)
 
-        msg = f"补丁提案已成功生成并挂起。目标文件：{file_path}。\n"
+        msg = f"补丁提案已成功生成并加入队列。目标文件：{file_path}。\n"
         msg += f"语法校验：{draft.validation.status}。\n"
         msg += f"差异预览：\n{draft.diff}\n\n"
-        
+
         if draft.status == "invalid":
             msg += f"❌ 警告：补丁导致语法错误（{draft.validation.message}），请及时修正方案。"
         else:
-            msg += "💡 提示：此补丁正在等待人类审核。你可以告知用户查看预览并决定 apply 或 discard。"
-
+            msg += "提示：此补丁正在排队等待人类审核。"
         return ToolResult(
             status=draft.status,
             message=msg,
