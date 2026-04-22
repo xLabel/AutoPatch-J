@@ -4,6 +4,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.validators.java_syntax import SyntaxValidationResult
+
 
 class IntentType(StrEnum):
     CODE_AUDIT = "code_audit"
@@ -68,6 +71,21 @@ class PatchDraftData:
     target_check_id: str | None = None
     target_snippet: str | None = None
 
+    @classmethod
+    def fetch_from_patch_draft(cls, draft: PatchDraft) -> PatchDraftData:
+        return cls(
+            file_path=draft.file_path,
+            old_string=draft.old_string,
+            new_string=draft.new_string,
+            diff=draft.diff,
+            validation_status=draft.validation.status,
+            validation_message=draft.validation.message,
+            validation_errors=list(draft.validation.errors),
+            rationale=draft.rationale,
+            target_check_id=draft.target_check_id,
+            target_snippet=draft.target_snippet,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "file_path": self.file_path,
@@ -97,6 +115,24 @@ class PatchDraftData:
             target_snippet=str(data["target_snippet"]) if data.get("target_snippet") is not None else None,
         )
 
+    def fetch_patch_draft(self) -> PatchDraft:
+        return PatchDraft(
+            file_path=self.file_path,
+            old_string=self.old_string,
+            new_string=self.new_string,
+            diff=self.diff,
+            validation=SyntaxValidationResult(
+                status=self.validation_status,
+                message=self.validation_message,
+                errors=list(self.validation_errors),
+            ),
+            status="ok" if self.validation_status in {"ok", "skipped", "unavailable"} else "invalid",
+            message=self.validation_message,
+            rationale=self.rationale,
+            target_check_id=self.target_check_id,
+            target_snippet=self.target_snippet,
+        )
+
 
 @dataclass(slots=True)
 class PatchReviewItem:
@@ -105,6 +141,9 @@ class PatchReviewItem:
     finding_ids: list[str]
     status: PatchReviewStatus
     draft: PatchDraftData
+
+    def verify_pending(self) -> bool:
+        return self.status is PatchReviewStatus.PENDING
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -155,10 +194,17 @@ class ActiveWorkspace:
             current_patch_index=int(data.get("current_patch_index", 0)),
         )
 
-    def get_current_patch_item(self) -> PatchReviewItem | None:
+    def fetch_current_patch_item(self) -> PatchReviewItem | None:
         if not self.patch_items:
             return None
         if self.current_patch_index < 0 or self.current_patch_index >= len(self.patch_items):
             return None
         return self.patch_items[self.current_patch_index]
 
+    def fetch_remaining_patch_items(self) -> list[PatchReviewItem]:
+        if self.current_patch_index < 0:
+            return list(self.patch_items)
+        return list(self.patch_items[self.current_patch_index :])
+
+    def verify_has_pending_patch(self) -> bool:
+        return self.fetch_current_patch_item() is not None

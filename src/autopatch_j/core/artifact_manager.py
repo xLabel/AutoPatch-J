@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from autopatch_j.config import get_project_state_dir
-from autopatch_j.scanners.base import ScanResult
+from autopatch_j.core.models import ActiveWorkspace
 from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.scanners.base import Finding, ScanResult
 
 
 @dataclass(slots=True)
@@ -23,11 +24,13 @@ class ArtifactManager:
     state_dir: Path = field(init=False)
     findings_dir: Path = field(init=False)
     patches_dir: Path = field(init=False)
+    workspace_file: Path = field(init=False)
 
     def __post_init__(self) -> None:
         self.state_dir = get_project_state_dir(self.repo_root)
         self.findings_dir = self.state_dir / "findings"
         self.patches_dir = self.state_dir / "patches"
+        self.workspace_file = self.state_dir / "workspace.json"
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -57,6 +60,25 @@ class ArtifactManager:
             return ScanResult.from_dict(data)
         except (json.JSONDecodeError, KeyError):
             return None
+
+    def persist_workspace(self, workspace: ActiveWorkspace) -> None:
+        self.workspace_file.write_text(
+            json.dumps(workspace.to_dict(), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    def fetch_workspace(self) -> ActiveWorkspace | None:
+        if not self.workspace_file.exists():
+            return None
+        try:
+            data = json.loads(self.workspace_file.read_text(encoding="utf-8"))
+            return ActiveWorkspace.from_dict(data)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            return None
+
+    def clear_workspace(self) -> None:
+        if self.workspace_file.exists():
+            self.workspace_file.unlink()
 
     def fetch_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:
         """

@@ -56,13 +56,13 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
         "src/main/java/demo/User.java",
         "src/main/java/demo/UserService.java",
     ]
-    current = restored.get_current_patch_item()
+    current = restored.fetch_current_patch_item()
     assert current is not None
     assert current.status is PatchReviewStatus.PENDING
     assert current.draft.target_check_id == "F1"
 
 
-def test_get_current_patch_item_returns_none_for_out_of_bounds_cursor() -> None:
+def test_fetch_current_patch_item_returns_none_for_out_of_bounds_cursor() -> None:
     workspace = ActiveWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=None,
@@ -71,4 +71,4 @@ def test_get_current_patch_item_returns_none_for_out_of_bounds_cursor() -> None:
         current_patch_index=2,
     )
 
-    assert workspace.get_current_patch_item() is None
+    assert workspace.fetch_current_patch_item() is None
