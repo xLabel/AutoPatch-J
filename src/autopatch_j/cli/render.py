@@ -3,10 +3,16 @@ from __future__ import annotations
 from typing import Any
 from rich.console import Console, Group
 from rich.panel import Panel
-from rich.syntax import Syntax
 from rich.text import Text
 from rich.table import Table
 from rich.box import ROUNDED
+
+SYSTEM_STYLE = "#4F8CFF"
+DECISION_STYLE = "#EAB308"
+SUCCESS_STYLE = "#22C55E"
+ERROR_STYLE = "#EF4444"
+MUTED_STYLE = "#94A3B8"
+BODY_STYLE = "#E5E7EB"
 
 
 class CliRenderer:
@@ -21,65 +27,60 @@ class CliRenderer:
     def print(self, *args, **kwargs) -> None:
         self.console.print(*args, **kwargs)
 
-    def print_panel(self, content: Any, title: str | None = None, style: str = "cyan") -> None:
+    def print_panel(self, content: Any, title: str | None = None, style: str = SYSTEM_STYLE) -> None:
         self.console.print(Panel(content, title=title, border_style=style, box=ROUNDED))
 
     def print_step(self, message: str) -> None:
-        self.console.print(f"> [dim]{message}[/dim]")
+        self.console.print(f"> [{MUTED_STYLE}]{message}[/]")
 
     def print_tool_start(self, tool_name: str, caller: str) -> None:
         caller_upper = caller.upper()
-        style = "bold cyan" if caller_upper == "AGENT" else "bold blue"
-        self.console.print(f"\n[{style}]正在执行工具 [{caller_upper}]: {tool_name}...[/]")
+        style = f"bold {SYSTEM_STYLE}" if caller_upper == "AGENT" else f"bold {MUTED_STYLE}"
+        self.console.print(f"\n[{style}]正在执行工具[{caller_upper}]: {tool_name}...[/]")
 
     def print_reasoning(self, message: str, end: str = "") -> None:
-        self.console.print(message, end=end, style="dim italic")
+        self.console.print(message, end=end, style=f"italic {MUTED_STYLE}")
 
     def print_observation(self, message: str) -> None:
-        self.console.print(f"\n{message}\n", style="cyan")
+        self.console.print(f"\n{message}\n", style=BODY_STYLE)
 
     def print_success(self, message: str) -> None:
-        # 🚀 视觉加固：前缀与内容颜色统一
-        self.console.print(f"[bold green]成功: {message}[/bold green]")
+        self.console.print(f"[bold {SUCCESS_STYLE}]成功: {message}[/]")
 
     def print_error(self, message: str) -> None:
-        # 🚀 视觉加固：前缀与内容颜色统一
-        self.console.print(f"[bold red]错误: {message}[/bold red]")
+        self.console.print(f"[bold {ERROR_STYLE}]错误: {message}[/]")
 
     def print_info(self, message: str) -> None:
-        # 🚀 视觉加固：前缀与内容颜色统一
-        self.console.print(f"[bold cyan]提示: {message}[/bold cyan]")
+        self.console.print(f"[bold {MUTED_STYLE}]提示: {message}[/]")
 
     def print_diff(self, diff: str, title: str = "预览") -> None:
         """渲染带语法高亮的补丁差异"""
         if not diff.strip():
             return
 
-        # 🚀 极致视觉对齐：放弃自带固定色差的主题，改用物理解析
-        # 确保 "添加行" 与 "删除行" 的颜色与底层统计面板的 "green" / "red" 100% 绝对一致
         diff_text = Text()
         for line in diff.splitlines(keepends=True):
             if line.startswith("+++") or line.startswith("---"):
                 diff_text.append(line, style="bold")
             elif line.startswith("+"):
-                diff_text.append(line, style="green")
+                diff_text.append(line, style=SUCCESS_STYLE)
             elif line.startswith("-"):
-                diff_text.append(line, style="red")
+                diff_text.append(line, style=ERROR_STYLE)
             elif line.startswith("@@"):
                 import re
                 match = re.match(r'(@@\s+)(-[0-9,]+)(\s+)(\+[0-9,]+)(\s+@@.*)', line, re.DOTALL)
                 if match:
-                    diff_text.append(match.group(1), style="cyan")
-                    diff_text.append(match.group(2), style="red")
-                    diff_text.append(match.group(3), style="cyan")
-                    diff_text.append(match.group(4), style="green")
-                    diff_text.append(match.group(5), style="cyan")
+                    diff_text.append(match.group(1), style=SYSTEM_STYLE)
+                    diff_text.append(match.group(2), style=ERROR_STYLE)
+                    diff_text.append(match.group(3), style=SYSTEM_STYLE)
+                    diff_text.append(match.group(4), style=SUCCESS_STYLE)
+                    diff_text.append(match.group(5), style=SYSTEM_STYLE)
                 else:
-                    diff_text.append(line, style="cyan")
+                    diff_text.append(line, style=SYSTEM_STYLE)
             else:
                 diff_text.append(line)
 
-        self.print_panel(diff_text, title=title, style="yellow")
+        self.print_panel(diff_text, title=title, style=DECISION_STYLE)
 
     def print_action_panel(self, file_path: str, diff: str, validation: str, rationale: str, current_idx: int = 1, total_count: int = 1) -> None:
         """展示补丁审核决策面板"""
@@ -87,11 +88,15 @@ class CliRenderer:
         add_lines = diff.count("\n+") - diff.count("\n+++")
         del_lines = diff.count("\n-") - diff.count("\n---")
         
-        # 🚀 视觉对齐：统计信息使用鲜明的绿红配色
         stats = Text.assemble(
-            ("文件: ", "dim"), (file_path, "bold cyan"),
-            ("  统计: ", "dim"), (f"+{add_lines}行", "green"), (" ", ""), (f"-{del_lines}行", "red"),
-            ("  校验: ", "dim"), (validation, "green" if validation == "ok" else "yellow")
+            ("文件: ", MUTED_STYLE),
+            (file_path, f"bold {SYSTEM_STYLE}"),
+            ("  统计: ", MUTED_STYLE),
+            (f"+{add_lines}行", SUCCESS_STYLE),
+            (" ", ""),
+            (f"-{del_lines}行", ERROR_STYLE),
+            ("  校验: ", MUTED_STYLE),
+            (validation, SUCCESS_STYLE if validation == "ok" else DECISION_STYLE),
         )
 
         rationale_text = Text(rationale, style="italic")
@@ -100,12 +105,12 @@ class CliRenderer:
         header = Text.assemble(
             "\n", stats, "\n",
             ("意图: ", "bold"), rationale_text, "\n",
-            ("─" * 40, "dim"), "\n"
+            ("─" * 40, MUTED_STYLE), "\n"
         )
         
         # 组装操作指南表格
         guide = Table.grid(padding=(0, 1))
-        guide.add_column(style="bold yellow")
+        guide.add_column(style=f"bold {DECISION_STYLE}")
         guide.add_column()
         guide.add_row("apply", "  > 应用此补丁并执行三级验证")
         guide.add_row("discard", "  > 丢弃此草案并进入下一个")
@@ -118,35 +123,34 @@ class CliRenderer:
             Text("\n")
         )
 
-        # 🚀 视觉对齐：保持黄色主基调
         title = f"补丁待审核 (PENDING) [{current_idx}/{total_count}]" if total_count > 1 else "补丁待审核 (PENDING)"
-        self.print_panel(content, title=title, style="yellow")
+        self.print_panel(content, title=title, style=DECISION_STYLE)
 
     def print_no_issue_panel(self, scope_paths: list[str], scanner_summary: str, llm_summary: str) -> None:
         """展示‘未发现问题’的固定三段式结论卡片"""
-        scope_header = Text("检查范围", style="dim")
+        scope_header = Text("检查范围", style=MUTED_STYLE)
         scope_body = Text()
         for i, path in enumerate(scope_paths):
-            scope_body.append(path, style="bold cyan")
+            scope_body.append(path, style=f"bold {SYSTEM_STYLE}")
             if i < len(scope_paths) - 1:
                 scope_body.append("\n")
         scanner = Text.assemble(
-            ("静态扫描器结论: ", "dim"),
-            (scanner_summary, "green"),
+            ("静态扫描器结论: ", MUTED_STYLE),
+            (scanner_summary, SUCCESS_STYLE),
         )
         llm = Text.assemble(
-            ("LLM 复核结论: ", "dim"),
-            (llm_summary, "green"),
+            ("LLM 复核结论: ", MUTED_STYLE),
+            (llm_summary, SUCCESS_STYLE),
         )
 
         content = Group(
             Text("\n"),
             scope_header,
             scope_body,
-            Text("─" * 56, style="dim"),
+            Text("─" * 56, style=MUTED_STYLE),
             scanner,
-            Text("─" * 56, style="dim"),
+            Text("─" * 56, style=MUTED_STYLE),
             llm,
             Text("\n"),
         )
-        self.print_panel(content, title="检查结论", style="green")
+        self.print_panel(content, title="检查结论", style=SUCCESS_STYLE)

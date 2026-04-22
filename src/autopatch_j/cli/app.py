@@ -15,7 +15,12 @@ from prompt_toolkit.styles import Style
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.agent.llm_client import build_default_llm_client
 from autopatch_j.cli.completer import AutoPatchCompleter
-from autopatch_j.cli.render import CliRenderer
+from autopatch_j.cli.render import (
+    DECISION_STYLE,
+    MUTED_STYLE,
+    SYSTEM_STYLE,
+    CliRenderer,
+)
 from autopatch_j.config import GlobalConfig, discover_repo_root, get_project_state_dir
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.audit_backlog_service import AuditBacklogService
@@ -211,12 +216,14 @@ class AutoPatchCLI:
         self.renderer.print_panel(
             "AutoPatch-J: Java 安全与正确性修复智能体\n输入 /help 查看命令，使用 @ 符号绑定上下文。",
             title="欢迎使用",
-            style="cyan",
+            style=SYSTEM_STYLE,
         )
         if not self.repo_root:
             self.renderer.print_info("未检测到 Java 项目。请进入项目目录并执行 /init。")
         else:
-            self.renderer.print(f"当前项目: [bold cyan]{self.repo_root}[/bold cyan]")
+            self.renderer.print(
+                f"[{MUTED_STYLE}]当前项目:[/] [bold {SYSTEM_STYLE}]{self.repo_root}[/]"
+            )
 
         while True:
             try:
@@ -236,7 +243,7 @@ class AutoPatchCLI:
                         current_idx=current_idx,
                         total_count=total_count,
                     )
-                    prompt_prefix = "<style fg='yellow' font_weight='bold'>PENDING</style> autopatch-j"
+                    prompt_prefix = f"<style fg='{DECISION_STYLE}' font_weight='bold'>PENDING</style> autopatch-j"
 
                 user_input = self.prompt_session.prompt(HTML(f"{prompt_prefix}> ")).strip()
                 if not user_input:
@@ -805,8 +812,8 @@ class AutoPatchCLI:
     def handle_help(self) -> None:
         from rich.table import Table
 
-        sys_table = Table(show_header=True, header_style="bold cyan", box=None)
-        sys_table.add_column("系统命令", style="cyan", width=15)
+        sys_table = Table(show_header=True, header_style=f"bold {SYSTEM_STYLE}", box=None)
+        sys_table.add_column("系统命令", style=SYSTEM_STYLE, width=15)
         sys_table.add_column("功能描述")
         sys_table.add_row("/init", "初始化当前目录为 Java 项目并建立索引")
         sys_table.add_row("/status", "查看当前项目状态与索引统计")
@@ -815,14 +822,14 @@ class AutoPatchCLI:
         sys_table.add_row("/help", "显示此指令看板")
         sys_table.add_row("/quit", "安全退出程序")
 
-        act_table = Table(show_header=True, header_style="bold yellow", box=None)
-        act_table.add_column("交互关键字", style="yellow", width=15)
+        act_table = Table(show_header=True, header_style=f"bold {DECISION_STYLE}", box=None)
+        act_table.add_column("交互关键字", style=DECISION_STYLE, width=15)
         act_table.add_column("用法说明")
         act_table.add_row("@符号", "触发类/方法/路径的实时补全")
         act_table.add_row("apply", "应用当前补丁预览")
         act_table.add_row("discard", "丢弃当前补丁草案")
 
-        self.renderer.print_panel("AutoPatch-J 指令中心", style="cyan")
+        self.renderer.print_panel("AutoPatch-J 指令中心", style=SYSTEM_STYLE)
         self.renderer.console.print(sys_table)
         self.renderer.print("\n[bold]交互指引[/bold]")
         self.renderer.console.print(act_table)
@@ -832,8 +839,8 @@ class AutoPatchCLI:
 
         from autopatch_j.scanners import ALL_SCANNERS
 
-        table = Table(title="Java 静态扫描器看板", show_header=True, header_style="bold magenta")
-        table.add_column("名称", style="cyan", width=12)
+        table = Table(title="Java 静态扫描器看板", show_header=True, header_style=f"bold {SYSTEM_STYLE}")
+        table.add_column("名称", style=SYSTEM_STYLE, width=12)
         table.add_column("状态", width=25)
         table.add_column("版本", justify="center")
         table.add_column("功能简述")
@@ -873,7 +880,7 @@ class AutoPatchCLI:
         from rich.table import Table
 
         table = Table(box=None, show_header=False, padding=(0, 2))
-        table.add_column("Key", style="cyan", width=15)
+        table.add_column("Key", style=SYSTEM_STYLE, width=15)
         table.add_column("Value")
 
         table.add_row("[bold]项目根目录[/]", str(self.repo_root))
@@ -903,7 +910,7 @@ class AutoPatchCLI:
         )
         table.add_row("[bold]符号索引[/]", stats_str)
 
-        self.renderer.print_panel(table, title="[bold] AutoPatch-J 系统驾驶舱 [/]", style="blue")
+        self.renderer.print_panel(table, title="[bold] AutoPatch-J 系统驾驶舱 [/]", style=SYSTEM_STYLE)
 
     def handle_reindex(self) -> None:
         if not self.indexer:
