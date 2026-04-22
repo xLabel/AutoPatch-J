@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from autopatch_j.core.finding_snippet_service import FindingSnippetService
 from autopatch_j.tools.base import Tool, ToolResult
 
 if TYPE_CHECKING:
@@ -58,7 +60,12 @@ class PatchProposalTool(Tool):
                     finding = am.fetch_finding_by_index(scan_files[0].stem, idx)
                     if finding:
                         target_rule = finding.check_id
-                        target_snippet = finding.snippet
+                        target_snippet = FindingSnippetService(self.context.repo_root).fetch_resolved_snippet(
+                            file_path=finding.path,
+                            start_line=finding.start_line,
+                            end_line=finding.end_line,
+                            fallback_snippet=finding.snippet,
+                        )
 
         draft = engine.perform_draft(
             file_path, 

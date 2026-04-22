@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Iterator
 
 from autopatch_j.config import GlobalConfig, get_project_state_dir, SEMGREP_RULE_RELATIVE_PATH
+from autopatch_j.core.finding_snippet_service import FindingSnippetService
 from autopatch_j.scanners.base import Finding, ScannerMeta, ScannerName, ScanResult
 
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
@@ -80,7 +81,12 @@ class SemgrepScanner:
             )
 
         payload = json.loads(completed.stdout or "{}")
-        return normalize_semgrep_payload(payload, scope=list(scope), targets=targets)
+        return normalize_semgrep_payload(
+            payload,
+            repo_root=repo_root,
+            scope=list(scope),
+            targets=targets,
+        )
 
     def resolve_binary(self, repo_root: Path | None = None) -> str | None:
         resolved = self.resolve_binary_with_source(repo_root)
@@ -301,11 +307,13 @@ def select_targets(repo_root: Path, scope: list[str]) -> list[str]:
 
 def normalize_semgrep_payload(
     payload: dict[str, object],
+    repo_root: Path,
     scope: list[str],
     targets: list[str],
 ) -> ScanResult:
     raw_results = payload.get("results", [])
     findings: list[Finding] = []
+    snippet_service = FindingSnippetService(repo_root)
 
     for item in raw_results:
         if not isinstance(item, dict):
@@ -315,16 +323,26 @@ def normalize_semgrep_payload(
             extra = {}
         severity = str(extra.get("severity", "unknown")).lower()
 
+        finding_path = str(item.get("path", "")).replace("\\", "/")
+        start_line = int(_nested_number(item, "start", "line"))
+        end_line = int(_nested_number(item, "end", "line"))
+        fallback_snippet = str(extra.get("lines", "")).strip()
+
         findings.append(
             Finding(
                 check_id=normalize_check_id(str(item.get("check_id", ""))),
-                path=str(item.get("path", "")),
-                start_line=int(_nested_number(item, "start", "line")),
-                end_line=int(_nested_number(item, "end", "line")),
+                path=finding_path,
+                start_line=start_line,
+                end_line=end_line,
                 severity=severity,
                 message=str(extra.get("message", "")),
                 rule=extract_rule(extra),
-                snippet=str(extra.get("lines", "")).strip(),
+                snippet=snippet_service.fetch_resolved_snippet(
+                    file_path=finding_path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    fallback_snippet=fallback_snippet,
+                ),
             )
         )
 
