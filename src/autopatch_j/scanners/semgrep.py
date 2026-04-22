@@ -9,13 +9,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from autopatch_j.config import GlobalConfig, SEMGREP_RULE_RELATIVE_PATH
-from autopatch_j.paths import project_state_dir, user_state_dir
+from autopatch_j.config import GlobalConfig, get_project_state_dir, SEMGREP_RULE_RELATIVE_PATH
 from autopatch_j.scanners.base import Finding, ScannerMeta, ScannerName, ScanResult
 
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
-SEMGREP_INSTALL_LOCK_TIMEOUT_SECONDS = 600
-DEFAULT_SEMGREP_RULE_PATH = Path("resources") / "semgrep" / "rules" / "java.yml"
 
 
 class SemgrepScanner:
@@ -43,7 +40,6 @@ class SemgrepScanner:
                 targets=[],
                 status="skipped",
                 message="没有选中可扫描的 Java 文件或目录。",
-                summary={"total": 0},
                 findings=[],
             )
 
@@ -57,7 +53,7 @@ class SemgrepScanner:
                 command,
                 cwd=repo_root,
                 capture_output=True,
-                text=True,
+                encoding="utf-8", 
                 check=False,
                 env=build_semgrep_subprocess_env(repo_root),
                 timeout=GlobalConfig.scanner_timeout
@@ -69,7 +65,6 @@ class SemgrepScanner:
                 targets=targets,
                 status="error",
                 message=f"扫描执行超时（上限 {GlobalConfig.scanner_timeout}s），请尝试缩小扫描范围。",
-                summary={"total": 0},
                 findings=[],
             )
 
@@ -81,7 +76,6 @@ class SemgrepScanner:
                 targets=targets,
                 status="error",
                 message=stderr,
-                summary={"total": 0},
                 findings=[],
             )
 
@@ -93,14 +87,12 @@ class SemgrepScanner:
         return resolved[0] if resolved is not None else None
 
     def resolve_binary_with_source(self, repo_root: Path | None = None) -> tuple[str, str] | None:
-        del repo_root
         user_runtime = resolve_user_runtime_binary()
         if user_runtime is not None:
             return user_runtime, "AutoPatch-J 管理的 Semgrep"
         return None
 
     def get_meta(self, repo_root: Path | None = None) -> ScannerMeta:
-        """获取 Semgrep 的详细状态元数据"""
         resolved = self.resolve_binary_with_source(repo_root)
         if resolved is None:
             return ScannerMeta(
@@ -121,8 +113,7 @@ class SemgrepScanner:
 
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
         message = (
-            "AutoPatch-J 管理的 Semgrep 缺失或不可执行。预期路径："
-            f"{user_runtime_binary_path()}。请执行 /init 初始化 scanner runtime。"
+            "AutoPatch-J 管理的 Semgrep 缺失或不可执行。请执行 /init 初始化 scanner runtime。"
         )
         return ScanResult(
             engine="semgrep",
@@ -130,7 +121,6 @@ class SemgrepScanner:
             targets=targets,
             status="error",
             message=message,
-            summary={"total": 0},
             findings=[],
         )
 
@@ -169,7 +159,8 @@ def user_runtime_binary_path() -> Path:
 
 
 def semgrep_runtime_dir() -> Path:
-    return user_state_dir() / "scanners" / "semgrep"
+    home = Path.home()
+    return home / ".autopatch-j" / "scanners" / "semgrep"
 
 
 def semgrep_install_lock_path() -> Path:
@@ -187,7 +178,7 @@ def semgrep_venv_bin_dir() -> Path:
 
 
 def semgrep_rules_path() -> Path:
-    return Path(__file__).resolve().parent / DEFAULT_SEMGREP_RULE_PATH
+    return Path(__file__).resolve().parent / "resources" / "semgrep" / "rules" / "java.yml"
 
 
 def install_managed_semgrep_runtime(
@@ -205,11 +196,14 @@ def install_managed_semgrep_runtime(
         subprocess.run(
             [python_executable, "-m", "venv", str(semgrep_venv_dir())],
             check=True,
+            capture_output=True
         )
+        
         pip_executable = semgrep_venv_bin_dir() / ("pip.exe" if os.name == "nt" else "pip")
         subprocess.run(
-            [str(pip_executable), "install", f"semgrep=={version}"],
+            [str(pip_executable), "install", "--quiet", f"semgrep=={version}"],
             check=True,
+            capture_output=True
         )
 
     if resolve_user_runtime_binary() is None:
@@ -222,7 +216,7 @@ def install_managed_semgrep_runtime(
 
 @contextmanager
 def semgrep_install_lock(
-    timeout_seconds: int = SEMGREP_INSTALL_LOCK_TIMEOUT_SECONDS,
+    timeout_seconds: int = 600,
 ) -> Iterator[None]:
     lock_path = semgrep_install_lock_path()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -256,13 +250,15 @@ def semgrep_binary_name() -> str:
 
 def build_semgrep_subprocess_env(repo_root: Path) -> dict[str, str]:
     env = os.environ.copy()
-    runtime_root = project_state_dir(repo_root) / "runtime" / "semgrep"
+    runtime_root = get_project_state_dir(repo_root) / "runtime" / "semgrep"
     config_home = runtime_root / "config"
     cache_home = runtime_root / "cache"
     user_data_dir = config_home / ".semgrep"
     config_home.mkdir(parents=True, exist_ok=True)
     cache_home.mkdir(parents=True, exist_ok=True)
     user_data_dir.mkdir(parents=True, exist_ok=True)
+
+    env["PYTHONUTF8"] = "1"
 
     env.setdefault("XDG_CONFIG_HOME", str(config_home))
     env.setdefault("XDG_CACHE_HOME", str(cache_home))
@@ -310,7 +306,6 @@ def normalize_semgrep_payload(
 ) -> ScanResult:
     raw_results = payload.get("results", [])
     findings: list[Finding] = []
-    severity_counts: dict[str, int] = {}
 
     for item in raw_results:
         if not isinstance(item, dict):
@@ -319,7 +314,7 @@ def normalize_semgrep_payload(
         if not isinstance(extra, dict):
             extra = {}
         severity = str(extra.get("severity", "unknown")).lower()
-        severity_counts[severity] = severity_counts.get(severity, 0) + 1
+
         findings.append(
             Finding(
                 check_id=normalize_check_id(str(item.get("check_id", ""))),
@@ -333,7 +328,6 @@ def normalize_semgrep_payload(
             )
         )
 
-    summary = {"total": len(findings), **severity_counts}
     message = f"Semgrep 扫描完成，发现 {len(findings)} 个问题。"
     return ScanResult(
         engine="semgrep",
@@ -341,7 +335,6 @@ def normalize_semgrep_payload(
         targets=targets,
         status="ok",
         message=message,
-        summary=summary,
         findings=findings,
     )
 

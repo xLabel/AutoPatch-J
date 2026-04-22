@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from autopatch_j.paths import get_project_state_dir
+from autopatch_j.config import get_project_state_dir
 
 
 @dataclass(slots=True)

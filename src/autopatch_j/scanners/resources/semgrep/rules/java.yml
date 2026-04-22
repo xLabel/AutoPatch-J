@@ -1,47 +1,84 @@
 rules:
-  - id: autopatch-j.java.security.runtime-exec
-    languages:
-      - java
-    severity: WARNING
-    message: Avoid passing untrusted input to Runtime.exec; prefer a constrained ProcessBuilder or a fixed command allowlist.
-    pattern: Runtime.getRuntime().exec($CMD)
-    metadata:
-      cwe: "CWE-78"
-      category: security
-
-  - id: autopatch-j.java.security.hardcoded-secret
-    languages:
-      - java
-    severity: ERROR
-    message: Hardcoded secret-like string detected; move it to a managed secret source.
+  # --- 1. 安全加固 (Security) ---
+  - id: autopatch-j.java.security.weak-crypto-md5
     patterns:
       - pattern-either:
-          - pattern: String $KEY = "$VALUE";
-          - pattern: private static final String $KEY = "$VALUE";
-          - pattern: public static final String $KEY = "$VALUE";
+          - pattern: MessageDigest.getInstance("MD5")
+          - pattern: MessageDigest.getInstance("md5")
+    message: 检测到使用 MD5 弱哈希算法。建议升级为 SHA-256。
+    languages: [java]
+    severity: ERROR
+    metadata:
+      cwe: CWE-327
+
+  - id: autopatch-j.java.security.insecure-random
+    patterns:
+      - pattern-either:
+          - pattern: new java.util.Random(...)
+          - pattern: new Random(...)
+    message: 检测到使用可预测的随机数生成器 (Random)。建议改用 SecureRandom。
+    languages: [java]
+    severity: WARNING
+    metadata:
+      cwe: CWE-338
+
+  # --- 2. 健壮性与正确性 (Correctness & Robustness) ---
+  - id: autopatch-j.java.correctness.optional-get-without-check
+    patterns:
+      - pattern: $OPT.get()
+      - pattern-not-inside: if ($OPT.isPresent()) { ... }
+    message: 检测到在未检查 isPresent() 的情况下调用 Optional.get()，存在 NPE 风险。
+    languages: [java]
+    severity: ERROR
+
+  - id: autopatch-j.java.correctness.unsafe-equals-order
+    patterns:
+      - pattern: $X.equals($STR)
       - metavariable-regex:
-          metavariable: $KEY
-          regex: (?i).*(password|passwd|secret|token|api[_-]?key|access[_-]?key).*
-    metadata:
-      cwe: "CWE-798"
-      category: security
-
-  - id: autopatch-j.java.correctness.nullable-equals
-    languages:
-      - java
+          metavariable: $STR
+          regex: '^".+"$'
+      - pattern-not: ("...").equals(...)
+    message: 检测到潜在的空指针异常风险。建议将常量移至 equals() 的左侧以确保安全。
+    languages: [java]
     severity: WARNING
-    message: Calling equals on a possibly nullable receiver can throw NullPointerException; prefer constant-first equals or an explicit null guard.
-    pattern: $VALUE.equals($EXPECTED)
-    metadata:
-      cwe: "CWE-476"
-      category: correctness
 
-  - id: autopatch-j.java.security.weak-md5
-    languages:
-      - java
+  # --- 3. 资源管理 (Resource Management) ---
+  - id: autopatch-j.java.resources.unclosed-io-stream
+    patterns:
+      - pattern-either:
+          - pattern: $TYPE $S = new FileInputStream(...);
+          - pattern: $TYPE $S = new FileOutputStream(...);
+      - pattern-not-inside: |
+          try ($TYPE $S = ...) { ... }
+      - pattern-not-inside: |
+          try ($S) { ... }
+    message: 检测到 IO 流未通过 Try-with-resources 自动关闭。
+    languages: [java]
     severity: WARNING
-    message: MD5 is not suitable for security-sensitive hashing; use a stronger algorithm when security matters.
-    pattern: MessageDigest.getInstance("MD5")
-    metadata:
-      cwe: "CWE-327"
-      category: security
+
+  # --- 4. 编码规范 (Best Practices) ---
+  - id: autopatch-j.java.best-practice.missing-constructor-null-check
+    patterns:
+      - pattern: |
+          public $CLASS(..., $TYPE $VAR, ...) {
+            ...
+            this.$FIELD = $VAR;
+            ...
+          }
+      - pattern-not: |
+          public $CLASS(..., $TYPE $VAR, ...) {
+            ...
+            if ($VAR == null) { ... }
+            ...
+            this.$FIELD = $VAR;
+            ...
+          }
+      - pattern-not: |
+          public $CLASS(..., $TYPE $VAR, ...) {
+            ...
+            this.$FIELD = Objects.requireNonNull($VAR, ...);
+            ...
+          }
+    message: 构造函数参数赋值前缺少 null 检查。建议执行防御性校验。
+    languages: [java]
+    severity: WARNING

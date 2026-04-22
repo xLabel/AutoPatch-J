@@ -1,23 +1,32 @@
 from __future__ import annotations
 
-from autopatch_j.scanners.base import Finding, JavaScanner, ScannerName, ScannerMeta, ScanResult
-from autopatch_j.scanners.checkstyle import CheckstyleScanner
-from autopatch_j.scanners.pmd import PMDScanner
+from autopatch_j.scanners.base import (
+    ScannerName, 
+    ScanResult, 
+    Finding, 
+    JavaScanner
+)
 from autopatch_j.scanners.semgrep import SemgrepScanner
 from autopatch_j.scanners.spotbugs import SpotBugsScanner
+from autopatch_j.scanners.pmd import PMDScanner
+from autopatch_j.scanners.checkstyle import CheckstyleScanner
 
+# 默认全局配置
 DEFAULT_SCANNER_NAME = ScannerName.SEMGREP
 
-ALL_SCANNERS = [
+# 全量注册
+ALL_SCANNERS: list[JavaScanner] = [
     SemgrepScanner(),
-    PMDScanner(),
     SpotBugsScanner(),
-    CheckstyleScanner(),
+    PMDScanner(),
+    CheckstyleScanner()
 ]
 
 
-def get_scanner(name: ScannerName) -> object | None:
-    for scanner in ALL_SCANNERS:
-        if scanner.name == name:
-            return scanner
+def get_scanner(name: ScannerName | str) -> JavaScanner | None:
+    """根据名称获取扫描器实例"""
+    target = str(name).lower()
+    for s in ALL_SCANNERS:
+        if s.name == target:
+            return s
     return None
