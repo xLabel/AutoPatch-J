@@ -95,7 +95,7 @@ def test_cli_code_audit_triggers_local_scan_then_agent(tmp_path: Path) -> None:
     )
     cli.renderer.print_tool_start = MagicMock()
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
         {
             "prompt": prompt,
             "agent_call": agent_call,
@@ -148,7 +148,7 @@ def test_cli_code_audit_targets_single_finding_prompt(tmp_path: Path) -> None:
     )
     cli.renderer.print_tool_start = MagicMock()
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
         {
             "prompt": prompt,
             "agent_call": agent_call,
@@ -176,14 +176,15 @@ def test_cli_code_explain_skips_scan_and_uses_explain_entry(tmp_path: Path) -> N
     cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
     cli.scan_service.fetch_scan_snapshot = MagicMock()
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False: captured.update(
-        {"agent_call": agent_call}
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+        {"agent_call": agent_call, "compact_observation": compact_observation}
     )
 
     cli.handle_chat("@User.java 解释一下代码")
 
     cli.scan_service.fetch_scan_snapshot.assert_not_called()
     assert captured["agent_call"] == cli.agent.perform_code_explain
+    assert captured["compact_observation"] is True
 
 
 @patch.object(ContinuityJudgeService, "fetch_route", return_value=ConversationRoute.REVIEW_CONTINUE)
@@ -207,7 +208,7 @@ def test_cli_patch_revise_clears_remaining_tail_before_agent_call(
         ],
     )
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
         {"agent_call": agent_call}
     )
 
@@ -235,7 +236,7 @@ def test_cli_review_mixed_feedback_routes_to_patch_revise(
         patch_items=[_review_item("item-1", "src/main/java/demo/User.java")],
     )
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
         {"agent_call": agent_call, "prompt": prompt}
     )
 
@@ -277,7 +278,7 @@ def test_cli_new_task_in_review_state_resets_review_context(tmp_path: Path) -> N
     )
     cli.renderer.print_info = MagicMock()
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
         {
             "prompt": prompt,
             "agent_call": agent_call,
@@ -460,3 +461,31 @@ def test_run_agent_request_uses_distinct_observation_and_reasoning_rendering(tmp
 
     cli.renderer.print_reasoning.assert_called_once_with("思考中", end="")
     cli.renderer.print_observation.assert_called_once_with("工具观察")
+
+
+def test_run_agent_request_compacts_observation_for_code_explain(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    assert cli.workflow_service is not None
+
+    cli.renderer.print_tool_start = MagicMock()
+    cli.renderer.print_info = MagicMock()
+    cli.renderer.print_observation = MagicMock()
+    cli.renderer.print = MagicMock()
+
+    def fake_agent_call(
+        prompt: str,
+        on_token=None,
+        on_reasoning=None,
+        on_observation=None,
+        on_tool_start=None,
+    ) -> str:
+        assert on_tool_start is not None
+        assert on_observation is not None
+        on_tool_start("read_source_code")
+        on_observation("已成功加载源代码 [路径: src/main/java/demo/LegacyConfig.java]：\n\n```java\nclass A {}\n```")
+        return ""
+
+    cli._run_agent_request(prompt="check", agent_call=fake_agent_call, compact_observation=True)
+
+    cli.renderer.print_info.assert_called_once_with("已读取: src/main/java/demo/LegacyConfig.java")
+    cli.renderer.print_observation.assert_not_called()

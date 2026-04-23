@@ -61,12 +61,43 @@ def test_handle_code_explain_keeps_bound_method_and_disables_symbol_search_for_s
     cli.scope_service.fetch_scope = MagicMock(return_value=_single_file_scope())
     cli.agent.perform_code_explain = MagicMock(return_value="done")
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False: captured.update(
-        {"prompt": prompt, "agent_call": agent_call}
+    cli._run_agent_request = (
+        lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+            {
+                "prompt": prompt,
+                "agent_call": agent_call,
+                "compact_observation": compact_observation,
+            }
+        )
     )
 
     cli._handle_code_explain("@LegacyConfig.java explain")
 
     assert captured["agent_call"] == cli.agent.perform_code_explain
+    assert captured["compact_observation"] is True
     assert cli.agent.code_explain_allow_symbol_search is False
     assert "当前解释范围仅限文件" in str(captured["prompt"])
+
+
+def test_handle_code_explain_allows_full_tool_output_when_explicitly_requested(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    assert cli.scope_service is not None
+    assert cli.agent is not None
+
+    cli.scope_service.fetch_scope = MagicMock(return_value=_single_file_scope())
+    cli.agent.perform_code_explain = MagicMock(return_value="done")
+    captured: dict[str, object] = {}
+    cli._run_agent_request = (
+        lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+            {
+                "prompt": prompt,
+                "agent_call": agent_call,
+                "compact_observation": compact_observation,
+            }
+        )
+    )
+
+    cli._handle_code_explain("@LegacyConfig.java 展示代码并解释一下")
+
+    assert captured["agent_call"] == cli.agent.perform_code_explain
+    assert captured["compact_observation"] is False

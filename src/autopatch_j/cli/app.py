@@ -451,6 +451,7 @@ class AutoPatchCLI:
         assert self.agent is not None
 
         scope = self.scope_service.fetch_scope(text, default_to_project=False)
+        compact_observation = not self._should_show_full_tool_output(text)
         if scope is not None and scope.is_locked:
             self.agent.set_focus_paths(scope.focus_files)
             prompt = self._build_code_explain_prompt(text=text, scope=scope)
@@ -459,6 +460,7 @@ class AutoPatchCLI:
             self._run_agent_request(
                 prompt=prompt,
                 agent_call=self.agent.perform_code_explain,
+                compact_observation=compact_observation,
             )
             return
 
@@ -467,6 +469,7 @@ class AutoPatchCLI:
         self._run_agent_request(
             prompt=text,
             agent_call=self.agent.perform_general_chat,
+            compact_observation=compact_observation,
         )
 
     def _handle_general_chat(self, text: str) -> None:
@@ -475,6 +478,7 @@ class AutoPatchCLI:
         self._run_agent_request(
             prompt=text,
             agent_call=self.agent.perform_general_chat,
+            compact_observation=not self._should_show_full_tool_output(text),
         )
 
     def _handle_patch_explain(self, text: str) -> None:
@@ -524,6 +528,7 @@ class AutoPatchCLI:
         agent_call: Callable[..., str],
         scope_paths: list[str] | None = None,
         render_no_issue_panel: bool = False,
+        compact_observation: bool = False,
     ) -> list[dict[str, Any]]:
         assert self.agent is not None
         assert self.workflow_service is not None
@@ -532,6 +537,7 @@ class AutoPatchCLI:
         stream_state = {"in_reasoning": False, "answer_after_reasoning": False}
         buffered_answer_parts: list[str] = []
         start_index = len(self.agent.messages)
+        current_tool_name: str | None = None
 
         def on_token(token: str) -> None:
             if stream_state["in_reasoning"]:
@@ -544,9 +550,14 @@ class AutoPatchCLI:
             self.renderer.print_reasoning(token, end="")
 
         def on_tool_start(tool_name: str) -> None:
+            nonlocal current_tool_name
+            current_tool_name = tool_name
             self.renderer.print_tool_start(tool_name, caller="LLM")
 
         def on_observation(message: str) -> None:
+            if compact_observation:
+                self.renderer.print_info(self._summarize_observation(current_tool_name, message))
+                return
             self.renderer.print_observation(message)
 
         final_answer = agent_call(
@@ -608,6 +619,49 @@ class AutoPatchCLI:
     def _sanitize_assistant_output(self, text: str) -> str:
         match = DSML_MARKER_PATTERN.search(text)
         return text[:match.start()].rstrip() if match else text
+
+    def _should_show_full_tool_output(self, text: str) -> bool:
+        hints = (
+            "展示代码",
+            "显示代码",
+            "贴出代码",
+            "展示源码",
+            "显示源码",
+            "详细过程",
+            "完整过程",
+            "工具结果",
+            "原始输出",
+            "完整输出",
+            "逐步过程",
+        )
+        compact = re.sub(r"\s+", "", text)
+        return any(hint in compact for hint in hints)
+
+    def _summarize_observation(self, tool_name: str | None, message: str) -> str:
+        if tool_name == "read_source_code":
+            match = re.search(r"\[[^:\]]+:\s*([^\]]+)\]", message)
+            if match:
+                return f"已读取: {match.group(1)}"
+            return "已读取源码"
+
+        if tool_name == "search_symbols":
+            match = re.search(r"与 '([^']+)' 相关", message)
+            if match:
+                return f"已定位符号: {match.group(1)}"
+            return "已定位相关符号"
+
+        if tool_name == "get_finding_detail":
+            match = re.search(r"\((F\d+)\)", message)
+            if match:
+                return f"已获取发现详情: {match.group(1)}"
+            return "已获取发现详情"
+
+        first_line = message.strip().splitlines()[0] if message.strip() else ""
+        if first_line:
+            return first_line
+        if tool_name:
+            return f"已完成工具: {tool_name}"
+        return "已更新工具结果"
 
     def _build_code_audit_summary_prompt_legacy(self, text: str, scan_result: ScanResult) -> str:
         if not scan_result.findings:
