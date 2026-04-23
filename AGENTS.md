@@ -15,7 +15,7 @@
 - **UI 对象隔离**：在 `rich` 渲染中，严禁在 `Text.assemble` 中直接混入 `Table` 等渲染对象。必须使用 `Group` 进行物理隔离。
 
 ## 3. Git 协作守则
-- **中文 Commit**：所有 commit message 必须使用中文，严格遵循 `<type>: <中文动词> <具体内容>` 格式。
+- **英文 Commit**：所有 commit message 必须使用英文，严格遵循 `<type>: <english phrase>` 格式。推荐使用简洁、自然、可读的短语，例如：`fix: tighten single-file explain tool boundary`。避免中英混写、冗长描述或多余空格。
 - **逻辑原子性**：禁止在一个 commit 中提交两个不相关的改动。
 - **提交时机**：每个逻辑单元完成后，必须主动询问用户“是否现在提交代码”。
 
