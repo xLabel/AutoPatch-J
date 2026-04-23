@@ -44,7 +44,6 @@ from autopatch_j.core.scope_service import ScopeService
 from autopatch_j.core.validator_service import SemanticValidator
 from autopatch_j.core.workflow_service import WorkflowService
 from autopatch_j.scanners import DEFAULT_SCANNER_NAME, get_scanner
-from autopatch_j.scanners.base import ScanResult
 
 DSML_MARKER_PATTERN = re.compile(r"<[^>\n]*DSML[^>\n]*>", re.IGNORECASE)
 
@@ -725,44 +724,6 @@ class AutoPatchCLI:
             return f"已完成工具: {tool_name}"
         return "已更新工具结果"
 
-    def _build_code_audit_summary_prompt_legacy(self, text: str, scan_result: ScanResult) -> str:
-        if not scan_result.findings:
-            return text
-
-        summary_lines = [
-            "系统已完成本地静态扫描，请优先围绕以下扫描结果继续处理：",
-            "扫描摘要：",
-        ]
-        for index, finding in enumerate(scan_result.findings, start=1):
-            summary_lines.append(
-                f"- F{index}: {finding.path}:{finding.start_line} ({finding.check_id})"
-            )
-        summary_lines.extend(
-            [
-                "",
-                "执行要求：",
-                "1. 优先根据 F 编号调用 get_finding_detail 获取详情。",
-                "2. 仅在需要确认最新源码时调用 read_source_code。",
-                "3. 如果能够形成补丁，直接 propose_patch，不要输出长篇分析。",
-                "",
-                f"用户原始请求：{text}",
-            ]
-        )
-        return "\n".join(summary_lines)
-
-    def _should_render_local_no_issue_summary(self, new_messages: list[dict[str, Any]]) -> bool:
-        saw_zero_scan = False
-        for message in new_messages:
-            if message.get("role") != "tool":
-                continue
-            if message.get("name") == "propose_patch":
-                return False
-            if message.get("name") == "scan_project":
-                content = str(message.get("content", ""))
-                if "共发现 0 个问题" in content or "未发现任何安全或正确性问题" in content:
-                    saw_zero_scan = True
-        return saw_zero_scan
-
     def _build_patch_explain_prompt(self, current_item: PatchReviewItem, user_text: str) -> str:
         draft = current_item.draft
         return (
@@ -788,35 +749,6 @@ class AutoPatchCLI:
             f"{remaining_files}\n\n"
             f"用户反馈:\n{user_text}\n"
             "请基于最新意见重新生成 remaining_patch_items。"
-        )
-
-    def _build_patch_feedback_prompt(
-        self,
-        pending_file: str,
-        user_feedback: str,
-        discarded_followups: list[Any],
-    ) -> str:
-        if not discarded_followups:
-            return (
-                f"[系统反馈] 针对当前挂起的对 {pending_file} 的补丁，用户提供了修改意见：\n"
-                f"{user_feedback}\n"
-                "请仅针对该文件重新调用 propose_patch 生成修正后的补丁。"
-            )
-
-        followup_files: list[str] = []
-        for draft in discarded_followups:
-            file_path = getattr(draft, "file_path", "")
-            if file_path and file_path not in followup_files:
-                followup_files.append(file_path)
-        followup_text = "\n".join(f"- {path}" for path in followup_files)
-        return (
-            f"[系统反馈] 针对当前挂起的对 {pending_file} 的补丁，用户提供了修改意见：\n"
-            f"{user_feedback}\n"
-            "由于当前补丁发生变更，以下后续补丁已作废，需要基于最新方案重新规划：\n"
-            f"{followup_text}\n"
-            "请先为上述后续文件重新调用 propose_patch（如果仍值得修复），"
-            f"最后再针对当前文件调用 propose_patch 生成修正后的补丁：{pending_file}\n"
-            "当前文件的补丁必须最后提交，以便继续保留在队列顶部供用户审核。"
         )
 
     def _build_local_no_issue_summary(self) -> str:

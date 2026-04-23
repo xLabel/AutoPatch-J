@@ -76,22 +76,6 @@ def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
     ]
 
 
-def test_chat_keeps_legacy_full_tool_profile(tmp_path: Path) -> None:
-    mock_llm = MagicMock()
-    mock_llm.chat.return_value = LLMResponse(content="done")
-    agent = _build_agent(tmp_path, mock_llm)
-
-    agent.chat("audit code")
-
-    assert _fetch_tool_names(mock_llm) == [
-        "scan_project",
-        "propose_patch",
-        "search_symbols",
-        "read_source_code",
-        "get_finding_detail",
-    ]
-
-
 def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     mock_llm.chat.return_value = LLMResponse(content="chat answer")

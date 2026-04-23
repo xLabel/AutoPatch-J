@@ -15,7 +15,6 @@ from autopatch_j.core.models import (
 )
 from autopatch_j.core.patch_engine import PatchDraft
 from autopatch_j.scanners.base import Finding, ScanResult
-from autopatch_j.validators.java_syntax import SyntaxValidationResult
 
 
 @dataclass(slots=True)
@@ -28,19 +27,16 @@ class ArtifactManager:
     repo_root: Path
     state_dir: Path = field(init=False)
     findings_dir: Path = field(init=False)
-    patches_dir: Path = field(init=False)
     workspace_file: Path = field(init=False)
 
     def __post_init__(self) -> None:
         self.state_dir = get_project_state_dir(self.repo_root)
         self.findings_dir = self.state_dir / "findings"
-        self.patches_dir = self.state_dir / "patches"
         self.workspace_file = self.state_dir / "workspace.json"
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
         self.findings_dir.mkdir(parents=True, exist_ok=True)
-        self.patches_dir.mkdir(parents=True, exist_ok=True)
 
     def persist_scan_result(self, result: ScanResult) -> str:
         artifact_id = self._generate_id("scan")
@@ -91,9 +87,7 @@ class ArtifactManager:
     def persist_pending_patch(self, draft: PatchDraft) -> None:
         workspace = self.fetch_workspace()
         if workspace is None:
-            pending_drafts = [draft] + self._fetch_legacy_pending_patches()
-            self._persist_workspace_pending_drafts([], pending_drafts, None)
-            self._clear_legacy_pending_files()
+            self._persist_workspace_pending_drafts([], [draft], None)
             return
 
         head_items = list(workspace.patch_items[: workspace.current_patch_index])
@@ -102,60 +96,22 @@ class ArtifactManager:
             for item in workspace.fetch_remaining_patch_items()
         ]
         self._persist_workspace_pending_drafts(head_items, pending_drafts, workspace)
-        self._clear_legacy_pending_files()
 
     def fetch_pending_patches(self) -> list[PatchDraft]:
         workspace = self.fetch_workspace()
-        if workspace is not None and workspace.verify_has_pending_patch():
-            return [
-                self._build_patch_draft_from_review_item(item)
-                for item in workspace.fetch_remaining_patch_items()
-            ]
-        return self._fetch_legacy_pending_patches()
+        if workspace is None or not workspace.verify_has_pending_patch():
+            return []
+        return [
+            self._build_patch_draft_from_review_item(item)
+            for item in workspace.fetch_remaining_patch_items()
+        ]
 
     def fetch_pending_patch(self) -> PatchDraft | None:
         queue = self.fetch_pending_patches()
         return queue[0] if queue else None
 
-    def pop_pending_patch(self) -> None:
-        workspace = self.fetch_workspace()
-        if workspace is None:
-            pending_drafts = self._fetch_legacy_pending_patches()
-            if pending_drafts:
-                pending_drafts.pop(0)
-            self._persist_workspace_pending_drafts([], pending_drafts, None)
-            self._clear_legacy_pending_files()
-            return
-
-        head_items = list(workspace.patch_items[: workspace.current_patch_index])
-        pending_drafts = [
-            self._build_patch_draft_from_review_item(item)
-            for item in workspace.fetch_remaining_patch_items()
-        ]
-        if pending_drafts:
-            pending_drafts.pop(0)
-        self._persist_workspace_pending_drafts(head_items, pending_drafts, workspace)
-        self._clear_legacy_pending_files()
-
-    def discard_followup_patches(self) -> list[PatchDraft]:
-        pending_drafts = self.fetch_pending_patches()
-        if len(pending_drafts) <= 1:
-            return []
-
-        workspace = self.fetch_workspace()
-        if workspace is None:
-            self._persist_workspace_pending_drafts([], pending_drafts[:1], None)
-            self._clear_legacy_pending_files()
-            return list(pending_drafts[1:])
-
-        head_items = list(workspace.patch_items[: workspace.current_patch_index])
-        self._persist_workspace_pending_drafts(head_items, pending_drafts[:1], workspace)
-        self._clear_legacy_pending_files()
-        return list(pending_drafts[1:])
-
     def clear_pending_patch(self) -> None:
         self.clear_workspace()
-        self._clear_legacy_pending_files()
 
     # --- helpers ---
 
@@ -195,49 +151,6 @@ class ArtifactManager:
 
     def _build_patch_draft_from_review_item(self, item: PatchReviewItem) -> PatchDraft:
         return item.draft.fetch_patch_draft()
-
-    def _fetch_legacy_pending_patches(self) -> list[PatchDraft]:
-        target_path = self.patches_dir / "pending_queue.json"
-        if not target_path.exists():
-            return []
-        try:
-            queue_data = json.loads(target_path.read_text(encoding="utf-8"))
-            drafts: list[PatchDraft] = []
-            for data in queue_data:
-                validation = SyntaxValidationResult(
-                    status=str(data.get("validation", {}).get("status", "unknown")),
-                    message=str(data.get("validation", {}).get("message", "")),
-                    errors=[str(item) for item in data.get("validation", {}).get("errors", [])],
-                )
-                drafts.append(
-                    PatchDraft(
-                        file_path=str(data["file_path"]),
-                        old_string=str(data["old_string"]),
-                        new_string=str(data["new_string"]),
-                        diff=str(data["diff"]),
-                        validation=validation,
-                        status=str(data.get("status", "unknown")),
-                        message=str(data.get("message", "")),
-                        rationale=str(data["rationale"]) if data.get("rationale") is not None else None,
-                        target_check_id=(
-                            str(data["target_check_id"]) if data.get("target_check_id") is not None else None
-                        ),
-                        target_snippet=(
-                            str(data["target_snippet"]) if data.get("target_snippet") is not None else None
-                        ),
-                    )
-                )
-            return drafts
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            return []
-
-    def _clear_legacy_pending_files(self) -> None:
-        for legacy_path in [
-            self.patches_dir / "pending_queue.json",
-            self.patches_dir / "current_pending.json",
-        ]:
-            if legacy_path.exists():
-                legacy_path.unlink()
 
     def _generate_id(self, prefix: str) -> str:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")

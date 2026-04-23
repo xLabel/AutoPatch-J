@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+
 from autopatch_j.core.index_service import IndexEntry
+
 
 class CodeFetcher:
     """
-    代码提取服务 (Core Service)
-    职责：根据索引项或物理坐标，从磁盘提取精准的代码片段。
+    代码提取服务。
+    职责：根据索引项或物理坐标，从磁盘提取精确代码片段。
     """
 
     def __init__(self, repo_root: Path) -> None:
@@ -17,40 +19,45 @@ class CodeFetcher:
 
     def fetch_entry(self, entry: IndexEntry) -> str:
         """
-        根据索引项智能抓取代码。
-        如果是类或方法，它会尝试定位完整的语法块。
+        根据索引项抓取代码。
+        如果是类或方法，会尝试定位完整语法块。
         """
         full_path = self.repo_root / entry.path
         if not full_path.exists():
-            return f"错误：找不到文件或目录 {entry.path}"
+            return f"错误：找不到文件或目录：{entry.path}"
 
-        # 1. 目录防御
         if entry.kind == "dir" or full_path.is_dir():
-            return f"[系统防线] 这是一个目录：{entry.path}。为了防止上下文爆炸，已拦截代码全量注入。请使用 scan_project 工具并将 scope 设置为该目录来进行大范围扫描。"
+            return (
+                f"[系统防线] 这是一个目录：{entry.path}。为了防止上下文爆炸，已拦截代码全量注入。"
+                "请直接对该目录发起检查，或先缩小到文件级范围。"
+            )
 
-        # 2. 非代码文件防御
         if not entry.path.endswith(".java"):
-            # 返回前 200 行作为摘要
             content = self._read_file(full_path)
             lines = content.splitlines()
             if len(lines) > 200:
                 return "\n".join(lines[:200]) + f"\n\n... [系统防线] 非 Java 文件，截断显示 200 行 (共 {len(lines)} 行) ..."
             return content
 
-        # 3. 巨型文件防御 (大于 100KB 或 3000 行)
         try:
             size_kb = full_path.stat().st_size / 1024
             if size_kb > 100:
-                return f"[系统防线] 警告：该文件体积过大 ({size_kb:.1f} KB)，为防止上下文爆炸，已拒绝全量代码注入。请优先调用 scan_project 工具扫描该文件以获取漏洞摘要，或使用 search_symbols 查找特定特征。严禁使用 read_source_code 读取全量内容。"
+                return (
+                    f"[系统防线] 警告：该文件体积过大 ({size_kb:.1f} KB)，为防止上下文爆炸，已拒绝全量代码注入。"
+                    "请优先对该文件发起检查，或使用 search_symbols 查找特定特征。"
+                    "严禁使用 read_source_code 读取全量内容。"
+                )
         except OSError:
             pass
 
         content = self._read_file(full_path)
-
-        # 精确检查行数
         lines = content.splitlines()
         if len(lines) > 3000:
-            return f"[系统防线] 警告：该文件内容过多 (约 {len(lines)} 行)，为防止上下文爆炸，已拒绝全量代码注入。请优先调用 scan_project 工具扫描该文件以获取漏洞摘要，或使用 search_symbols 查找特定特征。严禁使用 read_source_code 读取全量内容。"
+            return (
+                f"[系统防线] 警告：该文件内容过多 (约 {len(lines)} 行)，为防止上下文爆炸，已拒绝全量代码注入。"
+                "请优先对该文件发起检查，或使用 search_symbols 查找特定特征。"
+                "严禁使用 read_source_code 读取全量内容。"
+            )
 
         if entry.kind == "file":
             return content
@@ -59,27 +66,21 @@ class CodeFetcher:
             return self._extract_symbol_block(content, entry.line)
 
         return ""
+
     def fetch_lines(self, file_path: str, start_line: int, end_line: int) -> str:
-        """
-        根据物理行号区间提取代码（1-based, inclusive）。
-        """
+        """根据物理行号区间提取代码，1-based 且包含结束行。"""
         full_path = self.repo_root / file_path
         if not full_path.exists():
             return ""
-        
-        # 使用归一化内容切割
+
         content = self._read_file(full_path)
         lines = content.splitlines()
-        
-        # 边界处理
-        s = max(0, start_line - 1)
-        e = min(len(lines), end_line)
-        return "\n".join(lines[s:e])
+        start_index = max(0, start_line - 1)
+        end_index = min(len(lines), end_line)
+        return "\n".join(lines[start_index:end_index])
 
     def _extract_symbol_block(self, content: str, start_line: int) -> str:
-        """
-        尝试使用 Tree-sitter 准确提取语法块。
-        """
+        """尝试用 Tree-sitter 提取完整语法块，失败时退化到固定行窗。"""
         self.last_extract_mode = "full"
         self.last_extract_error = None
         try:
@@ -88,34 +89,33 @@ class CodeFetcher:
 
             language = Language(tsjava.language())
             parser = Parser(language)
-            
-            # 🚀 深度修复：统一使用 LF 编码的字节流进行解析
-            # 这确保了字节偏移量 (byte_offset) 与字符位置在逻辑上的一致性
-            norm_content = content.replace("\r\n", "\n")
-            content_bytes = norm_content.encode("utf-8")
+
+            normalized_content = content.replace("\r\n", "\n")
+            content_bytes = normalized_content.encode("utf-8")
             tree = parser.parse(content_bytes)
-            
-            # 找到包含目标起始行的最小节点
+
             target_node = self._find_node_at_line(tree.root_node, start_line)
             if target_node:
-                return content_bytes[target_node.start_byte:target_node.end_byte].decode("utf-8")
+                return content_bytes[target_node.start_byte : target_node.end_byte].decode("utf-8")
         except (ImportError, Exception) as exc:
             self.last_extract_mode = "fallback"
             self.last_extract_error = str(exc)
 
-        # 兜底：保守提取（从起始行开始取 30 行）
         self.last_extract_mode = "fallback"
         lines = content.splitlines()
-        start_idx = max(0, start_line - 1)
-        return "\n".join(lines[start_idx : start_idx + 30])
+        start_index = max(0, start_line - 1)
+        return "\n".join(lines[start_index : start_index + 30])
 
     def _find_node_at_line(self, node: Any, line: int) -> Any:
-        """递归寻找位于指定行号的最小完整语法节点"""
-        # line 是 1-based, tree-sitter 是 0-based
+        """递归查找位于指定行号的最小完整语法节点。"""
         start_row = node.start_point[0] + 1
-        end_row = node.end_point[0] + 1
 
-        if start_row == line and node.type in ("method_declaration", "class_declaration", "interface_declaration", "record_declaration"):
+        if start_row == line and node.type in (
+            "method_declaration",
+            "class_declaration",
+            "interface_declaration",
+            "record_declaration",
+        ):
             return node
 
         for child in node.children:
@@ -137,6 +137,4 @@ class CodeFetcher:
                 content = raw_bytes.decode("gbk")
             except UnicodeDecodeError:
                 content = raw_bytes.decode("utf-8", errors="replace")
-        
-        # 🚀 强制归一化：Agent 看到的内容必须是纯净的 LF 风格
         return content.replace("\r\n", "\n")

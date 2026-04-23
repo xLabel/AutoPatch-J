@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 
 class FindingRetrieverTool(Tool):
     """
-    漏洞证据检索工具 (Retriever)
-    职责：将逻辑句柄(F1, F2)映射回真实的漏洞详情。
+    漏洞证据检索工具。
+    职责：将逻辑句柄 (F1, F2) 映射回真实的漏洞详情。
     """
 
     name = "get_finding_detail"
@@ -37,13 +37,13 @@ class FindingRetrieverTool(Tool):
         if not match:
             return ToolResult(
                 status="error",
-                message=f"无效的漏洞句柄格式：{finding_id}。请使用 F1, F2 这种格式。",
+                message=f"无效的漏洞句柄格式：{finding_id}。请使用 F1、F2 这种格式。",
             )
 
         finding_index = int(match.group(1)) - 1
         scan_files = sorted(artifacts.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
-            return ToolResult(status="error", message="系统中未找到扫描记录，请先执行 scan_project。")
+            return ToolResult(status="error", message="系统中未找到扫描记录，请先发起一次代码检查。")
 
         active_scan_id = scan_files[0].stem
         finding = artifacts.fetch_finding_by_index(active_scan_id, finding_index)

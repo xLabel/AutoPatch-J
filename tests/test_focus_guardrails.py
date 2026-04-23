@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.index_service import IndexService
 from autopatch_j.core.patch_engine import PatchEngine
-from autopatch_j.scanners.base import Finding, ScanResult
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
-from autopatch_j.tools.project_scanner_tool import ProjectScannerTool
 from autopatch_j.tools.source_reader_tool import SourceReaderTool
 from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 
@@ -22,49 +19,6 @@ def _build_agent(repo_root: Path) -> AutoPatchAgent:
     fetcher = CodeFetcher(repo_root)
     indexer.perform_rebuild()
     return AutoPatchAgent(repo_root, artifacts, indexer, patch_engine, fetcher, llm=None)
-
-
-def test_focus_lock_forces_scan_scope(tmp_path: Path) -> None:
-    legacy = tmp_path / "src" / "main" / "java" / "demo" / "LegacyConfig.java"
-    user_service = tmp_path / "src" / "main" / "java" / "demo" / "UserService.java"
-    legacy.parent.mkdir(parents=True)
-    legacy.write_text("class LegacyConfig {}", encoding="utf-8")
-    user_service.write_text("class UserService {}", encoding="utf-8")
-
-    agent = _build_agent(tmp_path)
-    agent.set_focus_paths(["src/main/java/demo/LegacyConfig.java"])
-
-    captured_scope: list[str] = []
-
-    class FakeScanner:
-        def scan(self, repo_root: Path, scope: list[str]) -> ScanResult:
-            captured_scope[:] = scope
-            return ScanResult(
-                engine="fake",
-                scope=scope,
-                targets=scope,
-                status="ok",
-                message="",
-                findings=[
-                    Finding(
-                        check_id="demo.rule",
-                        path="src/main/java/demo/LegacyConfig.java",
-                        start_line=1,
-                        end_line=1,
-                        severity="warning",
-                        message="focused finding",
-                        snippet="class LegacyConfig {}",
-                    )
-                ],
-            )
-
-    with patch("autopatch_j.tools.project_scanner_tool.get_scanner", return_value=FakeScanner()):
-        result = ProjectScannerTool(agent).execute(["."])
-
-    assert captured_scope == ["src/main/java/demo/LegacyConfig.java"]
-    assert "焦点约束已生效" in result.message
-    assert "LegacyConfig.java" in result.message
-    assert "UserService.java" not in result.message
 
 
 def test_focus_lock_blocks_unrelated_read_and_patch(tmp_path: Path) -> None:

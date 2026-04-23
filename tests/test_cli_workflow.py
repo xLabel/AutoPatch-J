@@ -426,8 +426,13 @@ def test_cli_code_audit_retries_current_finding_then_continues_remaining(tmp_pat
 
 def test_cli_can_initialize_without_prompt_session(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    cli.handle_init()
     assert cli.artifacts is not None
+    cli.artifacts.persist_pending_patch(_patch_draft("src/main/java/demo/User.java", "F1"))
+
+    cli.handle_init()
+
+    assert cli.artifacts is not None
+    assert cli.artifacts.fetch_pending_patch() is None
 
 
 def test_run_agent_request_labels_llm_tool_calls(tmp_path: Path) -> None:

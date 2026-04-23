@@ -4,13 +4,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from autopatch_j.agent.llm_client import LLMClient, ToolCall, build_default_llm_client
-from autopatch_j.agent.prompts import build_legacy_system_prompt, build_task_system_prompt
+from autopatch_j.agent.prompts import build_task_system_prompt
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.models import IntentType
 from autopatch_j.tools.base import Tool, ToolResult
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
-from autopatch_j.tools.project_scanner_tool import ProjectScannerTool
 from autopatch_j.tools.source_reader_tool import SourceReaderTool
 from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 
@@ -66,7 +65,6 @@ class AutoPatchAgent:
         self.available_tools: dict[str, Tool] = {
             tool.name: tool
             for tool in [
-                ProjectScannerTool(self),
                 PatchProposalTool(self),
                 SymbolSearchTool(self),
                 SourceReaderTool(self),
@@ -77,22 +75,6 @@ class AutoPatchAgent:
         self.focus_paths: list[str] = []
         self.source_read_cache: dict[tuple[str, str | None, int | None], ToolResult] = {}
         self.code_explain_allow_symbol_search = True
-
-    def chat(
-        self,
-        user_text: str,
-        on_token: ToolCallback | None = None,
-        on_reasoning: ToolCallback | None = None,
-        on_observation: ToolCallback | None = None,
-        on_tool_start: ToolCallback | None = None,
-    ) -> str:
-        return self._run_legacy_chat(
-            user_text=user_text,
-            on_token=on_token,
-            on_reasoning=on_reasoning,
-            on_observation=on_observation,
-            on_tool_start=on_tool_start,
-        )
 
     def perform_code_audit(
         self,
@@ -185,26 +167,6 @@ class AutoPatchAgent:
         return self._run_task(
             intent=IntentType.PATCH_REVISE,
             user_text=user_text,
-            on_token=on_token,
-            on_reasoning=on_reasoning,
-            on_observation=on_observation,
-            on_tool_start=on_tool_start,
-        )
-
-    def _run_legacy_chat(
-        self,
-        user_text: str,
-        on_token: ToolCallback | None,
-        on_reasoning: ToolCallback | None,
-        on_observation: ToolCallback | None,
-        on_tool_start: ToolCallback | None,
-    ) -> str:
-        system_prompt = self._build_legacy_system_prompt()
-        tool_names = tuple(self.available_tools.keys())
-        return self._run_react_loop(
-            user_text=user_text,
-            system_prompt=system_prompt,
-            allowed_tool_names=tool_names,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -314,15 +276,6 @@ class AutoPatchAgent:
             focus_paths=self.focus_paths,
         )
 
-    def _build_legacy_system_prompt(self) -> str:
-        pending = self.artifacts.fetch_pending_patch()
-        last_scan_id = self._fetch_latest_scan_id()
-        return build_legacy_system_prompt(
-            pending_file=pending.file_path if pending else None,
-            last_scan=last_scan_id,
-            focus_paths=self.focus_paths,
-        )
-
     def _fetch_latest_scan_id(self) -> str | None:
         scan_files = sorted(self.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
         return scan_files[0].stem if scan_files else None
@@ -344,9 +297,6 @@ class AutoPatchAgent:
         result: list[dict[str, Any]] = [{"role": "system", "content": current_system_prompt}]
         for message in history_window:
             new_message = self._fetch_llm_message(message)
-            if message.get("role") == "tool" and message.get("name") == "scan_project":
-                result.append(new_message)
-                continue
             if message.get("role") == "tool" and message in self.messages[:-3]:
                 content = str(message.get("content", ""))
                 if len(content) > 200:

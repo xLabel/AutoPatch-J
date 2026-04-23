@@ -76,7 +76,7 @@ def test_accept_completion_appends_space_for_mentions() -> None:
 
         def apply_completion(self, completion: Completion) -> None:
             cursor = self.document.cursor_position
-            new_text = self.text[:cursor + completion.start_position] + completion.text + self.text[cursor:]
+            new_text = self.text[: cursor + completion.start_position] + completion.text + self.text[cursor:]
             self.text = new_text
             self.document = Document(text=new_text, cursor_position=len(new_text))
 
@@ -113,7 +113,7 @@ def test_accept_completion_does_not_append_space_for_commands() -> None:
 
         def apply_completion(self, completion: Completion) -> None:
             cursor = self.document.cursor_position
-            new_text = self.text[:cursor + completion.start_position] + completion.text + self.text[cursor:]
+            new_text = self.text[: cursor + completion.start_position] + completion.text + self.text[cursor:]
             self.text = new_text
             self.document = Document(text=new_text, cursor_position=len(new_text))
 
@@ -150,7 +150,7 @@ def test_accept_completion_returns_false_for_already_complete_command() -> None:
 
         def apply_completion(self, completion: Completion) -> None:
             cursor = self.document.cursor_position
-            new_text = self.text[:cursor + completion.start_position] + completion.text + self.text[cursor:]
+            new_text = self.text[: cursor + completion.start_position] + completion.text + self.text[cursor:]
             self.text = new_text
             self.document = Document(text=new_text, cursor_position=len(new_text))
 
@@ -166,29 +166,6 @@ def test_accept_completion_returns_false_for_already_complete_command() -> None:
 
     assert accepted is False
     assert buffer.text == "/help"
-
-
-def test_local_no_issue_summary_triggered_only_for_zero_scan_without_patch() -> None:
-    cli = AutoPatchCLI.__new__(AutoPatchCLI)
-    cli.agent = SimpleNamespace(focus_paths=["src/main/java/demo/LegacyConfig.java"])
-    cli.artifacts = None
-
-    zero_scan_messages = [
-        {
-            "role": "tool",
-            "name": "scan_project",
-            "content": "扫描完成 [ID: scan-1]，共发现 0 个问题。\n\n✔ 恭喜，未发现任何安全或正确性问题。",
-        }
-    ]
-    assert cli._should_render_local_no_issue_summary(zero_scan_messages) is True
-    assert cli._describe_current_scope_paths() == ["src/main/java/demo/LegacyConfig.java"]
-    assert cli._build_static_scan_summary() == "当前范围未发现安全或正确性问题。"
-    assert cli._build_local_no_issue_summary() == "模型复核未发现需要修复的问题。"
-
-    patched_messages = zero_scan_messages + [
-        {"role": "tool", "name": "propose_patch", "content": "补丁提案已成功生成并加入队列。"}
-    ]
-    assert cli._should_render_local_no_issue_summary(patched_messages) is False
 
 
 def test_collect_latest_scan_paths_expands_directory_targets() -> None:
@@ -208,7 +185,7 @@ def test_collect_latest_scan_paths_expands_directory_targets() -> None:
             status="ok",
             message="",
             findings=[],
-        )
+        ),
     )
 
     assert cli._describe_current_scope_paths() == [
@@ -230,24 +207,3 @@ def test_sanitize_assistant_output_truncates_dsml_payload() -> None:
     )
 
     assert cli._sanitize_assistant_output(text) == "现在需要获取 UserService.java 的完整代码。使用 read_source_code。"
-
-
-def test_build_patch_feedback_prompt_replans_followups_before_current() -> None:
-    cli = AutoPatchCLI.__new__(AutoPatchCLI)
-    discarded = [
-        SimpleNamespace(file_path="src/main/java/demo/User.java"),
-        SimpleNamespace(file_path="src/main/java/demo/AppConfig.java"),
-    ]
-
-    prompt = cli._build_patch_feedback_prompt(
-        pending_file="src/main/java/demo/UserService.java",
-        user_feedback="加一句注释",
-        discarded_followups=discarded,
-    )
-
-    assert "加一句注释" in prompt
-    assert "- src/main/java/demo/User.java" in prompt
-    assert "- src/main/java/demo/AppConfig.java" in prompt
-    assert "请先为上述后续文件重新调用 propose_patch" in prompt
-    assert "当前文件的补丁必须最后提交" in prompt
-    assert "src/main/java/demo/UserService.java" in prompt
