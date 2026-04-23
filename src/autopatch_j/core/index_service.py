@@ -12,7 +12,7 @@ from autopatch_j.config import get_project_state_dir
 
 @dataclass(slots=True)
 class IndexEntry:
-    """索引项数据模型"""
+    """单条索引记录。"""
     path: str
     name: str
     kind: str
@@ -23,9 +23,8 @@ class IndexEntry:
 
 class IndexService:
     """
-    符号索引服务 (Core Service)
-    职责：使用 Tree-sitter 扫描项目并建立 SQLite 符号索引。
-    支持增量扫描（基于 mtime）。
+    符号索引服务。
+    职责：扫描项目并建立 SQLite 索引，必要时补充 Tree-sitter 符号信息。
     """
 
     def __init__(self, repo_root: Path, ignored_dirs: set[str] | None = None) -> None:
@@ -38,7 +37,7 @@ class IndexService:
         self._init_db()
 
     def _init_db(self) -> None:
-        """初始化 SQLite 数据库结构"""
+        """初始化 SQLite 数据库结构。"""
         with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS entries (
@@ -55,7 +54,7 @@ class IndexService:
 
     @contextmanager
     def _connect(self):
-        """数据库连接上下文管理器"""
+        """返回数据库连接上下文。"""
         conn = sqlite3.connect(self.db_path)
         try:
             yield conn
@@ -64,15 +63,15 @@ class IndexService:
 
     def rebuild_index(self) -> dict[str, int]:
         """
-        动词规范化：重建索引。
-        逻辑：全量扫描并对比 mtime。
+        重建索引。
+        当前实现使用全量扫描并覆盖旧记录。
         """
         all_entries: list[IndexEntry] = []
         repo_root_abs = os.path.abspath(str(self.repo_root))
         self._reset_symbol_extract_status()
 
         for root, dirs, files in os.walk(repo_root_abs):
-            # 过滤黑名单
+            # 过滤黑名单目录。
             dirs[:] = [d for d in dirs if d not in self.ignored_dirs]
             
             rel_root = os.path.relpath(root, repo_root_abs).replace(os.sep, '/')
@@ -106,7 +105,7 @@ class IndexService:
         return self.get_stats()
 
     def search(self, query: str, limit: int = 20) -> list[IndexEntry]:
-        """模糊搜索符号或路径"""
+        """按名称模糊搜索索引项。"""
         with self._connect() as conn:
             cursor = conn.execute(
                 "SELECT path, name, kind, line, container, mtime FROM entries WHERE name LIKE ? LIMIT ?",
@@ -115,7 +114,7 @@ class IndexService:
             return [IndexEntry(*row) for row in cursor.fetchall()]
 
     def get_stats(self) -> dict[str, int]:
-        """获取索引统计信息"""
+        """获取索引统计信息。"""
         with self._connect() as conn:
             cursor = conn.execute("SELECT kind, COUNT(*) FROM entries GROUP BY kind")
             stats = {kind: count for kind, count in cursor.fetchall()}
@@ -130,7 +129,7 @@ class IndexService:
         }
 
     def _extract_java_symbols(self, rel_path: str, full_path: Path, mtime: float) -> list[IndexEntry]:
-        """使用 Tree-sitter 提取 Java 类和方法"""
+        """使用 Tree-sitter 提取 Java 类和方法。"""
         symbols: list[IndexEntry] = []
         try:
             from tree_sitter import Language, Parser

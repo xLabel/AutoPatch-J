@@ -28,8 +28,8 @@ class LLMClient:
     职责：封装 OpenAI 兼容协议，处理流式响应与工具调用解析。
     """
 
-    # 临时关闭阿里云百炼 DeepSeek 的 DSML 兼容逻辑。
-    # 切回百炼网关时可重新打开。
+    # 默认关闭阿里云百炼 DeepSeek 的 DSML 兼容逻辑。
+    # 如需切回百炼网关，可重新打开。
     ENABLE_DSML_COMPAT = False
 
     def __init__(self, api_key: str, base_url: str, model: str) -> None:
@@ -55,8 +55,8 @@ class LLMClient:
         on_reasoning_token: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         """执行流式对话并解析响应"""
-        
-        # 针对百炼 DeepSeek 的特殊处理：必须在 body 中显式开启
+
+        # 百炼 DeepSeek 需要在 body 中显式开启 thinking。
         stream_options = None
         if extra_body and extra_body.get("enable_thinking"):
              stream_options = {"include_usage": True}
@@ -82,15 +82,14 @@ class LLMClient:
             
             delta = chunk.choices[0].delta
             
-            # 1. 解析思考链 (Reasoning)
-            # 兼容不同厂商的字段名 (reasoning_content 或 reasoning)
+            # 兼容不同厂商的思考链字段名。
             reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
             if reasoning:
                 full_reasoning += reasoning
                 if on_reasoning_token:
                     on_reasoning_token(reasoning)
 
-            # 2. 解析文本内容 (Content)
+            # 解析普通文本内容。
             if delta.content:
                 full_content += delta.content
                 visible_piece = (
@@ -103,7 +102,7 @@ class LLMClient:
                     if on_token:
                         on_token(visible_piece)
 
-            # 3. 解析标准工具调用 (Tool Calls)
+            # 解析标准工具调用。
             if delta.tool_calls:
                 for tc in delta.tool_calls:
                     index = tc.index
@@ -115,18 +114,18 @@ class LLMClient:
                     if tc.function.arguments:
                         tool_calls_map[index]["args"] += tc.function.arguments
 
-        # 刷新最后一段尚未输出的普通文本
+        # 刷新最后一段尚未输出的普通文本。
         tail_piece = self._flush_visible_text(stream_state) if self.ENABLE_DSML_COMPAT and stream_state is not None else ""
         if tail_piece:
             visible_content += tail_piece
             if on_token:
                 on_token(tail_piece)
 
-        # 4. 🚀 工业级增强：处理非标 DSML XML 标签
-        # 如果标准 tool_calls 为空，但 content 中包含 <｜DSML｜> 标签，执行正则提取
+        # 兼容非标准 DSML XML 标签。
+        # 当标准 tool_calls 为空且 content 中包含 <｜DSML｜> 时，回退到正则提取。
         final_tool_calls: list[ToolCall] = []
-        
-        # 先处理标准的
+
+        # 先处理标准 tool_calls。
         for tc_data in tool_calls_map.values():
             try:
                 args = json.loads(tc_data["args"]) if tc_data["args"] else {}
@@ -139,7 +138,7 @@ class LLMClient:
             except json.JSONDecodeError:
                 continue
 
-        # 兜底处理：正则提取 DSML 标签
+        # 兜底处理：正则提取 DSML 标签。
         if self.ENABLE_DSML_COMPAT and not final_tool_calls and self._contains_dsml_markup(full_content):
             dsml_calls = self._parse_dsml_tags(full_content)
             final_tool_calls.extend(dsml_calls)
@@ -200,16 +199,19 @@ class LLMClient:
             name = match.group("name")
             params_raw = match.group("params")
             arguments = {}
-            
-            # 提取每一个参数
+
+            # 提取每一个参数。
             for p_match in self._DSML_PARAM_PATTERN.finditer(params_raw):
                 val = p_match.group("value").strip()
-                # 简单处理：如果是 true/false/数字，进行转换
-                if val.lower() == "true": val = True
-                elif val.lower() == "false": val = False
-                elif val.isdigit(): val = int(val)
+                # 对布尔值和整数做轻量转换。
+                if val.lower() == "true":
+                    val = True
+                elif val.lower() == "false":
+                    val = False
+                elif val.isdigit():
+                    val = int(val)
                 arguments[p_match.group("key")] = val
-            
+
             calls.append(ToolCall(
                 name=name,
                 arguments=arguments,

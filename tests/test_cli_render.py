@@ -126,3 +126,22 @@ def test_renderer_uses_updated_patch_and_check_titles() -> None:
         llm_summary="模型复核未发现需要修复的问题。",
     )
     assert renderer.print_panel.call_args.kwargs["title"] == "检查结果"
+
+
+def test_ensure_prompt_session_reports_clean_init_error(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    cli.renderer.print_error = MagicMock()
+    cli._create_prompt_session = MagicMock(side_effect=RuntimeError("boom"))
+
+    ready = cli._ensure_prompt_session()
+
+    assert ready is False
+    cli.renderer.print_error.assert_called_once_with("CLI 输入环境初始化失败: boom")
+
+
+def test_summarize_observation_extracts_symbol_name_from_search_result(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+
+    summary = cli._summarize_observation("search_symbols", "为您找到以下与 'AppConfig' 相关的匹配项：")
+
+    assert summary == "已定位符号: AppConfig"

@@ -57,3 +57,21 @@ def test_chat_service_keeps_more_detail_when_user_explicitly_requests_code() -> 
     assert "##" not in rendered
     assert "```" not in rendered
     assert "def hello()" in rendered
+
+
+def test_chat_service_detects_explicit_detail_and_code_requests() -> None:
+    service = ChatService()
+
+    assert service.verify_explicit_detail_request("详细展开讲一下")
+    assert service.verify_explicit_code_request("给我一个 Python 代码示例")
+
+
+def test_chat_service_out_of_scope_reply_has_no_garbled_text() -> None:
+    service = ChatService()
+
+    reply = service.fetch_out_of_scope_reply()
+
+    assert "代码" in reply
+    assert "错误日志" in reply
+    assert "锟" not in reply
+    assert "�" not in reply

@@ -29,7 +29,7 @@ def test_patch_lifecycle(tmp_path: Path):
 
 def test_windows_crlf_matching(tmp_path: Path):
     """
-    🚀 专项测试：验证 Windows CRLF 环境下的补丁匹配鲁棒性
+    专项测试：验证 Windows CRLF 环境下的补丁匹配鲁棒性
     场景：磁盘文件是 CRLF，LLM 生成的是 LF。
     """
     java_file = tmp_path / "Win.java"

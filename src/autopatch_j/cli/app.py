@@ -45,8 +45,8 @@ DSML_MARKER_PATTERN = re.compile(r"<[^>\n]*DSML[^>\n]*>", re.IGNORECASE)
 
 class AutoPatchCLI:
     """
-    AutoPatch-J CLI 鎺у埗鍣?
-    鑱岃矗锛氫繚鐣欎氦浜掋€佽ˉ鍏ㄤ笌娓叉煋锛屾妸浠诲姟缂栨帓浜ょ粰鏍稿績鏈嶅姟銆?
+    AutoPatch-J CLI 门面。
+    职责：保留交互、补全与渲染，并把任务编排委托给核心服务。
     """
 
     def __init__(self, cwd: Path) -> None:
@@ -79,7 +79,7 @@ class AutoPatchCLI:
         signal.signal(signal.SIGINT, self._handle_interrupt)
 
     def _handle_interrupt(self, signum: int, frame: Any) -> None:
-        self.renderer.print(f"\n[bold {DECISION_STYLE}]鏀跺埌涓柇淇″彿锛屾鍦ㄩ€€鍑?..[/]")
+        self.renderer.print(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
         sys.exit(0)
 
     def _refresh_cli_components(self) -> None:
@@ -151,7 +151,7 @@ class AutoPatchCLI:
             self.prompt_session = self._create_prompt_session()
             return True
         except Exception as exc:
-            self.renderer.print_error(f"CLI 杈撳叆鐜鍒濆鍖栧け璐? {exc}")
+            self.renderer.print_error(f"CLI 输入环境初始化失败: {exc}")
             return False
 
     def _pick_active_completion(self, buffer: Any) -> Any:
@@ -344,7 +344,7 @@ class AutoPatchCLI:
             return "已读取源代码"
 
         if tool_name == "search_symbols":
-            match = re.search(r"涓?'([^']+)' 鐩稿叧", message)
+            match = re.search(r"['‘]?([^'’]+)['’]?\s*相关", message)
             if match:
                 return f"已定位符号: {match.group(1)}"
             return "已定位相关符号"
