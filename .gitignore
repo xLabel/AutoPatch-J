@@ -50,3 +50,9 @@ Thumbs.db
 target/
 .pdm-python
 .pdm-build/
+
+# Local-only workspace artifacts
+.pytest_temp/
+agent_verify/
+GEMINI.md
+run.bat

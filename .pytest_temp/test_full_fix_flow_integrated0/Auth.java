@@ -1,1 +1,0 @@
-public class Auth { String p = "123"; }

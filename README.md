@@ -1,10 +1,10 @@
 # AutoPatch-J
 
-> 中文 · [English](./README_EN.md)
+> English · [中文](./README_CN.md)
 
 <p align="center">
-  <strong>面向 Java 仓库的 AI 代码修复智能体</strong><br/>
-  一个以 <code>Workflow</code> 为主控、以 <code>Agent</code> 为决策引擎的命令行系统，支持代码检查、代码讲解、补丁生成与人工确认。
+  <strong>An AI code repair agent for Java repositories</strong><br/>
+  A command-line system built with <code>Workflow</code> as the controller and <code>Agent</code> as the decision engine, covering code inspection, code explanation, patch generation, and human confirmation.
 </p>
 
 <p align="center">
@@ -16,202 +16,197 @@
   <img src="https://img.shields.io/badge/CLI-Rich%20%2B%20prompt--toolkit-F59E0B?style=flat-square" alt="Rich + prompt-toolkit" />
 </p>
 
-## 项目简介
+## Overview
 
-AutoPatch-J 是一个面向 **Java 仓库** 的 AI 代码修复 CLI。  
-它不把大模型当成“自由漫游整个仓库的黑盒助手”，而是把大模型放进一套受控的工程化链路里：
+AutoPatch-J is an AI code repair CLI currently aimed at **Java repositories**.  
+Instead of treating the model as a free-roaming black-box assistant, it places the model inside a controlled engineering pipeline:
 
-- 先做 **意图识别**
-- 再做 **范围解析**
-- 必要时执行 **静态扫描**
-- 按 finding 逐项推进 **补丁生成**
-- 最后进入 **人工确认工作台**
+- identify intent first
+- resolve scope next
+- run static scanning when needed
+- advance patch generation one finding at a time
+- enter a human confirmation workspace at the end
 
-它解决的不是“如何让模型多说一点”，而是“如何让代码修复这件事更稳定、更可验证、更可回看”。
+The project is not trying to make the model "talk more". It is trying to make code repair more stable, verifiable, and reviewable.
 
-## 核心亮点
+## Highlights
 
-### Workflow + Agent，而不是纯 Agent 放飞
+### Workflow + Agent, instead of an unconstrained Agent
 
-系统的主控权在 `Workflow`，不在 LLM：
+Control stays in `Workflow`, not in the LLM:
 
-- `Workflow` 管意图、范围、状态和补丁队列
-- `Agent` 管讲解、甄别、补丁生成和补丁重写
+- `Workflow` manages intent, scope, state, and patch queues
+- `Agent` handles explanation, triage, patch generation, and patch revision
 
-这让系统既保留了 Agent 的灵活性，又尽量避免纯 Agent 常见的失控问题：乱扫全库、重复读文件、跨范围推理、长上下文漂移、补丁不可复核。
+This keeps the flexibility of an Agent while reducing the common failure modes of a pure Agent setup: scanning the whole repo without restraint, rereading files, drifting across scope boundaries, carrying bloated context, or producing patches that are hard to review.
 
-### 补丁是一等对象，不是临时回复
+### Patches are first-class objects, not disposable replies
 
-每个补丁都会被结构化保存为待确认项，包含：
+Each patch is stored as a structured review item with:
 
-- 目标文件
-- 关联 finding
+- target file
+- related finding
 - unified diff
-- 修复理由
-- 语法校验结果
+- rationale
+- syntax validation result
 
-### `@mention` 只认文件和目录
+### `@mention` only recognizes files and directories
 
-当前 `@mention` 的正式能力只包括：
+The formal capability of `@mention` currently includes only:
 
-- 文件
-- 目录
+- files
+- directories
 
-例如：
-
-```text
-autopatch-j> @src/main/java/demo/UserService.java 检查代码
-autopatch-j> @src/main/java/demo 解释一下这个目录
-```
-
-### 扫描器与 LLM 是协作关系，不是替代关系
-
-当前默认扫描器是 **Semgrep**。  
-其余扫描器适配位已预留，但尚未真正接入主链路：
-
-- PMD（Planned）
-- SpotBugs（Planned）
-- Checkstyle（Planned）
-
-LLM 并不直接“凭感觉修代码”，而是优先建立在真实 finding 和源码证据之上。
-
-### 对长会话做了显式收束
-
-项目在多轮交互里显式控制：
-
-- Scope 锁定
-- Tool 白名单
-- 历史消息脱水
-- 聊天输出压缩
-- 待确认补丁工作台
-
-它更像一个可运行的工程系统，而不是一个单次问答机器人。
-
-## 当前能力
-
-### 代码检查
+For example:
 
 ```text
-autopatch-j> @LegacyConfig.java 帮我看看这个文件有没有明显问题
-autopatch-j> @src/main/java/demo 把这个目录扫一遍
-autopatch-j> 看一下这个项目里有没有空指针风险
+autopatch-j> @src/main/java/demo/UserService.java inspect this file
+autopatch-j> @src/main/java/demo explain this directory
 ```
 
-特点：
+### The scanner and the LLM work together
 
-- 本地先扫描
-- finding 逐项推进
-- 支持 `old_string` 失配后的单次重试
-- 生成补丁后自动进入确认流
+The default scanner is **Semgrep**.  
+Other scanner adapter slots already exist, but they are not on the main path yet:
 
-### 代码讲解
+- PMD (Planned)
+- SpotBugs (Planned)
+- Checkstyle (Planned)
+
+The LLM does not patch code "by intuition". It works from real findings and source-code evidence whenever possible.
+
+### Long-running sessions are explicitly controlled
+
+The system keeps multi-turn interaction bounded through:
+
+- scope locking
+- tool whitelists
+- history dehydration
+- compressed chat output
+- a patch confirmation workspace
+
+This makes the project feel more like a runnable engineering system than a one-shot chatbot.
+
+## Current Capabilities
+
+### Code inspection
 
 ```text
-autopatch-j> @LegacyConfig.java 这个文件是干嘛的
-autopatch-j> @src/main/java/demo 解释一下这个目录
+autopatch-j> @LegacyConfig.java check whether this file has obvious issues
+autopatch-j> @src/main/java/demo scan this directory
+autopatch-j> look for null-pointer risks in this project
 ```
 
-特点：
+Characteristics:
 
-- 不触发扫描
-- 单文件讲解默认不越界追踪
-- 多文件讲解允许受控符号导航
-- 输出默认压缩为简洁说明
+- local scan first
+- findings are advanced one by one
+- supports a single retry after an `old_string` mismatch
+- enters patch confirmation automatically after a patch draft is produced
 
-### 补丁解释 / 补丁重写
-
-一旦进入待确认状态，可以继续追问：
+### Code explanation
 
 ```text
-autopatch-j> 为什么这么改？
-autopatch-j> 会影响性能吗？
-autopatch-j> 改成 Objects.equals 的写法
-autopatch-j> 加一行注释说明原因
+autopatch-j> @LegacyConfig.java what does this file do
+autopatch-j> @src/main/java/demo explain this directory
 ```
 
-系统会自动区分：
+Characteristics:
+
+- no scan is triggered
+- single-file explanation does not chase context across files by default
+- multi-file explanation allows controlled symbol navigation
+- output is compressed into a concise explanation by default
+
+### Patch explanation and patch revision
+
+Once the session enters confirmation mode, follow-up prompts can continue from the current patch:
+
+```text
+autopatch-j> why is it changed this way?
+autopatch-j> will this affect performance?
+autopatch-j> rewrite it with Objects.equals
+autopatch-j> add one comment to explain the reason
+```
+
+The system distinguishes automatically between:
 
 - `patch_explain`
 - `patch_revise`
 
-### 编程相关聊天
+### Programming-related chat
 
-`general_chat` 当前被限制在工程相关范围内：
+`general_chat` is currently limited to engineering-related topics:
 
-- 编程语言
-- 算法
-- 调试
-- 架构
-- 工具使用
-- 项目本身
+- programming languages
+- algorithms
+- debugging
+- architecture
+- tool usage
+- project-specific questions
 
-它不是泛生活问答机器人。
+It is not intended to be a general lifestyle chatbot.
 
-## 一条真实链路
+## A Real Execution Path
 
-下面这张图只画 **`code_audit` 主链路**。它是项目里最长、最能体现 `Workflow + Agent` 协作方式的一条执行路径。
+Using `code_audit` as an example, a full execution goes through the following steps:
 
-```mermaid
-flowchart TD
-    A[用户输入] --> B[IntentService]
-    B --> C[ScopeService]
-    C --> D[code_audit]
-    D --> E[ScanService]
-    E --> F[AuditBacklogService]
-    F --> G[AutoPatchAgent]
-    G --> H[Tool Layer]
-    H --> I[PatchEngine]
-    I --> J[WorkflowService]
-    J --> K[ActiveWorkspace]
-    K --> L[人工确认: apply / discard / revise]
-```
+1. user input enters `IntentService`
+2. `ScopeService` resolves the code scope
+3. routing selects `code_audit`
+4. `ScanService` performs the local static scan first
+5. `AuditBacklogService` advances the findings one by one
+6. `AutoPatchAgent` uses tools to gather evidence and generate a patch for the current finding
+7. `PatchEngine` handles `old_string` matching, diff generation, and syntax validation
+8. `WorkflowService` writes the result into `ActiveWorkspace`
+9. the flow enters human confirmation: `apply / discard / revise`
 
-其他分流入口：
+Other routes:
 
-- `code_explain`：`AutoPatchAgent`
-- `general_chat`：`ChatService -> AutoPatchAgent`
-- `patch_explain / patch_revise`：`WorkflowService + AutoPatchAgent`
+- `code_explain`: `AutoPatchAgent`
+- `general_chat`: `ChatService -> AutoPatchAgent`
+- `patch_explain / patch_revise`: `WorkflowService + AutoPatchAgent`
 
-## 架构速览
+## Architecture at a Glance
 
 ### `cli/`
 
-交互层，负责：
+The interaction layer, responsible for:
 
-- Prompt 输入
-- 命令分发
-- 面板渲染
-- 自动补全
+- prompt input
+- command dispatch
+- panel rendering
+- autocomplete
 
-关键入口：
+Primary entry point:
 
 - `src/autopatch_j/cli/app.py`
 
 ### `core/`
 
-系统骨架，负责：
+The system backbone, responsible for:
 
-- 意图识别：`IntentService`
-- 会话连续性判断：`ContinuityJudgeService`
-- 范围解析：`ScopeService`
-- 扫描：`ScanService`
-- finding backlog：`AuditBacklogService`
-- 补丁工作台：`WorkflowService`
-- 状态持久化：`ArtifactManager`
-- 输出治理：`ChatService`
-- 补丁引擎：`PatchEngine`
+- intent detection: `IntentService`
+- session continuity decisions: `ContinuityJudgeService`
+- scope resolution: `ScopeService`
+- scanning: `ScanService`
+- finding backlog management: `AuditBacklogService`
+- patch workspace management: `WorkflowService`
+- state persistence: `ArtifactManager`
+- output shaping: `ChatService`
+- patch application rules: `PatchEngine`
 
 ### `agent/`
 
-LLM 层，负责：
+The LLM layer, responsible for:
 
-- Task Profile
-- ReAct 循环
-- Tool 调用
-- Prompt 编排
-- History 脱水
+- task profiles
+- the ReAct loop
+- tool calls
+- prompt composition
+- history dehydration
 
-关键文件：
+Key files:
 
 - `src/autopatch_j/agent/agent.py`
 - `src/autopatch_j/agent/prompts.py`
@@ -219,7 +214,7 @@ LLM 层，负责：
 
 ### `tools/`
 
-提供给 Agent 的工具适配器：
+Tool adapters exposed to the Agent:
 
 - `read_source_code`
 - `get_finding_detail`
@@ -228,20 +223,20 @@ LLM 层，负责：
 
 ### `scanners/`
 
-静态扫描器适配层。当前真正跑通的是 **Semgrep**。
+The static scanner adapter layer. The only scanner fully wired into the main path right now is **Semgrep**.
 
 ### `validators/`
 
-负责：
+Responsible for:
 
-- `Tree-sitter` 语法校验
-- 应用补丁后的语义重扫验证
+- `Tree-sitter` syntax validation
+- semantic rescans after patch application
 
-## LLM 是如何被使用的
+## How the LLM Is Used
 
-### Task Profile，而不是单一聊天模式
+### Task profiles instead of one generic chat mode
 
-当前 Agent 有 5 个明确的任务入口：
+The Agent currently has five explicit task entry points:
 
 - `code_audit`
 - `code_explain`
@@ -249,105 +244,106 @@ LLM 层，负责：
 - `patch_explain`
 - `patch_revise`
 
-每个任务都有独立的：
+Each task owns its own:
 
-- System Prompt
-- Tool 白名单
-- 输出约束
+- system prompt
+- tool whitelist
+- output constraints
 
-### Tool 权限是非对称的
+### Tool permissions are intentionally asymmetric
 
-例如：
+For example:
 
-- `code_audit`：允许 `get_finding_detail / read_source_code / propose_patch`
-- `code_explain`：单文件只开 `read_source_code`
-- `patch_revise`：允许 `search_symbols / read_source_code / get_finding_detail / propose_patch`
+- `code_audit`: `get_finding_detail / read_source_code / propose_patch`
+- `code_explain`: single-file mode opens only `read_source_code`
+- `patch_revise`: `search_symbols / read_source_code / get_finding_detail / propose_patch`
 
-这不是限制模型，而是把模型的自由度放在真正需要的地方。
+This is not about restricting the model for its own sake. It is about putting model freedom where it is actually useful.
 
-### ReAct 被保留，但被 Workflow 收束
+### ReAct is preserved, but bounded by Workflow
 
-Agent 仍然是 ReAct 风格：
+The Agent still follows a ReAct-style loop:
 
-1. 接收任务 Prompt
-2. 判断是否调工具
-3. 观察结果
-4. 继续推理直到生成回答或补丁
+1. receive the task prompt
+2. decide whether to call a tool
+3. observe the result
+4. continue until it produces an answer or a patch
 
-但它始终受到这些约束：
+But the loop always runs under these constraints:
 
-- Tool 白名单
-- Focus Scope
-- Workspace 状态
-- 历史消息脱水
+- tool whitelist
+- focus scope
+- workspace state
+- dehydrated history
 
-这正是 AutoPatch-J 的关键设计取舍：  
-**让 Agent 保留智能，让 Workflow 保留边界。**
+That is the key design tradeoff in AutoPatch-J:  
+**let the Agent keep intelligence, and let Workflow keep boundaries.**
 
-## 工程细节
+## Engineering Details
 
-### 1. 逐 finding 推进
+### 1. Finding-by-finding progression
 
-`code_audit` 不是“扫描一次后把所有问题扔给 LLM 自由发挥”，而是由 `AuditBacklogService` 建立一个 finding backlog，逐项推进。
+`code_audit` is not "scan once and let the LLM freestyle over the whole result set".  
+Instead, `AuditBacklogService` builds a finding backlog and advances it item by item.
 
-收益：
+Benefits:
 
-- 当前目标始终明确
-- 单个 finding 失败不会吞掉后续 finding
-- patch retry 更可控
+- the current target stays explicit
+- one failed finding does not swallow the rest
+- patch retry stays controlled
 
-### 2. Patch 安全链路
+### 2. Patch safety chain
 
-`PatchEngine` 在 draft 阶段会检查：
+At the draft stage, `PatchEngine` checks:
 
-- 文件是否存在
-- `old_string` 是否匹配
-- 匹配是否唯一
-- diff 是否可生成
-- `Tree-sitter` 语法校验是否通过
+- whether the file exists
+- whether `old_string` matches
+- whether the match is unique
+- whether a diff can be generated
+- whether `Tree-sitter` syntax validation passes
 
-真正 `apply` 后，`SemanticValidator` 会对目标文件重新扫描，验证对应 finding 是否真的消失。
+After a real `apply`, `SemanticValidator` rescans the target file and verifies that the corresponding finding actually disappeared.
 
-### 3. 上下文控制
+### 3. Context control
 
-项目显式做了几层 Context Engineering：
+The project applies several layers of Context Engineering explicitly:
 
-- `@mention` 转真实文件集
-- Workbench Prompt 注入当前工作台状态
-- History Dehydration 压缩旧消息
-- 聊天输出压缩与去 Markdown 化
+- resolve `@mention` into real file sets
+- inject current workspace state into the workbench prompt
+- compress old messages through History Dehydration
+- compress chat output and strip Markdown-heavy structure
 
-目标不是“让模型看到更多”，而是“让模型只看到对当前任务真正有用的东西”。
+The goal is not "show the model more". It is "show the model only what is truly useful for the current task".
 
-### 4. SQLite + Tree-sitter 索引
+### 4. SQLite + Tree-sitter indexing
 
-`IndexService` 使用：
+`IndexService` uses:
 
-- `SQLite` 做本地索引
-- `Tree-sitter` 提取 `class / method`
+- `SQLite` for local indexing
+- `Tree-sitter` to extract `class / method`
 
-同时保留了显式降级状态，避免被兜底逻辑“看起来还能跑”所欺骗。
+It also keeps explicit degradation state so the system is not fooled by fallback logic that merely "looks like it still works".
 
-### 5. Finding 证据纠偏
+### 5. Correcting finding evidence
 
-`FindingSnippetService` 会优先按 `path + line range` 回源文件提取真实代码片段，而不是盲信扫描器返回的原始 snippet。
+`FindingSnippetService` prefers reconstructing real code snippets from `path + line range`, instead of blindly trusting the raw snippet returned by the scanner.
 
-这让 finding 证据更稳定，也减少了 LLM 因脏片段而误判的概率。
+This makes finding evidence more stable and reduces the chance that the LLM is misled by dirty or unrelated fragments.
 
-## 快速开始
+## Quick Start
 
-### 环境要求
+### Requirements
 
 - Python `3.11+`
-- OpenAI-Compatible LLM 接口
+- an OpenAI-Compatible LLM endpoint
 
-安装依赖：
+Install dependencies:
 
 ```bash
 pip install -e .[test]
 ```
 
-### 环境变量
+### Environment Variables
 
 ```bash
 set LLM_API_KEY=your_api_key
@@ -355,44 +351,44 @@ set LLM_BASE_URL=https://api.deepseek.com
 set LLM_MODEL=deepseek-chat
 ```
 
-### 启动
+### Launch
 
-#### Demo 模式
+#### Demo Mode
 
 ```bash
 run.bat
 ```
 
-默认会进入：
+The default target is:
 
 ```text
 examples/demo-repo
 ```
 
-#### 手动运行
+#### Manual Run
 
 ```bash
 python -m autopatch_j
 ```
 
-## 目录结构
+## Project Layout
 
 ```text
 src/autopatch_j/
-├─ agent/         # LLM Client、Prompt、ReAct Loop、Task Profile
-├─ cli/           # prompt-toolkit + Rich 交互层
-├─ core/          # Workflow、Scope、Scan、Workspace、Patch Lifecycle
-├─ scanners/      # Semgrep 与扩展扫描器适配位
-├─ tools/         # Agent 可调用工具
-└─ validators/    # 语法与语义校验
+├─ agent/         # LLM client, prompts, ReAct loop, task profiles
+├─ cli/           # prompt-toolkit + Rich interaction layer
+├─ core/          # workflow, scope, scan, workspace, patch lifecycle
+├─ scanners/      # Semgrep and future scanner adapters
+├─ tools/         # tools exposed to the Agent
+└─ validators/    # syntax and semantic validation
 
-examples/demo-repo/   # 内置演示仓库
-tests/                # 回归测试
+examples/demo-repo/   # built-in demo repository
+tests/                # regression tests
 ```
 
 ---
 
-如果你想最快进入代码，建议从这里开始：
+If you want to enter the codebase quickly, start here:
 
 1. `src/autopatch_j/cli/app.py`
 2. `src/autopatch_j/core/workflow_service.py`

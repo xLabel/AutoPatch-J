@@ -1,1 +1,0 @@
-public class Legacy { void t() { a.equals("debug"); } }
