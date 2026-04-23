@@ -68,7 +68,7 @@ class SourceReaderTool(Tool):
             )
         else:
             entry = IndexEntry(path=path, name=path, kind="file", line=0)
-        code = fetcher.fetch_entry(entry)
+        code = fetcher.fetch_entry_source(entry)
 
         if code.startswith("错误"):
             return ToolResult(status="error", message=code)

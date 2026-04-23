@@ -83,7 +83,7 @@ class AuditBacklogService:
         item.last_error_code = error_code
         item.last_error_message = error_message
 
-    def fetch_attempt_decision(
+    def infer_attempt_decision(
         self,
         current_item: AuditFindingItem,
         messages: list[dict[str, Any]],

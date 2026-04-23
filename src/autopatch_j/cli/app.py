@@ -313,7 +313,7 @@ class AutoPatchCLI:
     ) -> str:
         if answer_intent is None or raw_user_text is None or self.chat_service is None:
             return answer
-        return self.chat_service.fetch_display_answer(
+        return self.chat_service.build_display_answer(
             user_text=raw_user_text,
             answer=answer,
             intent=answer_intent,
@@ -520,4 +520,3 @@ class AutoPatchCLI:
 def main() -> int:
     cli = AutoPatchCLI(Path.cwd())
     return cli.run()
-

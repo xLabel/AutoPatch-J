@@ -113,7 +113,7 @@ class ChatService:
     def fetch_out_of_scope_reply(self) -> str:
         return "我主要处理代码、修复和项目相关问题。如果你有代码、错误日志或补丁需求，我可以继续。"
 
-    def fetch_display_answer(
+    def build_display_answer(
         self,
         user_text: str,
         answer: str,

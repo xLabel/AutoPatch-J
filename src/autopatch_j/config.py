@@ -52,7 +52,7 @@ class AppConfig:
         """检查 LLM 必要配置是否就绪"""
         return bool(self.llm_api_key and self.llm_base_url)
 
-    def get_missing_llm_msg(self) -> str:
+    def get_missing_llm_message(self) -> str:
         """获取配置指引"""
         return (
             "LLM 核心配置缺失。请确保已设置以下环境变量：\n"

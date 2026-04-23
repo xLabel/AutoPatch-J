@@ -27,7 +27,7 @@ def test_chat_service_compacts_long_markdown_answer_by_default() -> None:
         "如果需要，我还可以继续展开 Java 和 Python 代码实现。\n"
     )
 
-    compacted = service.fetch_display_answer(
+    compacted = service.build_display_answer(
         user_text="leetcode 第1题的解法？",
         answer=answer,
         intent=IntentType.GENERAL_CHAT,
@@ -48,7 +48,7 @@ def test_chat_service_keeps_more_detail_when_user_explicitly_requests_code() -> 
         "```\n"
     )
 
-    rendered = service.fetch_display_answer(
+    rendered = service.build_display_answer(
         user_text="给我 Python 代码示例",
         answer=answer,
         intent=IntentType.GENERAL_CHAT,

@@ -49,7 +49,7 @@ def test_audit_backlog_service_detects_retryable_old_string_error() -> None:
     service = AuditBacklogService()
     current_item = service.fetch_backlog(_scan_result())[0]
 
-    decision = service.fetch_attempt_decision(
+    decision = service.infer_attempt_decision(
         current_item=current_item,
         messages=[
             {

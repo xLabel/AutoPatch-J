@@ -62,7 +62,7 @@ class IndexService:
         finally:
             conn.close()
 
-    def perform_rebuild(self) -> dict[str, int]:
+    def rebuild_index(self) -> dict[str, int]:
         """
         动词规范化：重建索引。
         逻辑：全量扫描并对比 mtime。

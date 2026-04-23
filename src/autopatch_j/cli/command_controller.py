@@ -105,7 +105,7 @@ class CliCommandController:
         self.context.renderer.print_step(f"扫描器运行时自检: {status}")
 
         assert self.context.indexer is not None
-        stats = self.context.indexer.perform_rebuild()
+        stats = self.context.indexer.rebuild_index()
         self.context.renderer.print_success(f"初始化完成，索引 {stats.get('total', 0)} 项")
 
     def handle_status(self) -> None:
@@ -160,7 +160,7 @@ class CliCommandController:
         if not self.context.indexer:
             return
         self.context.renderer.print_step("正在重新构建索引...")
-        stats = self.context.indexer.perform_rebuild()
+        stats = self.context.indexer.rebuild_index()
         self.context.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
 
     def handle_apply(self, pending: PatchDraft) -> None:

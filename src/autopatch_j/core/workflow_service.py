@@ -78,7 +78,7 @@ class WorkflowService:
         self.artifacts.persist_workspace(workspace)
         return workspace
 
-    def persist_replaced_remaining_patch_items(
+    def replace_remaining_patch_items(
         self,
         replacement_items: list[PatchReviewItem],
     ) -> ActiveWorkspace:

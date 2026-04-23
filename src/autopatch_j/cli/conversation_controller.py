@@ -147,7 +147,7 @@ class CliConversationController:
         self.context.agent.set_focus_paths(scope.focus_files if scope.is_locked else [])
         try:
             self.context.renderer.print_tool_start("scan_project", caller="AGENT")
-            scan_id, scan_result = self.context.scan_service.fetch_scan_snapshot(scope)
+            scan_id, scan_result = self.context.scan_service.run_scan_and_persist(scope)
         except RuntimeError as exc:
             self.context.renderer.print_error(str(exc))
             return
@@ -180,7 +180,7 @@ class CliConversationController:
                 prompt=prompt,
                 agent_call=self.context.agent.perform_code_audit,
             ) or []
-            decision = self.context.audit_backlog_service.fetch_attempt_decision(current_finding, new_messages)
+            decision = self.context.audit_backlog_service.infer_attempt_decision(current_finding, new_messages)
             if decision.outcome is AuditAttemptOutcome.PATCH_READY:
                 self.context.audit_backlog_service.persist_mark_patch_ready(backlog, current_finding.finding_id)
                 continue
@@ -205,7 +205,7 @@ class CliConversationController:
                     prompt=retry_prompt,
                     agent_call=self.context.agent.perform_code_audit,
                 ) or []
-                retry_decision = self.context.audit_backlog_service.fetch_attempt_decision(current_finding, retry_messages)
+                retry_decision = self.context.audit_backlog_service.infer_attempt_decision(current_finding, retry_messages)
                 if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
                     self.context.audit_backlog_service.persist_mark_patch_ready(backlog, current_finding.finding_id)
                 else:
@@ -315,7 +315,7 @@ class CliConversationController:
             user_text=text,
         )
         self.context.agent.set_focus_paths(self.context._fetch_review_scope_paths(current_item))
-        self.context.workflow_service.persist_replaced_remaining_patch_items([])
+        self.context.workflow_service.replace_remaining_patch_items([])
         self.context._run_agent_request(
             prompt=prompt,
             agent_call=self.context.agent.perform_patch_revise,

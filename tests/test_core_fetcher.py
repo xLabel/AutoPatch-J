@@ -24,11 +24,11 @@ def test_fetch_logic(tmp_path: Path):
     
     # 1. 测试全文提取
     full_entry = IndexEntry(path=file_path, name="Demo.java", kind="file", line=0)
-    assert fetcher.fetch_entry(full_entry) == java_code
+    assert fetcher.fetch_entry_source(full_entry) == java_code
     
     # 2. 测试智能块提取 (行号 2 开始)
     method_entry = IndexEntry(path=file_path, name="run", kind="method", line=2)
-    snippet = fetcher.fetch_entry(method_entry)
+    snippet = fetcher.fetch_entry_source(method_entry)
     assert "public void run()" in snippet
     assert "// Line 3" in snippet
 
@@ -71,7 +71,7 @@ def test_fetcher_marks_full_when_ast_extract_succeeds(tmp_path: Path, monkeypatc
 
     fetcher = CodeFetcher(tmp_path)
     monkeypatch.setattr(fetcher, "_find_node_at_line", lambda node, line: FakeNode())
-    snippet = fetcher.fetch_entry(IndexEntry(path=file_path, name="run", kind="method", line=2))
+    snippet = fetcher.fetch_entry_source(IndexEntry(path=file_path, name="run", kind="method", line=2))
 
     assert "public void run()" in snippet
     assert fetcher.last_extract_mode == "full"
@@ -98,7 +98,7 @@ def test_fetcher_marks_fallback_when_ast_extract_fails(tmp_path: Path, monkeypat
     monkeypatch.setattr("builtins.__import__", fake_import)
 
     fetcher = CodeFetcher(tmp_path)
-    snippet = fetcher.fetch_entry(IndexEntry(path=file_path, name="run", kind="method", line=2))
+    snippet = fetcher.fetch_entry_source(IndexEntry(path=file_path, name="run", kind="method", line=2))
 
     assert "public void run()" in snippet
     assert fetcher.last_extract_mode == "fallback"

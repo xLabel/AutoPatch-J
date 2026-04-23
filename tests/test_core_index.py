@@ -23,7 +23,7 @@ def test_rebuild_index_and_stats(tmp_path: Path):
     )
     
     indexer = IndexService(tmp_path)
-    stats = indexer.perform_rebuild()
+    stats = indexer.rebuild_index()
     
     # 核心测试：验证物理文件和目录是否被发现
     assert stats.get("file", 0) >= 1
@@ -37,7 +37,7 @@ def test_search_symbols(tmp_path: Path):
     java_file.write_text("public class AuthService { public void login() {} }", encoding="utf-8")
     
     indexer = IndexService(tmp_path)
-    indexer.perform_rebuild()
+    indexer.rebuild_index()
     
     # 基础测试：搜索文件名
     results = indexer.search("AuthService")
@@ -51,7 +51,7 @@ def test_ignored_dirs(tmp_path: Path):
     (git_dir / "config").write_text("...")
     
     indexer = IndexService(tmp_path, ignored_dirs={".git"})
-    indexer.perform_rebuild()
+    indexer.rebuild_index()
     
     results = indexer.search(".git")
     assert len(results) == 0
@@ -72,7 +72,7 @@ def test_index_service_marks_symbol_extract_degraded_when_dependency_missing(
     monkeypatch.setattr("builtins.__import__", fake_import)
 
     indexer = IndexService(tmp_path)
-    stats = indexer.perform_rebuild()
+    stats = indexer.rebuild_index()
     status = indexer.fetch_symbol_extract_status()
 
     assert stats.get("file", 0) >= 1
@@ -119,7 +119,7 @@ def test_index_service_extracts_class_and_method_when_tree_sitter_available(
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
     indexer = IndexService(tmp_path)
-    stats = indexer.perform_rebuild()
+    stats = indexer.rebuild_index()
     results = indexer.search("run")
     status = indexer.fetch_symbol_extract_status()
 
@@ -155,7 +155,7 @@ def test_index_service_marks_symbol_extract_degraded_when_runtime_fails(
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
     indexer = IndexService(tmp_path)
-    stats = indexer.perform_rebuild()
+    stats = indexer.rebuild_index()
     status = indexer.fetch_symbol_extract_status()
 
     assert stats.get("file", 0) >= 1

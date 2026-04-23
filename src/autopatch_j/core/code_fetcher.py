@@ -17,7 +17,7 @@ class CodeFetcher:
         self.last_extract_mode: str = "full"
         self.last_extract_error: str | None = None
 
-    def fetch_entry(self, entry: IndexEntry) -> str:
+    def fetch_entry_source(self, entry: IndexEntry) -> str:
         """
         根据索引项抓取代码。
         如果是类或方法，会尝试定位完整语法块。

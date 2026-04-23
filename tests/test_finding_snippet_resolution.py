@@ -18,7 +18,7 @@ def _build_agent(repo_root: Path) -> AutoPatchAgent:
     indexer = IndexService(repo_root)
     patch_engine = PatchEngine(repo_root)
     fetcher = CodeFetcher(repo_root)
-    indexer.perform_rebuild()
+    indexer.rebuild_index()
     return AutoPatchAgent(repo_root, artifacts, indexer, patch_engine, fetcher, llm=None)
 
 

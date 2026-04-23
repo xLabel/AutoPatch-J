@@ -80,7 +80,7 @@ def test_cli_code_audit_triggers_local_scan_then_agent(tmp_path: Path) -> None:
 
     cli.intent_service.fetch_intent = MagicMock(return_value=IntentType.CODE_AUDIT)
     cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
-    cli.scan_service.fetch_scan_snapshot = MagicMock(
+    cli.scan_service.run_scan_and_persist = MagicMock(
         return_value=(
             "scan-1",
             ScanResult(
@@ -107,7 +107,7 @@ def test_cli_code_audit_triggers_local_scan_then_agent(tmp_path: Path) -> None:
     cli.handle_chat("@User.java 检查代码")
 
     assert cli.scope_service.fetch_scope.call_count == 2
-    cli.scan_service.fetch_scan_snapshot.assert_called_once()
+    cli.scan_service.run_scan_and_persist.assert_called_once()
     cli.renderer.print_tool_start.assert_called_once_with("scan_project", caller="AGENT")
     assert captured["agent_call"] == cli.agent.perform_code_audit
     assert captured["render_no_issue_panel"] is True
@@ -123,7 +123,7 @@ def test_cli_code_audit_targets_single_finding_prompt(tmp_path: Path) -> None:
 
     cli.intent_service.fetch_intent = MagicMock(return_value=IntentType.CODE_AUDIT)
     cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
-    cli.scan_service.fetch_scan_snapshot = MagicMock(
+    cli.scan_service.run_scan_and_persist = MagicMock(
         return_value=(
             "scan-1",
             ScanResult(
@@ -174,7 +174,7 @@ def test_cli_code_explain_skips_scan_and_uses_explain_entry(tmp_path: Path) -> N
 
     cli.intent_service.fetch_intent = MagicMock(return_value=IntentType.CODE_EXPLAIN)
     cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
-    cli.scan_service.fetch_scan_snapshot = MagicMock()
+    cli.scan_service.run_scan_and_persist = MagicMock()
     captured: dict[str, object] = {}
     cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
         {"agent_call": agent_call, "compact_observation": compact_observation}
@@ -182,7 +182,7 @@ def test_cli_code_explain_skips_scan_and_uses_explain_entry(tmp_path: Path) -> N
 
     cli.handle_chat("@User.java 解释一下代码")
 
-    cli.scan_service.fetch_scan_snapshot.assert_not_called()
+    cli.scan_service.run_scan_and_persist.assert_not_called()
     assert captured["agent_call"] == cli.agent.perform_code_explain
     assert captured["compact_observation"] is True
 
@@ -280,7 +280,7 @@ def test_cli_new_task_in_review_state_resets_review_context(tmp_path: Path) -> N
     cli.agent.messages = [{"role": "user", "content": "old review"}]
     cli.intent_service.fetch_intent = MagicMock(return_value=IntentType.CODE_AUDIT)
     cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
-    cli.scan_service.fetch_scan_snapshot = MagicMock(
+    cli.scan_service.run_scan_and_persist = MagicMock(
         return_value=(
             "scan-2",
             ScanResult(
@@ -326,7 +326,7 @@ def test_cli_code_audit_retries_current_finding_then_continues_remaining(tmp_pat
 
     cli.intent_service.fetch_intent = MagicMock(return_value=IntentType.CODE_AUDIT)
     cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
-    cli.scan_service.fetch_scan_snapshot = MagicMock(
+    cli.scan_service.run_scan_and_persist = MagicMock(
         return_value=(
             "scan-1",
             ScanResult(

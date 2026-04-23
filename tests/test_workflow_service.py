@@ -110,7 +110,7 @@ def test_workflow_service_persist_applied_current_patch_advances_until_idle(tmp_
     assert second_pass.mode is WorkspaceStatus.IDLE
 
 
-def test_workflow_service_persist_replaced_remaining_patch_items_keeps_applied_head(tmp_path: Path) -> None:
+def test_workflow_service_replace_remaining_patch_items_keeps_applied_head(tmp_path: Path) -> None:
     service = WorkflowService(ArtifactManager(tmp_path))
     service.persist_review_workspace(
         scope=_scope(),
@@ -122,7 +122,7 @@ def test_workflow_service_persist_replaced_remaining_patch_items_keeps_applied_h
     )
     service.persist_applied_current_patch()
 
-    replaced = service.persist_replaced_remaining_patch_items(
+    replaced = service.replace_remaining_patch_items(
         [
             _item("item-3", "src/main/java/demo/UserService.java", "F2"),
             _item("item-4", "src/main/java/demo/UserHelper.java", "F3"),

@@ -46,7 +46,7 @@ def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> No
     (repo_root / "README.md").write_text("hello", encoding="utf-8")
 
     indexer = IndexService(repo_root)
-    indexer.perform_rebuild()
+    indexer.rebuild_index()
     service = ScopeService(repo_root, indexer, ignored_dirs={".git", ".autopatch-j"})
 
     file_scope = service.fetch_scope("@User.java 检查代码")
@@ -84,7 +84,7 @@ def test_scope_service_rejects_class_and_method_mentions(tmp_path: Path) -> None
     )
 
     indexer = IndexService(repo_root)
-    indexer.perform_rebuild()
+    indexer.rebuild_index()
     service = ScopeService(repo_root, indexer, ignored_dirs={".git", ".autopatch-j"})
 
     assert service.fetch_scope("@UserService 检查代码") is None
@@ -98,13 +98,13 @@ def test_scan_service_persists_scan_result(tmp_path: Path) -> None:
 
     artifacts = ArtifactManager(repo_root)
     indexer = IndexService(repo_root)
-    indexer.perform_rebuild()
+    indexer.rebuild_index()
     scope_service = ScopeService(repo_root, indexer)
     scope = scope_service.fetch_scope("@Demo.java 检查代码")
     assert scope is not None
 
     scan_service = ScanService(repo_root, artifacts)
-    artifact_id, result = scan_service.fetch_scan_snapshot(scope)
+    artifact_id, result = scan_service.run_scan_and_persist(scope)
 
     restored = artifacts.fetch_scan_result(artifact_id)
     assert result.status == "ok"
