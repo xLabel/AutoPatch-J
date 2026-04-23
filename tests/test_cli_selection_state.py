@@ -7,7 +7,7 @@ from prompt_toolkit.buffer import CompletionState
 from prompt_toolkit.completion import Completion
 from prompt_toolkit.document import Document
 
-from autopatch_j.cli import app as cli_app_module
+from autopatch_j.cli import input_controller as input_controller_module
 from autopatch_j.cli.app import AutoPatchCLI
 
 
@@ -16,7 +16,7 @@ def test_select_first_completion_highlights_without_modifying_text(monkeypatch) 
     invalidated = {"called": False}
 
     monkeypatch.setattr(
-        cli_app_module,
+        input_controller_module,
         "get_app",
         lambda: SimpleNamespace(invalidate=lambda: invalidated.__setitem__("called", True)),
     )

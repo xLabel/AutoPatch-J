@@ -7,21 +7,20 @@ from pathlib import Path
 from typing import Any, Callable
 
 from prompt_toolkit import HTML, PromptSession
-from prompt_toolkit.application.current import get_app
-from prompt_toolkit.history import FileHistory
-from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.styles import Style
 
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.agent.llm_client import build_default_llm_client
-from autopatch_j.cli.completer import AutoPatchCompleter
+from autopatch_j.cli.assistant_stream import AssistantStream
+from autopatch_j.cli.command_controller import CliCommandController
+from autopatch_j.cli.conversation_controller import CliConversationController
+from autopatch_j.cli.input_controller import CliInputController
 from autopatch_j.cli.render import (
     DECISION_STYLE,
     MUTED_STYLE,
     SYSTEM_STYLE,
     CliRenderer,
 )
-from autopatch_j.config import GlobalConfig, discover_repo_root, get_project_state_dir
+from autopatch_j.config import GlobalConfig, discover_repo_root
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.audit_backlog_service import AuditBacklogService
 from autopatch_j.core.chat_service import ChatService
@@ -30,28 +29,24 @@ from autopatch_j.core.continuity_judge_service import ContinuityJudgeService
 from autopatch_j.core.index_service import IndexService
 from autopatch_j.core.intent_service import IntentService
 from autopatch_j.core.models import (
-    AuditAttemptOutcome,
     AuditFindingItem,
     CodeScope,
     CodeScopeKind,
-    ConversationRoute,
     IntentType,
     PatchReviewItem,
 )
 from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
 from autopatch_j.core.scan_service import ScanService
 from autopatch_j.core.scope_service import ScopeService
-from autopatch_j.core.validator_service import SemanticValidator
 from autopatch_j.core.workflow_service import WorkflowService
-from autopatch_j.scanners import DEFAULT_SCANNER_NAME, get_scanner
 
 DSML_MARKER_PATTERN = re.compile(r"<[^>\n]*DSML[^>\n]*>", re.IGNORECASE)
 
 
 class AutoPatchCLI:
     """
-    AutoPatch-J CLI 控制器
-    职责：保留交互、补全与渲染，把任务编排交给核心服务。
+    AutoPatch-J CLI 鎺у埗鍣?
+    鑱岃矗锛氫繚鐣欎氦浜掋€佽ˉ鍏ㄤ笌娓叉煋锛屾妸浠诲姟缂栨帓浜ょ粰鏍稿績鏈嶅姟銆?
     """
 
     def __init__(self, cwd: Path) -> None:
@@ -72,59 +67,82 @@ class AutoPatchCLI:
         self.workflow_service: WorkflowService | None = None
         self.agent: AutoPatchAgent | None = None
 
+        self.input_controller: CliInputController | None = None
+        self.command_controller: CliCommandController | None = None
+        self.conversation_controller: CliConversationController | None = None
+        self.assistant_stream: AssistantStream | None = None
         self.prompt_session: PromptSession[str] | None = None
+        self._refresh_cli_components()
         if self.repo_root:
             self._init_services(self.repo_root)
 
         signal.signal(signal.SIGINT, self._handle_interrupt)
 
     def _handle_interrupt(self, signum: int, frame: Any) -> None:
-        self.renderer.print(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
+        self.renderer.print(f"\n[bold {DECISION_STYLE}]鏀跺埌涓柇淇″彿锛屾鍦ㄩ€€鍑?..[/]")
         sys.exit(0)
 
+    def _refresh_cli_components(self) -> None:
+        self.input_controller = CliInputController(
+            index_search=lambda query: self.indexer.search(query) if self.indexer else [],
+            repo_root=self.repo_root,
+        )
+        self.command_controller = CliCommandController(self)
+        self.conversation_controller = CliConversationController(self)
+        self.assistant_stream = AssistantStream(
+            renderer=self.renderer,
+            workflow_service=self.workflow_service,
+            chat_service=self.chat_service,
+            agent=self.agent,
+            sanitize_output=self._sanitize_assistant_output,
+            prepare_display_answer=self._prepare_display_answer,
+            summarize_observation=self._summarize_observation,
+            describe_current_scope_paths=self._describe_current_scope_paths,
+            build_static_scan_summary=self._build_static_scan_summary,
+            build_local_no_issue_summary=self._build_local_no_issue_summary,
+        )
+
+    def _get_input_controller(self) -> CliInputController:
+        if getattr(self, "input_controller", None) is None:
+            self.input_controller = CliInputController(
+                index_search=lambda query: getattr(self, "indexer", None).search(query) if getattr(self, "indexer", None) else [],
+                repo_root=getattr(self, "repo_root", None),
+            )
+        self.input_controller.set_repo_root(getattr(self, "repo_root", None))
+        return self.input_controller
+
+    def _get_command_controller(self) -> CliCommandController:
+        if getattr(self, "command_controller", None) is None:
+            self.command_controller = CliCommandController(self)
+        return self.command_controller
+
+    def _get_conversation_controller(self) -> CliConversationController:
+        if getattr(self, "conversation_controller", None) is None:
+            self.conversation_controller = CliConversationController(self)
+        return self.conversation_controller
+
+    def _get_assistant_stream(self) -> AssistantStream:
+        if getattr(self, "assistant_stream", None) is None:
+            self.assistant_stream = AssistantStream(
+                renderer=self.renderer,
+                workflow_service=self.workflow_service,
+                chat_service=self.chat_service,
+                agent=self.agent,
+                sanitize_output=self._sanitize_assistant_output,
+                prepare_display_answer=self._prepare_display_answer,
+                summarize_observation=self._summarize_observation,
+                describe_current_scope_paths=self._describe_current_scope_paths,
+                build_static_scan_summary=self._build_static_scan_summary,
+                build_local_no_issue_summary=self._build_local_no_issue_summary,
+            )
+        else:
+            self.assistant_stream.workflow_service = self.workflow_service
+            self.assistant_stream.chat_service = self.chat_service
+            self.assistant_stream.agent = self.agent
+        return self.assistant_stream
+
     def _create_prompt_session(self) -> PromptSession[str]:
-        key_bindings = KeyBindings()
-
-        @key_bindings.add("enter")
-        def _(event: Any) -> None:
-            buffer = event.app.current_buffer
-            if buffer.complete_state:
-                changed = self._accept_completion(buffer)
-                if changed:
-                    return
-            buffer.validate_and_handle()
-
-        @key_bindings.add("tab")
-        def _(event: Any) -> None:
-            buffer = event.app.current_buffer
-            self._accept_completion(buffer)
-
-        custom_style = Style.from_dict(
-            {
-                "completion-menu.completion": "bg:#333333 #ffffff",
-                "completion-menu.completion.current": "bg:#007acc #ffffff bold",
-                "completion-menu.meta.completion": "bg:#222222 #888888",
-                "completion-menu.meta.completion.current": "bg:#007acc #ffffff",
-            }
-        )
-
-        history = None
-        if self.repo_root:
-            history = FileHistory(str(get_project_state_dir(self.repo_root) / "history.txt"))
-
-        session = PromptSession(
-            completer=AutoPatchCompleter(self.indexer.search if self.indexer else lambda _: []),
-            key_bindings=key_bindings,
-            style=custom_style,
-            complete_while_typing=True,
-            history=history,
-        )
-
-        def auto_select_first(buffer: Any) -> None:
-            self._select_first_completion(buffer)
-
-        session.default_buffer.on_completions_changed += auto_select_first
-        return session
+        return self._get_input_controller().create_prompt_session()
 
     def _ensure_prompt_session(self) -> bool:
         if self.prompt_session is not None:
@@ -133,61 +151,20 @@ class AutoPatchCLI:
             self.prompt_session = self._create_prompt_session()
             return True
         except Exception as exc:
-            self.renderer.print_error(f"CLI 输入环境初始化失败: {exc}")
+            self.renderer.print_error(f"CLI 杈撳叆鐜鍒濆鍖栧け璐? {exc}")
             return False
 
     def _pick_active_completion(self, buffer: Any) -> Any:
-        state = getattr(buffer, "complete_state", None)
-        if not state:
-            return None
-        completions = getattr(state, "completions", None) or []
-        index = getattr(state, "complete_index", None)
-        if isinstance(index, int) and 0 <= index < len(completions):
-            return completions[index]
-        return completions[0] if completions else None
+        return self._get_input_controller().pick_active_completion(buffer)
 
     def _accept_completion(self, buffer: Any) -> bool:
-        append_space = self._should_append_space_after_completion(buffer)
-        completion = self._pick_active_completion(buffer)
-        if completion is None:
-            buffer.start_completion(select_first=False)
-            append_space = self._should_append_space_after_completion(buffer)
-            completion = self._pick_active_completion(buffer)
-        if completion is None:
-            return False
-        before_text = getattr(buffer, "text", None)
-        before_cursor = getattr(buffer.document, "cursor_position", None)
-        buffer.apply_completion(completion)
-        changed = (
-            getattr(buffer, "text", None) != before_text
-            or getattr(buffer.document, "cursor_position", None) != before_cursor
-        )
-        current_char = getattr(buffer.document, "current_char", "")
-        if append_space and (current_char is None or not str(current_char).isspace()):
-            buffer.insert_text(" ")
-            changed = True
-        return changed
+        return self._get_input_controller().accept_completion(buffer)
 
     def _select_first_completion(self, buffer: Any) -> bool:
-        state = getattr(buffer, "complete_state", None)
-        if not state:
-            return False
-        completions = getattr(state, "completions", None) or []
-        index = getattr(state, "complete_index", None)
-        if not completions or (isinstance(index, int) and 0 <= index < len(completions)):
-            return False
-        state.go_to_index(0)
-        get_app().invalidate()
-        return True
+        return self._get_input_controller().select_first_completion(buffer)
 
     def _should_append_space_after_completion(self, buffer: Any) -> bool:
-        state = getattr(buffer, "complete_state", None)
-        if not state:
-            return False
-        original_document = getattr(state, "original_document", None)
-        if not original_document:
-            return False
-        return bool(re.search(r"(^|\s)@[\w\.]*$", original_document.text_before_cursor))
+        return self._get_input_controller().should_append_space_after_completion(buffer)
 
     def _init_services(self, repo_root: Path) -> None:
         self.artifacts = ArtifactManager(repo_root)
@@ -210,6 +187,7 @@ class AutoPatchCLI:
             fetcher=self.fetcher,
             llm=shared_llm,
         )
+        self._refresh_cli_components()
 
     def run(self) -> int:
         if not self._ensure_prompt_session():
@@ -276,273 +254,25 @@ class AutoPatchCLI:
         return 0
 
     def _handle_review_input(self, user_input: str, current_item: PatchReviewItem) -> None:
-        current_draft = current_item.draft.fetch_patch_draft()
-        assert self.workflow_service is not None
-
-        if user_input.lower() == "apply":
-            self.handle_apply(current_draft)
-            self.workflow_service.persist_applied_current_patch()
-            if not self.workflow_service.verify_has_pending_patch():
-                self.renderer.print_info("补丁队列已清空")
-            return
-
-        if user_input.lower() == "discard":
-            self.handle_discard()
-            self.workflow_service.persist_discarded_current_patch()
-            if not self.workflow_service.verify_has_pending_patch():
-                self.renderer.print_info("补丁队列已清空")
-            return
-
-        self.handle_chat(user_input)
+        self._get_conversation_controller().handle_review_input(user_input, current_item)
 
     def handle_chat(self, text: str) -> None:
-        if not all(
-            [
-                self.agent,
-                self.intent_service,
-                self.continuity_judge_service,
-                self.scope_service,
-                self.scan_service,
-                self.workflow_service,
-            ]
-        ):
-            self.renderer.print_error("系统未初始化，请先执行 /init")
-            return
-
-        stripped_instruction = re.sub(r"@([^\s@]+)", "", text).strip()
-        if "@" in text and not stripped_instruction:
-            self.renderer.print_info("请继续输入代码指令")
-            return
-
-        has_pending_review = self.workflow_service.verify_has_pending_patch()
-        requested_scope = self.scope_service.fetch_scope(text, default_to_project=False)
-        current_item = self.workflow_service.fetch_current_patch_item() if has_pending_review else None
-        current_workspace = self.workflow_service.fetch_workspace() if has_pending_review else None
-        route = self.continuity_judge_service.fetch_route(
-            user_text=text,
-            has_pending_review=has_pending_review,
-            requested_scope=requested_scope,
-            current_patch_file=current_item.file_path if current_item else None,
-            current_scope=current_workspace.scope if current_workspace else None,
-        )
-
-        if route is ConversationRoute.COMMAND:
-            self.handle_command(text)
-            return
-
-        if route is ConversationRoute.NEW_TASK:
-            self.agent.reset_history()
-            if has_pending_review:
-                self.workflow_service.clear_workspace()
-                self.renderer.print_info("已切换到新任务")
-            intent = self.intent_service.fetch_intent(text, has_pending_review=False)
-        else:
-            intent = self.intent_service.fetch_intent(text, has_pending_review=True)
-
-        if intent is IntentType.CODE_AUDIT:
-            self._handle_code_audit(text)
-            return
-        if intent is IntentType.CODE_EXPLAIN:
-            self._handle_code_explain(text)
-            return
-        if intent is IntentType.PATCH_EXPLAIN:
-            self._handle_patch_explain(text)
-            return
-        if intent is IntentType.PATCH_REVISE:
-            self._handle_patch_revise(text)
-            return
-        self._handle_general_chat(text)
+        self._get_conversation_controller().handle_chat(text)
 
     def _handle_code_audit(self, text: str) -> None:
-        assert self.scope_service is not None
-        assert self.scan_service is not None
-        assert self.workflow_service is not None
-        assert self.agent is not None
-        assert self.audit_backlog_service is not None
-
-        scope = self.scope_service.fetch_scope(text, default_to_project=True)
-        if scope is None:
-            self.renderer.print_error("未解析到可检查范围")
-            return
-
-        self.agent.set_focus_paths(scope.focus_files if scope.is_locked else [])
-        try:
-            self.renderer.print_tool_start("scan_project", caller="AGENT")
-            scan_id, scan_result = self.scan_service.fetch_scan_snapshot(scope)
-        except RuntimeError as exc:
-            self.renderer.print_error(str(exc))
-            return
-
-        self.workflow_service.persist_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
-        backlog = self.audit_backlog_service.fetch_backlog(scan_result)
-        if not backlog:
-            self._run_agent_request(
-                prompt=text,
-                agent_call=self.agent.perform_code_audit,
-                scope_paths=self._describe_scope_paths(scope),
-                render_no_issue_panel=True,
-            )
-            if not self.workflow_service.verify_has_pending_patch():
-                self.workflow_service.clear_workspace()
-            return
-
-        while self.audit_backlog_service.verify_has_pending_finding(backlog):
-            current_finding = self.audit_backlog_service.fetch_current_finding(backlog)
-            if current_finding is None:
-                break
-
-            self.agent.reset_history()
-            prompt = self._build_code_audit_prompt(
-                text=text,
-                current_finding=current_finding,
-                force_reread=False,
-            )
-            new_messages = self._run_agent_request(
-                prompt=prompt,
-                agent_call=self.agent.perform_code_audit,
-            ) or []
-            decision = self.audit_backlog_service.fetch_attempt_decision(current_finding, new_messages)
-            if decision.outcome is AuditAttemptOutcome.PATCH_READY:
-                self.audit_backlog_service.persist_mark_patch_ready(backlog, current_finding.finding_id)
-                continue
-
-            if (
-                decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
-                and self.audit_backlog_service.verify_can_retry(current_finding)
-            ):
-                self.audit_backlog_service.persist_mark_retry(
-                    backlog=backlog,
-                    finding_id=current_finding.finding_id,
-                    error_code=decision.error_code,
-                    error_message=decision.error_message,
-                )
-                self.agent.reset_history()
-                retry_prompt = self._build_code_audit_prompt(
-                    text=text,
-                    current_finding=current_finding,
-                    force_reread=True,
-                )
-                retry_messages = self._run_agent_request(
-                    prompt=retry_prompt,
-                    agent_call=self.agent.perform_code_audit,
-                ) or []
-                retry_decision = self.audit_backlog_service.fetch_attempt_decision(current_finding, retry_messages)
-                if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
-                    self.audit_backlog_service.persist_mark_patch_ready(backlog, current_finding.finding_id)
-                else:
-                    self.audit_backlog_service.persist_mark_failed(
-                        backlog=backlog,
-                        finding_id=current_finding.finding_id,
-                        error_code=retry_decision.error_code,
-                        error_message=retry_decision.error_message,
-                    )
-                continue
-
-            self.audit_backlog_service.persist_mark_failed(
-                backlog=backlog,
-                finding_id=current_finding.finding_id,
-                error_code=decision.error_code,
-                error_message=decision.error_message,
-            )
-
-        if not self.workflow_service.verify_has_pending_patch():
-            self.workflow_service.clear_workspace()
+        self._get_conversation_controller().handle_code_audit(text)
 
     def _handle_code_explain(self, text: str) -> None:
-        assert self.scope_service is not None
-        assert self.agent is not None
-        assert self.chat_service is not None
-
-        scope = self.scope_service.fetch_scope(text, default_to_project=False)
-        compact_observation = not self._should_show_full_tool_output(text)
-        self.renderer.print_user_anchor(text)
-        if scope is not None and scope.is_locked:
-            self.agent.set_focus_paths(scope.focus_files)
-            prompt = self._build_code_explain_prompt(text=text, scope=scope)
-            allow_symbol_search = scope.kind is not CodeScopeKind.SINGLE_FILE
-            self.agent.set_code_explain_symbol_search_enabled(allow_symbol_search)
-            self._run_agent_request(
-                prompt=prompt,
-                agent_call=self.agent.perform_code_explain,
-                compact_observation=compact_observation,
-                answer_intent=IntentType.CODE_EXPLAIN,
-                raw_user_text=text,
-                show_chat_anchors=True,
-                plain_answer=True,
-            )
-            return
-
-        self.agent.set_focus_paths([])
-        self.agent.set_code_explain_symbol_search_enabled(True)
-        self._run_agent_request(
-            prompt=text,
-            agent_call=self.agent.perform_general_chat,
-            compact_observation=compact_observation,
-            answer_intent=IntentType.GENERAL_CHAT,
-            raw_user_text=text,
-            show_chat_anchors=True,
-            plain_answer=True,
-        )
+        self._get_conversation_controller().handle_code_explain(text)
 
     def _handle_general_chat(self, text: str) -> None:
-        assert self.agent is not None
-        assert self.chat_service is not None
-        self.renderer.print_user_anchor(text)
-        if not self.chat_service.verify_programming_related(text):
-            self.renderer.print_assistant_anchor()
-            self.renderer.print_plain(self.chat_service.fetch_out_of_scope_reply())
-            return
-        self.agent.set_focus_paths([])
-        self._run_agent_request(
-            prompt=text,
-            agent_call=self.agent.perform_general_chat,
-            compact_observation=not self._should_show_full_tool_output(text),
-            answer_intent=IntentType.GENERAL_CHAT,
-            raw_user_text=text,
-            show_chat_anchors=True,
-            plain_answer=True,
-        )
+        self._get_conversation_controller().handle_general_chat(text)
 
     def _handle_patch_explain(self, text: str) -> None:
-        assert self.workflow_service is not None
-        assert self.agent is not None
-
-        current_item = self.workflow_service.fetch_current_patch_item()
-        if current_item is None:
-            self.renderer.print_error("当前没有待确认补丁")
-            return
-
-        focus_paths = self._fetch_review_scope_paths(current_item)
-        self.agent.set_focus_paths(focus_paths)
-        prompt = self._build_patch_explain_prompt(current_item=current_item, user_text=text)
-        self._run_agent_request(
-            prompt=prompt,
-            agent_call=self.agent.perform_patch_explain,
-        )
+        self._get_conversation_controller().handle_patch_explain(text)
 
     def _handle_patch_revise(self, text: str) -> None:
-        assert self.workflow_service is not None
-        assert self.agent is not None
-
-        current_item = self.workflow_service.fetch_current_patch_item()
-        if current_item is None:
-            self.renderer.print_error("当前没有待确认补丁")
-            return
-
-        remaining_items = self.workflow_service.fetch_remaining_patch_items()
-        prompt = self._build_patch_revise_prompt(
-            current_item=current_item,
-            remaining_items=remaining_items,
-            user_text=text,
-        )
-        self.agent.set_focus_paths(self._fetch_review_scope_paths(current_item))
-        self.workflow_service.persist_replaced_remaining_patch_items([])
-        self._run_agent_request(
-            prompt=prompt,
-            agent_call=self.agent.perform_patch_revise,
-        )
-        if not self.workflow_service.verify_has_pending_patch():
-            self.renderer.print_info("补丁队列已清空")
+        self._get_conversation_controller().handle_patch_revise(text)
 
     def _run_agent_request(
         self,
@@ -556,112 +286,20 @@ class AutoPatchCLI:
         show_chat_anchors: bool = False,
         plain_answer: bool = False,
     ) -> list[dict[str, Any]]:
-        assert self.agent is not None
-        assert self.workflow_service is not None
-        assert self.chat_service is not None
-
-        self.renderer.print()
-        stream_state = {"in_reasoning": False, "answer_after_reasoning": False}
-        buffered_answer_parts: list[str] = []
-        start_index = len(self.agent.messages)
-        current_tool_name: str | None = None
-
-        def on_token(token: str) -> None:
-            if stream_state["in_reasoning"]:
-                stream_state["answer_after_reasoning"] = True
-                stream_state["in_reasoning"] = False
-            buffered_answer_parts.append(token)
-
-        def on_reasoning(token: str) -> None:
-            stream_state["in_reasoning"] = True
-            self.renderer.print_reasoning(token, end="")
-
-        def on_tool_start(tool_name: str) -> None:
-            nonlocal current_tool_name
-            current_tool_name = tool_name
-            self.renderer.print_tool_start(tool_name, caller="LLM")
-
-        def on_observation(message: str) -> None:
-            if compact_observation:
-                self.renderer.print_info(self._summarize_observation(current_tool_name, message))
-                return
-            self.renderer.print_observation(message)
-
-        final_answer = agent_call(
-            prompt,
-            on_token=on_token,
-            on_reasoning=on_reasoning,
-            on_observation=on_observation,
-            on_tool_start=on_tool_start,
+        return self._get_assistant_stream().run(
+            prompt=prompt,
+            agent_call=agent_call,
+            scope_paths=scope_paths,
+            render_no_issue_panel=render_no_issue_panel,
+            compact_observation=compact_observation,
+            answer_intent=answer_intent,
+            raw_user_text=raw_user_text,
+            show_chat_anchors=show_chat_anchors,
+            plain_answer=plain_answer,
         )
-        new_messages = list(self.agent.messages[start_index:])
-
-        has_pending_patches = self.workflow_service.verify_has_pending_patch()
-        if has_pending_patches:
-            self.renderer.print()
-            return new_messages
-
-        if render_no_issue_panel:
-            if buffered_answer_parts or final_answer:
-                self.renderer.print("\n")
-            self.renderer.print_no_issue_panel(
-                scope_paths=scope_paths or self._describe_current_scope_paths(),
-                scanner_summary=self._build_static_scan_summary(),
-                llm_summary=self._build_local_no_issue_summary(),
-            )
-            self.renderer.print()
-            return new_messages
-
-        buffered_answer = self._sanitize_assistant_output("".join(buffered_answer_parts))
-        if buffered_answer:
-            rendered_answer = self._prepare_display_answer(
-                answer=buffered_answer,
-                answer_intent=answer_intent,
-                raw_user_text=raw_user_text,
-            )
-            if stream_state["answer_after_reasoning"]:
-                self.renderer.print("\n\n")
-            if show_chat_anchors:
-                self.renderer.print_assistant_anchor()
-            if plain_answer:
-                self.renderer.print_plain(rendered_answer, end="")
-            else:
-                self.renderer.print(rendered_answer, end="")
-        else:
-            sanitized_final_answer = self._sanitize_assistant_output(final_answer or "")
-            if sanitized_final_answer:
-                rendered_answer = self._prepare_display_answer(
-                    answer=sanitized_final_answer,
-                    answer_intent=answer_intent,
-                    raw_user_text=raw_user_text,
-                )
-                if show_chat_anchors:
-                    self.renderer.print_assistant_anchor()
-                if plain_answer:
-                    self.renderer.print_plain(f"\n{rendered_answer}")
-                else:
-                    self.renderer.print(f"\n{rendered_answer}")
-        self.renderer.print()
-        return new_messages
 
     def handle_command(self, raw_cmd: str) -> None:
-        parts = raw_cmd.split()
-        cmd = parts[0].lower()
-
-        if cmd == "/init":
-            self.handle_init()
-        elif cmd == "/status":
-            self.handle_status()
-        elif cmd == "/reindex":
-            self.handle_reindex()
-        elif cmd == "/scanner":
-            self.handle_scanners()
-        elif cmd == "/help":
-            self.handle_help()
-        elif cmd == "/quit":
-            sys.exit(0)
-        else:
-            self.renderer.print_error(f"未知命令：{cmd}")
+        self._get_command_controller().handle_command(raw_cmd)
 
     def _sanitize_assistant_output(self, text: str) -> str:
         match = DSML_MARKER_PATTERN.search(text)
@@ -703,10 +341,10 @@ class AutoPatchCLI:
             match = re.search(r"\[[^:\]]+:\s*([^\]]+)\]", message)
             if match:
                 return f"已读取: {match.group(1)}"
-            return "已读取源码"
+            return "已读取源代码"
 
         if tool_name == "search_symbols":
-            match = re.search(r"与 '([^']+)' 相关", message)
+            match = re.search(r"涓?'([^']+)' 鐩稿叧", message)
             if match:
                 return f"已定位符号: {match.group(1)}"
             return "已定位相关符号"
@@ -714,8 +352,8 @@ class AutoPatchCLI:
         if tool_name == "get_finding_detail":
             match = re.search(r"\((F\d+)\)", message)
             if match:
-                return f"已获取发现详情: {match.group(1)}"
-            return "已获取发现详情"
+                return f"已获取 finding 详情: {match.group(1)}"
+            return "已获取 finding 详情"
 
         first_line = message.strip().splitlines()[0] if message.strip() else ""
         if first_line:
@@ -727,7 +365,7 @@ class AutoPatchCLI:
     def _build_patch_explain_prompt(self, current_item: PatchReviewItem, user_text: str) -> str:
         draft = current_item.draft
         return (
-            f"当前待审核补丁文件: {current_item.file_path}\n"
+            f"当前待确认补丁文件: {current_item.file_path}\n"
             f"补丁意图: {draft.rationale or '无说明'}\n"
             f"补丁差异:\n{draft.diff}\n\n"
             f"用户问题:\n{user_text}"
@@ -790,12 +428,12 @@ class AutoPatchCLI:
             f"问题描述: {current_finding.message}",
             f"代码证据:\n```java\n{current_finding.snippet}\n```",
             "",
-            "执行要求：",
+            "执行要求:",
             f"1. 只处理 {current_finding.finding_id}，不要切换到其他 F 编号。",
             "2. 优先根据 F 编号调用 get_finding_detail 获取详情。",
             f"3. 如需漏洞详情，associated_finding_id 必须使用 {current_finding.finding_id}。",
-            f"4. 如需最新源码，可读取 {current_finding.file_path}。",
-            f"5. 如果形成补丁，propose_patch 时必须传 associated_finding_id={current_finding.finding_id}。",
+            f"4. 如需最新源代码，可读取 {current_finding.file_path}。",
+            f"5. 如形成补丁，propose_patch 时必须传 associated_finding_id={current_finding.finding_id}。",
             "6. 如果你判断当前目标不值得修复，只输出一句短结论，不要展开长篇分析。",
         ]
         if force_reread:
@@ -831,7 +469,7 @@ class AutoPatchCLI:
             return scan_paths
         if self.agent and self.agent.focus_paths:
             return list(self.agent.focus_paths)
-        return ["当前范围"]
+        return ["褰撳墠鑼冨洿"]
 
     def _collect_latest_scan_paths(self) -> list[str]:
         if not self.artifacts:
@@ -858,146 +496,28 @@ class AutoPatchCLI:
         return resolved
 
     def handle_help(self) -> None:
-        from rich.table import Table
-
-        sys_table = Table(show_header=True, header_style=f"bold {SYSTEM_STYLE}", box=None)
-        sys_table.add_column("系统命令", style=SYSTEM_STYLE, width=15)
-        sys_table.add_column("功能描述")
-        sys_table.add_row("/init", "初始化当前目录为 Java 项目并建立索引")
-        sys_table.add_row("/status", "查看当前项目状态与索引统计")
-        sys_table.add_row("/scanner", "查看扫描器状态")
-        sys_table.add_row("/reindex", "重建代码索引")
-        sys_table.add_row("/help", "显示命令帮助")
-        sys_table.add_row("/quit", "安全退出程序")
-
-        act_table = Table(show_header=True, header_style=f"bold {DECISION_STYLE}", box=None)
-        act_table.add_column("交互关键字", style=DECISION_STYLE, width=15)
-        act_table.add_column("用法说明")
-        act_table.add_row("@符号", "补全文件或目录")
-        act_table.add_row("apply", "应用当前补丁预览")
-        act_table.add_row("discard", "丢弃当前补丁草案")
-
-        self.renderer.print_panel("命令帮助", style=SYSTEM_STYLE)
-        self.renderer.console.print(sys_table)
-        self.renderer.print("\n[bold]交互说明[/bold]")
-        self.renderer.console.print(act_table)
+        self._get_command_controller().handle_help()
 
     def handle_scanners(self) -> None:
-        from rich.table import Table
-
-        from autopatch_j.scanners import ALL_SCANNERS
-
-        table = Table(title="扫描器状态", show_header=True, header_style=f"bold {SYSTEM_STYLE}")
-        table.add_column("名称", style=SYSTEM_STYLE, width=12)
-        table.add_column("状态", width=25)
-        table.add_column("版本", justify="center")
-        table.add_column("功能简述")
-
-        for scanner in ALL_SCANNERS:
-            meta = scanner.get_meta(self.repo_root)
-            status_text = (
-                f"[green]● {meta.status}[/green]"
-                if meta.is_implemented
-                else f"[dim]● {meta.status}[/dim]"
-            )
-            table.add_row(meta.name, status_text, meta.version if meta.is_implemented else "-", meta.description)
-
-        self.renderer.console.print(table)
+        self._get_command_controller().handle_scanners()
 
     def handle_init(self) -> None:
-        self.renderer.print_step("正在初始化 AutoPatch-J 环境...")
-        self.repo_root = self.cwd
-        self._init_services(self.repo_root)
-        assert self.artifacts is not None
-        self.artifacts.clear_pending_patch()
-
-        from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
-
-        status, _ = install_managed_semgrep_runtime()
-        self.renderer.print_step(f"扫描器运行时自检: {status}")
-
-        assert self.indexer is not None
-        stats = self.indexer.perform_rebuild()
-        self.renderer.print_success(f"初始化完成，索引 {stats.get('total', 0)} 项")
+        self._get_command_controller().handle_init()
 
     def handle_status(self) -> None:
-        if not self.indexer or not self.workflow_service:
-            self.renderer.print_error("系统未初始化，请先执行 /init")
-            return
-
-        from rich.table import Table
-
-        table = Table(box=None, show_header=False, padding=(0, 2))
-        table.add_column("Key", style=SYSTEM_STYLE, width=15)
-        table.add_column("Value")
-
-        table.add_row("[bold]项目根目录[/]", str(self.repo_root))
-        table.add_row("[bold]LLM 模型[/]", f"{GlobalConfig.llm_model} ([dim]{GlobalConfig.llm_base_url}[/])")
-
-        scanner = get_scanner(DEFAULT_SCANNER_NAME)
-        scanner_meta = scanner.get_meta(self.repo_root) if scanner else None
-        scanner_status = (
-            f"[green]就绪 ({scanner_meta.version})[/]"
-            if scanner_meta and scanner_meta.is_implemented and "就绪" in scanner_meta.status
-            else "[red]未就绪[/]"
-        )
-        table.add_row("[bold]静态扫描器[/]", scanner_status)
-
-        pending = self.workflow_service.fetch_current_patch_item()
-        buffer_status = (
-            f"[bold yellow]存在待确认补丁 ({pending.file_path})[/]"
-            if pending
-            else "[dim]空闲[/]"
-        )
-        table.add_row("[bold]补丁缓冲区[/]", buffer_status)
-
-        stats = self.indexer.get_stats()
-        stats_str = (
-            f"文件:{stats.get('file', 0)} | 类:{stats.get('class', 0)} | "
-            f"方法:{stats.get('method', 0)} (总计:{stats.get('total', 0)})"
-        )
-        table.add_row("[bold]符号索引[/]", stats_str)
-        symbol_status = self.indexer.fetch_symbol_extract_status()
-        symbol_mode = str(symbol_status.get("mode", "full"))
-        if symbol_mode == "degraded":
-            status_text = "[yellow]已降级[/]"
-            last_error = str(symbol_status.get("last_error") or "")
-            if last_error:
-                status_text += f" [dim]({last_error})[/]"
-        else:
-            status_text = "[green]正常[/]"
-        table.add_row("[bold]符号提取[/]", status_text)
-
-        self.renderer.print_panel(table, title="[bold] 项目状态 [/]", style=SYSTEM_STYLE)
+        self._get_command_controller().handle_status()
 
     def handle_reindex(self) -> None:
-        if not self.indexer:
-            return
-        self.renderer.print_step("正在重新构建索引...")
-        stats = self.indexer.perform_rebuild()
-        self.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
+        self._get_command_controller().handle_reindex()
 
     def handle_apply(self, pending: PatchDraft) -> None:
-        assert self.patch_engine is not None
-        self.renderer.print_step(f"正在应用补丁至 {pending.file_path}...")
-        if not self.patch_engine.perform_apply(pending):
-            self.renderer.print_error("应用失败。")
-            return
-
-        self.renderer.print_success("补丁已应用")
-        scanner = get_scanner(DEFAULT_SCANNER_NAME)
-        if scanner:
-            validator = SemanticValidator(self.repo_root, scanner)
-            success, message = validator.perform_verification(pending)
-            if success:
-                self.renderer.print_success(message)
-            else:
-                self.renderer.print_error(message)
+        self._get_command_controller().handle_apply(pending)
 
     def handle_discard(self) -> None:
-        self.renderer.print_info("已丢弃当前草案")
+        self._get_command_controller().handle_discard()
 
 
 def main() -> int:
     cli = AutoPatchCLI(Path.cwd())
     return cli.run()
+

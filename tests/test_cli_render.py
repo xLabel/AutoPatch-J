@@ -60,7 +60,7 @@ def test_handle_status_uses_system_panel_style(tmp_path: Path) -> None:
         get_meta=lambda repo_root: SimpleNamespace(is_implemented=True, status="就绪", version="1.0.0")
     )
 
-    with patch("autopatch_j.cli.app.get_scanner", return_value=fake_scanner):
+    with patch("autopatch_j.cli.command_controller.get_scanner", return_value=fake_scanner):
         cli.handle_status()
 
     assert cli.renderer.print_panel.call_args.kwargs["style"] == SYSTEM_STYLE
@@ -83,7 +83,7 @@ def test_handle_status_shows_symbol_extract_degraded_state(tmp_path: Path) -> No
         get_meta=lambda repo_root: SimpleNamespace(is_implemented=True, status="就绪", version="1.0.0")
     )
 
-    with patch("autopatch_j.cli.app.get_scanner", return_value=fake_scanner):
+    with patch("autopatch_j.cli.command_controller.get_scanner", return_value=fake_scanner):
         cli.handle_status()
 
     table = cli.renderer.print_panel.call_args.args[0]
