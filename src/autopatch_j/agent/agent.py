@@ -209,7 +209,7 @@ class AutoPatchAgent:
             return "LLM 配置缺失。请设置 LLM_API_KEY 后重启。"
 
         self.messages.append({"role": "user", "content": user_text})
-        extra_body = self._build_extra_body()
+        extra_body = self._build_llm_extra_body()
 
         for _ in range(10):
             processed_messages = self._dehydrate_history(system_prompt)
@@ -268,7 +268,7 @@ class AutoPatchAgent:
 
     def _build_task_system_prompt(self, intent: IntentType) -> str:
         pending = self.artifacts.fetch_pending_patch()
-        last_scan_id = self._fetch_latest_scan_id()
+        last_scan_id = self._fetch_latest_scan_artifact_id()
         return build_task_system_prompt(
             intent=intent,
             pending_file=pending.file_path if pending else None,
@@ -276,32 +276,34 @@ class AutoPatchAgent:
             focus_paths=self.focus_paths,
         )
 
-    def _fetch_latest_scan_id(self) -> str | None:
+    def _fetch_latest_scan_artifact_id(self) -> str | None:
         scan_files = sorted(self.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
         return scan_files[0].stem if scan_files else None
 
-    def _build_extra_body(self) -> dict[str, Any]:
+    def _build_llm_extra_body(self) -> dict[str, Any]:
         if "deepseek" in GlobalConfig.llm_model.lower() and "aliyuncs" in GlobalConfig.llm_base_url:
             return {"enable_thinking": True}
         return {}
 
     def _dehydrate_history(self, current_system_prompt: str) -> list[dict[str, Any]]:
-        raw_window = self.messages[-14:]
-        start_index = 0
-        for index, message in enumerate(raw_window):
-            if message.get("role") == "user":
-                start_index = index
-                break
-
-        history_window = raw_window[start_index:]
         result: list[dict[str, Any]] = [{"role": "system", "content": current_system_prompt}]
-        for message in history_window:
+
+        # 保留完整角色序列，避免消息窗口裁剪后破坏 tool_call 对应关系。
+        for i, message in enumerate(self.messages):
             new_message = self._fetch_llm_message(message)
-            if message.get("role") == "tool" and message in self.messages[:-3]:
-                content = str(message.get("content", ""))
-                if len(content) > 200:
-                    new_message["content"] = content[:100] + "\n... [已压缩旧工具输出] ..."
+
+            if message.get("role") == "tool":
+                is_recent = i >= len(self.messages) - 5
+                is_scan = message.get("name") == "scan_project"
+
+                # 压缩旧的工具观察，但保护 scan_project 结果。
+                if not is_recent and not is_scan:
+                    content = str(message.get("content", ""))
+                    if len(content) > 200:
+                        new_message["content"] = content[:100] + "\n... [已脱水压缩] ..."
+
             result.append(new_message)
+
         return result
 
     def _fetch_llm_message(self, message: dict[str, Any]) -> dict[str, Any]:
@@ -407,5 +409,5 @@ class AutoPatchAgent:
         return self.normalize_repo_path(path) in self.focus_paths
 
     @property
-    def label(self) -> str:
-        return self.llm.label if self.llm else "LLM Not Configured"
+    def model_label(self) -> str:
+        return self.llm.model if self.llm else "LLM Not Configured"

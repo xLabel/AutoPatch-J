@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from autopatch_j.agent.agent import AutoPatchAgent
-from autopatch_j.agent.llm_client import LLMResponse
+from autopatch_j.agent.llm_client import LLMClient, LLMResponse
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.index_service import IndexService
@@ -85,3 +85,71 @@ def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:
 
     assert response == "chat answer"
     assert _fetch_tool_names(mock_llm) == []
+
+
+def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="done")
+    agent = _build_agent(tmp_path, mock_llm)
+    long_content = "x" * 260
+
+    agent.messages = [
+        {"role": "user", "content": "first"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "read_source_code", "arguments": "{}"},
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-1",
+            "name": "read_source_code",
+            "content": long_content,
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call-2",
+            "name": "scan_project",
+            "content": long_content,
+        },
+        {"role": "assistant", "content": "recent"},
+        {"role": "user", "content": "third"},
+        {"role": "assistant", "content": "latest"},
+        {"role": "user", "content": "second"},
+    ]
+
+    dehydrated = agent._dehydrate_history("system prompt")
+
+    assert [message["role"] for message in dehydrated] == [
+        "system",
+        "user",
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert dehydrated[3]["content"].endswith("... [已脱水压缩] ...")
+    assert dehydrated[4]["content"] == long_content
+
+
+def test_model_label_returns_llm_model_name() -> None:
+    llm = LLMClient(api_key="key", base_url="https://example.com", model="deepseek-chat")
+    agent = AutoPatchAgent(
+        repo_root=Path("."),
+        artifacts=MagicMock(),
+        indexer=MagicMock(),
+        patch_engine=MagicMock(),
+        fetcher=MagicMock(),
+        llm=llm,
+    )
+
+    assert agent.model_label == "deepseek-chat"
