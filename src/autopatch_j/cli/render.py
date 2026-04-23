@@ -50,6 +50,17 @@ class CliRenderer:
     def print_reasoning(self, message: str, end: str = "") -> None:
         self.console.print(message, end=end, style=f"italic {MUTED_STYLE}")
 
+    def print_reasoning_status(self, step: int) -> None:
+        dots = "." * ((step % 3) + 1)
+        self.console.print(
+            f"\r[italic {MUTED_STYLE}]思考中{dots}[/]",
+            end="",
+            soft_wrap=True,
+        )
+
+    def finish_reasoning_status(self) -> None:
+        self.console.print()
+
     def print_observation(self, message: str) -> None:
         self.console.print(f"\n{message}\n", style=BODY_STYLE)
 

@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from autopatch_j.cli.app import AutoPatchCLI
+from autopatch_j.cli.assistant_stream import AssistantStream
 from autopatch_j.cli.render import MUTED_STYLE, SYSTEM_STYLE, CliRenderer
+from autopatch_j.core.models import IntentType
 
 
 def _make_cli(tmp_path: Path) -> AutoPatchCLI:
@@ -145,3 +147,51 @@ def test_summarize_observation_extracts_symbol_name_from_search_result(tmp_path:
     summary = cli._summarize_observation("search_symbols", "为您找到以下与 'AppConfig' 相关的匹配项：")
 
     assert summary == "已定位符号: AppConfig"
+
+
+def test_assistant_stream_masks_reasoning_content_with_status(tmp_path: Path) -> None:
+    renderer = CliRenderer()
+    renderer.print = MagicMock()
+    renderer.print_reasoning_status = MagicMock()
+    renderer.finish_reasoning_status = MagicMock()
+    renderer.print_observation = MagicMock()
+    renderer.print_tool_start = MagicMock()
+    renderer.print_plain = MagicMock()
+    renderer.print_assistant_anchor = MagicMock()
+
+    agent = SimpleNamespace(messages=[])
+    workflow_service = SimpleNamespace(verify_has_pending_patch=lambda: False)
+    chat_service = SimpleNamespace()
+    stream = AssistantStream(
+        renderer=renderer,
+        workflow_service=workflow_service,
+        chat_service=chat_service,
+        agent=agent,
+        sanitize_output=lambda text: text,
+        prepare_display_answer=lambda answer, answer_intent, raw_user_text: answer,
+        summarize_observation=lambda tool_name, message: message,
+        describe_current_scope_paths=lambda: [],
+        build_static_scan_summary=lambda: "",
+        build_local_no_issue_summary=lambda: "",
+    )
+
+    def fake_agent_call(prompt: str, on_token, on_reasoning, on_observation, on_tool_start) -> str:
+        on_reasoning("Let me think")
+        on_reasoning("more reasoning")
+        on_token("final answer")
+        return "final answer"
+
+    stream.run(
+        prompt="prompt",
+        agent_call=fake_agent_call,
+        answer_intent=IntentType.GENERAL_CHAT,
+        raw_user_text="question",
+        plain_answer=True,
+    )
+
+    assert renderer.print_reasoning_status.call_args_list[0].args[0] == 0
+    assert renderer.print_reasoning_status.call_args_list[1].args[0] == 1
+    renderer.finish_reasoning_status.assert_called_once()
+    printed = "".join(str(call.args[0]) for call in renderer.print_plain.call_args_list)
+    assert "Let me think" not in printed
+    assert "more reasoning" not in printed

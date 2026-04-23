@@ -53,7 +53,12 @@ class AssistantStream:
         assert self.chat_service is not None
 
         self.renderer.print()
-        stream_state = {"in_reasoning": False, "answer_after_reasoning": False}
+        stream_state = {
+            "in_reasoning": False,
+            "answer_after_reasoning": False,
+            "reasoning_visible": False,
+            "reasoning_tick": 0,
+        }
         buffered_answer_parts: list[str] = []
         start_index = len(self.agent.messages)
         current_tool_name: str | None = None
@@ -62,18 +67,29 @@ class AssistantStream:
             if stream_state["in_reasoning"]:
                 stream_state["answer_after_reasoning"] = True
                 stream_state["in_reasoning"] = False
+            if stream_state["reasoning_visible"]:
+                self.renderer.finish_reasoning_status()
+                stream_state["reasoning_visible"] = False
             buffered_answer_parts.append(token)
 
         def on_reasoning(token: str) -> None:
             stream_state["in_reasoning"] = True
-            self.renderer.print_reasoning(token, end="")
+            self.renderer.print_reasoning_status(stream_state["reasoning_tick"])
+            stream_state["reasoning_visible"] = True
+            stream_state["reasoning_tick"] += 1
 
         def on_tool_start(tool_name: str) -> None:
             nonlocal current_tool_name
+            if stream_state["reasoning_visible"]:
+                self.renderer.finish_reasoning_status()
+                stream_state["reasoning_visible"] = False
             current_tool_name = tool_name
             self.renderer.print_tool_start(tool_name, caller="LLM")
 
         def on_observation(message: str) -> None:
+            if stream_state["reasoning_visible"]:
+                self.renderer.finish_reasoning_status()
+                stream_state["reasoning_visible"] = False
             if compact_observation:
                 self.renderer.print_info(self._summarize_observation(current_tool_name, message))
                 return
@@ -87,6 +103,9 @@ class AssistantStream:
             on_tool_start=on_tool_start,
         )
         new_messages = list(self.agent.messages[start_index:])
+        if stream_state["reasoning_visible"]:
+            self.renderer.finish_reasoning_status()
+            stream_state["reasoning_visible"] = False
 
         has_pending_patches = self.workflow_service.verify_has_pending_patch()
         if has_pending_patches:
