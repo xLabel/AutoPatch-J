@@ -149,13 +149,14 @@ autopatch-j> 加一行注释说明原因
 
 ## 一条真实链路
 
+下面这张图只画 **`code_audit` 主链路**。它是项目里最长、最能体现 `Workflow + Agent` 协作方式的一条执行路径。
+
 ```mermaid
 flowchart TD
     A[用户输入] --> B[IntentService]
     B --> C[ScopeService]
-    C --> D{Intent Type}
-
-    D -->|code_audit| E[ScanService]
+    C --> D[code_audit]
+    D --> E[ScanService]
     E --> F[AuditBacklogService]
     F --> G[AutoPatchAgent]
     G --> H[Tool Layer]
@@ -163,11 +164,13 @@ flowchart TD
     I --> J[WorkflowService]
     J --> K[ActiveWorkspace]
     K --> L[人工确认: apply / discard / revise]
-
-    D -->|code_explain| M[AutoPatchAgent]
-    D -->|general_chat| N[ChatService]
-    D -->|patch_explain / patch_revise| O[WorkflowService + AutoPatchAgent]
 ```
+
+其他分流入口：
+
+- `code_explain`：`AutoPatchAgent`
+- `general_chat`：`ChatService -> AutoPatchAgent`
+- `patch_explain / patch_revise`：`WorkflowService + AutoPatchAgent`
 
 ## 架构速览
 

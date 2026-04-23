@@ -149,13 +149,14 @@ It is not intended to be a general lifestyle chatbot.
 
 ## A Real Execution Path
 
+The diagram below shows only the **`code_audit` main path**. It is the longest path in the project and the clearest example of how `Workflow` and `Agent` cooperate.
+
 ```mermaid
 flowchart TD
     A[User Input] --> B[IntentService]
     B --> C[ScopeService]
-    C --> D{Intent Type}
-
-    D -->|code_audit| E[ScanService]
+    C --> D[code_audit]
+    D --> E[ScanService]
     E --> F[AuditBacklogService]
     F --> G[AutoPatchAgent]
     G --> H[Tool Layer]
@@ -163,11 +164,13 @@ flowchart TD
     I --> J[WorkflowService]
     J --> K[ActiveWorkspace]
     K --> L[Human Confirmation: apply / discard / revise]
-
-    D -->|code_explain| M[AutoPatchAgent]
-    D -->|general_chat| N[ChatService]
-    D -->|patch_explain / patch_revise| O[WorkflowService + AutoPatchAgent]
 ```
+
+Other routes:
+
+- `code_explain`: `AutoPatchAgent`
+- `general_chat`: `ChatService -> AutoPatchAgent`
+- `patch_explain / patch_revise`: `WorkflowService + AutoPatchAgent`
 
 ## Architecture at a Glance
 
