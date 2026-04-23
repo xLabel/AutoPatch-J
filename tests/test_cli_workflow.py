@@ -492,15 +492,26 @@ def test_cli_can_initialize_without_prompt_session(tmp_path: Path) -> None:
 
 def test_cli_quit_clears_pending_patch_candidates_before_exit(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    cli._clear_pending_patch_candidates = MagicMock()
+    cli.request_exit = MagicMock(side_effect=SystemExit)
 
-    with patch("autopatch_j.cli.command_controller.sys.exit", side_effect=SystemExit):
-        try:
-            cli.handle_command("/quit")
-        except SystemExit:
-            pass
+    try:
+        cli.handle_command("/quit")
+    except SystemExit:
+        pass
 
-    cli._clear_pending_patch_candidates.assert_called_once()
+    cli.request_exit.assert_called_once_with()
+
+
+def test_ctrl_c_uses_shared_exit_path(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    cli.request_exit = MagicMock(side_effect=SystemExit)
+
+    try:
+        cli._handle_interrupt(2, None)
+    except SystemExit:
+        pass
+
+    cli.request_exit.assert_called_once()
 
 
 def test_run_agent_request_labels_llm_tool_calls(tmp_path: Path) -> None:

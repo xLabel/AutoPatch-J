@@ -79,9 +79,7 @@ class AutoPatchCLI:
         signal.signal(signal.SIGINT, self._handle_interrupt)
 
     def _handle_interrupt(self, signum: int, frame: Any) -> None:
-        self._clear_pending_patch_candidates()
-        self.renderer.print(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
-        sys.exit(0)
+        self.request_exit(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
 
     def _refresh_cli_components(self) -> None:
         self.input_controller = CliInputController(
@@ -196,6 +194,15 @@ class AutoPatchCLI:
         if self.agent is not None:
             self.agent.reset_history()
 
+    def _finalize_cli_exit(self, message: str | None = None) -> None:
+        self._clear_pending_patch_candidates()
+        if message:
+            self.renderer.print(message)
+
+    def request_exit(self, message: str | None = None) -> None:
+        self._finalize_cli_exit(message)
+        sys.exit(0)
+
     def run(self) -> int:
         if not self._ensure_prompt_session():
             return 1
@@ -248,7 +255,7 @@ class AutoPatchCLI:
                     self.handle_chat(user_input)
 
             except (EOFError, KeyboardInterrupt):
-                self._clear_pending_patch_candidates()
+                self._finalize_cli_exit()
                 break
             except Exception as exc:
                 error_message = str(exc)

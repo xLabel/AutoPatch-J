@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import sys
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -26,7 +24,7 @@ class CommandControllerContext(Protocol):
     renderer: Any
 
     def _init_services(self, repo_root: Path) -> None: ...
-    def _clear_pending_patch_candidates(self) -> None: ...
+    def request_exit(self, message: str | None = None) -> None: ...
 
 
 class CliCommandController:
@@ -50,8 +48,7 @@ class CliCommandController:
         elif cmd == "/help":
             self.handle_help()
         elif cmd == "/quit":
-            self.context._clear_pending_patch_candidates()
-            sys.exit(0)
+            self.context.request_exit()
         else:
             self.context.renderer.print_error(f"未知命令：{cmd}")
 
