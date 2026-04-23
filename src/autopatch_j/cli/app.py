@@ -1025,6 +1025,16 @@ class AutoPatchCLI:
             f"方法:{stats.get('method', 0)} (总计:{stats.get('total', 0)})"
         )
         table.add_row("[bold]符号索引[/]", stats_str)
+        symbol_status = self.indexer.fetch_symbol_extract_status()
+        symbol_mode = str(symbol_status.get("mode", "full"))
+        if symbol_mode == "degraded":
+            status_text = "[yellow]已降级[/]"
+            last_error = str(symbol_status.get("last_error") or "")
+            if last_error:
+                status_text += f" [dim]({last_error})[/]"
+        else:
+            status_text = "[green]正常[/]"
+        table.add_row("[bold]符号提取[/]", status_text)
 
         self.renderer.print_panel(table, title="[bold] 项目状态 [/]", style=SYSTEM_STYLE)
 

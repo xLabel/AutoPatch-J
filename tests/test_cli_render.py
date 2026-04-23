@@ -49,7 +49,10 @@ def test_handle_help_uses_system_panel_style(tmp_path: Path) -> None:
 
 def test_handle_status_uses_system_panel_style(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    cli.indexer = SimpleNamespace(get_stats=lambda: {"file": 1, "class": 2, "method": 3, "total": 6})
+    cli.indexer = SimpleNamespace(
+        get_stats=lambda: {"file": 1, "class": 2, "method": 3, "total": 6},
+        fetch_symbol_extract_status=lambda: {"enabled": True, "mode": "full", "last_error": None},
+    )
     cli.workflow_service = SimpleNamespace(fetch_current_patch_item=lambda: None)
     cli.renderer.print_panel = MagicMock()
 
@@ -61,6 +64,31 @@ def test_handle_status_uses_system_panel_style(tmp_path: Path) -> None:
         cli.handle_status()
 
     assert cli.renderer.print_panel.call_args.kwargs["style"] == SYSTEM_STYLE
+
+
+def test_handle_status_shows_symbol_extract_degraded_state(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    cli.indexer = SimpleNamespace(
+        get_stats=lambda: {"file": 1, "class": 0, "method": 0, "total": 1},
+        fetch_symbol_extract_status=lambda: {
+            "enabled": False,
+            "mode": "degraded",
+            "last_error": "missing dependency: tree_sitter",
+        },
+    )
+    cli.workflow_service = SimpleNamespace(fetch_current_patch_item=lambda: None)
+    cli.renderer.print_panel = MagicMock()
+
+    fake_scanner = SimpleNamespace(
+        get_meta=lambda repo_root: SimpleNamespace(is_implemented=True, status="就绪", version="1.0.0")
+    )
+
+    with patch("autopatch_j.cli.app.get_scanner", return_value=fake_scanner):
+        cli.handle_status()
+
+    table = cli.renderer.print_panel.call_args.args[0]
+    assert table.columns[0]._cells[-1] == "[bold]符号提取[/]"
+    assert "已降级" in table.columns[1]._cells[-1]
 
 
 def test_renderer_feedback_messages_drop_prefix_labels() -> None:

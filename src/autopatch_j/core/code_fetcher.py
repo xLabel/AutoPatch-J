@@ -12,6 +12,8 @@ class CodeFetcher:
 
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root.resolve()
+        self.last_extract_mode: str = "full"
+        self.last_extract_error: str | None = None
 
     def fetch_entry(self, entry: IndexEntry) -> str:
         """
@@ -78,6 +80,8 @@ class CodeFetcher:
         """
         尝试使用 Tree-sitter 准确提取语法块。
         """
+        self.last_extract_mode = "full"
+        self.last_extract_error = None
         try:
             from tree_sitter import Language, Parser
             import tree_sitter_java as tsjava
@@ -95,10 +99,12 @@ class CodeFetcher:
             target_node = self._find_node_at_line(tree.root_node, start_line)
             if target_node:
                 return content_bytes[target_node.start_byte:target_node.end_byte].decode("utf-8")
-        except (ImportError, Exception):
-            pass
+        except (ImportError, Exception) as exc:
+            self.last_extract_mode = "fallback"
+            self.last_extract_error = str(exc)
 
         # 兜底：保守提取（从起始行开始取 30 行）
+        self.last_extract_mode = "fallback"
         lines = content.splitlines()
         start_idx = max(0, start_line - 1)
         return "\n".join(lines[start_idx : start_idx + 30])

@@ -32,6 +32,9 @@ class IndexService:
         self.repo_root = repo_root.resolve()
         self.ignored_dirs = ignored_dirs or set()
         self.db_path = get_project_state_dir(self.repo_root) / "index.db"
+        self.symbol_extract_enabled: bool = True
+        self.symbol_extract_mode: str = "full"
+        self.symbol_extract_last_error: str | None = None
         self._init_db()
 
     def _init_db(self) -> None:
@@ -66,6 +69,7 @@ class IndexService:
         """
         all_entries: list[IndexEntry] = []
         repo_root_abs = os.path.abspath(str(self.repo_root))
+        self._reset_symbol_extract_status()
 
         for root, dirs, files in os.walk(repo_root_abs):
             # 过滤黑名单
@@ -118,6 +122,13 @@ class IndexService:
             stats["total"] = sum(stats.values())
             return stats
 
+    def fetch_symbol_extract_status(self) -> dict[str, Any]:
+        return {
+            "enabled": self.symbol_extract_enabled,
+            "mode": self.symbol_extract_mode,
+            "last_error": self.symbol_extract_last_error,
+        }
+
     def _extract_java_symbols(self, rel_path: str, full_path: Path, mtime: float) -> list[IndexEntry]:
         """使用 Tree-sitter 提取 Java 类和方法"""
         symbols: list[IndexEntry] = []
@@ -142,6 +153,19 @@ class IndexService:
                     container=rel_path,
                     mtime=mtime
                 ))
-        except:
-            pass
+        except ImportError as exc:
+            self._mark_symbol_extract_degraded(str(exc), enabled=False)
+        except Exception as exc:
+            self._mark_symbol_extract_degraded(str(exc), enabled=True)
         return symbols
+
+    def _reset_symbol_extract_status(self) -> None:
+        self.symbol_extract_enabled = True
+        self.symbol_extract_mode = "full"
+        self.symbol_extract_last_error = None
+
+    def _mark_symbol_extract_degraded(self, error_message: str, enabled: bool) -> None:
+        self.symbol_extract_enabled = enabled
+        self.symbol_extract_mode = "degraded"
+        if self.symbol_extract_last_error is None:
+            self.symbol_extract_last_error = error_message

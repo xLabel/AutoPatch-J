@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import pytest
+import sys
+import types
 from pathlib import Path
+
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.index_service import IndexEntry
 
@@ -36,3 +38,68 @@ def test_fetch_range(tmp_path: Path):
     (tmp_path / "L.txt").write_text("1\n2\n3\n4\n5", encoding="utf-8")
     fetcher = CodeFetcher(tmp_path)
     assert fetcher.fetch_lines("L.txt", 2, 4) == "2\n3\n4"
+
+
+def test_fetcher_marks_full_when_ast_extract_succeeds(tmp_path: Path, monkeypatch) -> None:
+    java_code = (
+        "public class Demo {\n"
+        "    public void run() {\n"
+        "        call();\n"
+        "    }\n"
+        "}\n"
+    )
+    file_path = "Demo.java"
+    (tmp_path / file_path).write_text(java_code, encoding="utf-8")
+
+    class FakeNode:
+        start_byte = java_code.index("    public void run() {")
+        end_byte = java_code.index("    }\n}") + len("    }\n")
+
+    class FakeLanguage:
+        def __init__(self, _language) -> None:
+            pass
+
+    class FakeParser:
+        def __init__(self, _language: FakeLanguage) -> None:
+            pass
+
+        def parse(self, _content: bytes):
+            return types.SimpleNamespace(root_node=object())
+
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
+    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
+
+    fetcher = CodeFetcher(tmp_path)
+    monkeypatch.setattr(fetcher, "_find_node_at_line", lambda node, line: FakeNode())
+    snippet = fetcher.fetch_entry(IndexEntry(path=file_path, name="run", kind="method", line=2))
+
+    assert "public void run()" in snippet
+    assert fetcher.last_extract_mode == "full"
+    assert fetcher.last_extract_error is None
+
+
+def test_fetcher_marks_fallback_when_ast_extract_fails(tmp_path: Path, monkeypatch) -> None:
+    java_code = (
+        "public class Demo {\n"
+        "    public void run() {\n"
+        "        call();\n"
+        "    }\n"
+        "}\n"
+    )
+    file_path = "Demo.java"
+    (tmp_path / file_path).write_text(java_code, encoding="utf-8")
+    original_import = __import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name in {"tree_sitter", "tree_sitter_java"}:
+            raise ImportError("tree-sitter missing")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+    fetcher = CodeFetcher(tmp_path)
+    snippet = fetcher.fetch_entry(IndexEntry(path=file_path, name="run", kind="method", line=2))
+
+    assert "public void run()" in snippet
+    assert fetcher.last_extract_mode == "fallback"
+    assert "tree-sitter missing" in str(fetcher.last_extract_error)
