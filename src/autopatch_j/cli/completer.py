@@ -59,6 +59,8 @@ class AutoPatchCompleter(Completer):
             results = self.search_func(query)
 
             for entry in results:
+                if entry.kind not in {"file", "dir"}:
+                    continue
                 display_meta = f"{entry.kind} | {entry.path}"
                 display_text = f"{entry.name}"
                 

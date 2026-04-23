@@ -41,6 +41,10 @@ def test_handle_help_uses_system_panel_style(tmp_path: Path) -> None:
     cli.handle_help()
 
     cli.renderer.print_panel.assert_called_once_with("命令帮助", style=SYSTEM_STYLE)
+    first_table = cli.renderer.console.print.call_args_list[0].args[0]
+    second_table = cli.renderer.console.print.call_args_list[1].args[0]
+    assert first_table.columns[1]._cells[3] == "重建代码索引"
+    assert second_table.columns[1]._cells[0] == "补全文件或目录"
 
 
 def test_handle_status_uses_system_panel_style(tmp_path: Path) -> None:

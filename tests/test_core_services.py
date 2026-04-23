@@ -71,6 +71,26 @@ def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> No
     ]
 
 
+def test_scope_service_rejects_class_and_method_mentions(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    demo_dir = repo_root / "src" / "main" / "java" / "demo"
+    demo_dir.mkdir(parents=True)
+    (demo_dir / "UserService.java").write_text(
+        "package demo;\n"
+        "public class UserService {\n"
+        "    public boolean isAdmin() { return true; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    indexer = IndexService(repo_root)
+    indexer.perform_rebuild()
+    service = ScopeService(repo_root, indexer, ignored_dirs={".git", ".autopatch-j"})
+
+    assert service.fetch_scope("@UserService 检查代码") is None
+    assert service.fetch_scope("@isAdmin 检查代码") is None
+
+
 def test_scan_service_persists_scan_result(tmp_path: Path) -> None:
     repo_root = tmp_path
     java_file = repo_root / "Demo.java"

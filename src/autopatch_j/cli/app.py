@@ -872,14 +872,14 @@ class AutoPatchCLI:
         sys_table.add_row("/init", "初始化当前目录为 Java 项目并建立索引")
         sys_table.add_row("/status", "查看当前项目状态与索引统计")
         sys_table.add_row("/scanner", "查看扫描器状态")
-        sys_table.add_row("/reindex", "强制重新扫描全项符号")
+        sys_table.add_row("/reindex", "重建代码索引")
         sys_table.add_row("/help", "显示命令帮助")
         sys_table.add_row("/quit", "安全退出程序")
 
         act_table = Table(show_header=True, header_style=f"bold {DECISION_STYLE}", box=None)
         act_table.add_column("交互关键字", style=DECISION_STYLE, width=15)
         act_table.add_column("用法说明")
-        act_table.add_row("@符号", "触发类/方法/路径的实时补全")
+        act_table.add_row("@符号", "补全文件或目录")
         act_table.add_row("apply", "应用当前补丁预览")
         act_table.add_row("discard", "丢弃当前补丁草案")
 

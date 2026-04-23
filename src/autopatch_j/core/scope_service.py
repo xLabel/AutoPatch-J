@@ -74,12 +74,20 @@ class ScopeService:
                 return IndexEntry(path=rel_path, name=candidate.name, kind="dir")
             return IndexEntry(path=rel_path, name=candidate.name, kind="file")
 
-        results = self.indexer.search(Path(normalized).name, limit=20)
+        normalized_name = Path(normalized).name
+        results = [
+            entry
+            for entry in self.indexer.search(normalized_name, limit=20)
+            if entry.kind in {"file", "dir"}
+        ]
         for entry in results:
             entry_path = self._normalize_repo_path(entry.path)
             if entry_path == normalized:
                 return entry
-        return results[0] if results else None
+        for entry in results:
+            if entry.name == normalized_name:
+                return entry
+        return None
 
     def _expand_directory_java_files(self, rel_dir: str) -> list[str]:
         target_dir = (self.repo_root / rel_dir).resolve()
@@ -108,4 +116,3 @@ class ScopeService:
         if clean.startswith("./"):
             clean = clean[2:]
         return clean
-
