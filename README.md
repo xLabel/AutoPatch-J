@@ -1,6 +1,6 @@
 # AutoPatch-J
 
-> 中文说明 · [English Version](./README_EN.md)
+> 中文 · [English](./README_EN.md)
 
 <p align="center">
   <strong>面向 Java 仓库的 AI 代码修复智能体</strong><br/>
