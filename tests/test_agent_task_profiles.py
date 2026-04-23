@@ -61,6 +61,19 @@ def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> 
     ]
 
 
+def test_perform_zero_finding_review_uses_lightweight_tool_profile(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="done")
+    agent = _build_agent(tmp_path, mock_llm)
+
+    agent.perform_zero_finding_review("@User.java 检查代码")
+
+    assert _fetch_tool_names(mock_llm) == [
+        "read_source_code",
+        "propose_patch",
+    ]
+
+
 def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     mock_llm.chat.return_value = LLMResponse(content="done")

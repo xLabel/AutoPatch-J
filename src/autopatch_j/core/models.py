@@ -86,6 +86,7 @@ class PatchDraftData:
     validation_message: str
     validation_errors: list[str] = field(default_factory=list)
     rationale: str | None = None
+    source_hint: str | None = None
     target_check_id: str | None = None
     target_snippet: str | None = None
 
@@ -100,6 +101,7 @@ class PatchDraftData:
             validation_message=draft.validation.message,
             validation_errors=list(draft.validation.errors),
             rationale=draft.rationale,
+            source_hint=draft.source_hint,
             target_check_id=draft.target_check_id,
             target_snippet=draft.target_snippet,
         )
@@ -114,6 +116,7 @@ class PatchDraftData:
             "validation_message": self.validation_message,
             "validation_errors": list(self.validation_errors),
             "rationale": self.rationale,
+            "source_hint": self.source_hint,
             "target_check_id": self.target_check_id,
             "target_snippet": self.target_snippet,
         }
@@ -129,6 +132,7 @@ class PatchDraftData:
             validation_message=str(data.get("validation_message", "")),
             validation_errors=[str(item) for item in data.get("validation_errors", [])],
             rationale=str(data["rationale"]) if data.get("rationale") is not None else None,
+            source_hint=str(data["source_hint"]) if data.get("source_hint") is not None else None,
             target_check_id=str(data["target_check_id"]) if data.get("target_check_id") is not None else None,
             target_snippet=str(data["target_snippet"]) if data.get("target_snippet") is not None else None,
         )
@@ -147,6 +151,7 @@ class PatchDraftData:
             status="ok" if self.validation_status in {"ok", "skipped", "unavailable"} else "invalid",
             message=self.validation_message,
             rationale=self.rationale,
+            source_hint=self.source_hint,
             target_check_id=self.target_check_id,
             target_snippet=self.target_snippet,
         )

@@ -80,6 +80,7 @@ class PatchProposalTool(Tool):
             old_string=old_string,
             new_string=new_string,
             rationale=rationale,
+            source_hint=self.context.patch_source_hint,
             target_check_id=target_rule,
             target_snippet=target_snippet,
         )

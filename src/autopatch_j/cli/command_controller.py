@@ -26,6 +26,7 @@ class CommandControllerContext(Protocol):
     renderer: Any
 
     def _init_services(self, repo_root: Path) -> None: ...
+    def _clear_pending_patch_candidates(self) -> None: ...
 
 
 class CliCommandController:
@@ -49,6 +50,7 @@ class CliCommandController:
         elif cmd == "/help":
             self.handle_help()
         elif cmd == "/quit":
+            self.context._clear_pending_patch_candidates()
             sys.exit(0)
         else:
             self.context.renderer.print_error(f"未知命令：{cmd}")

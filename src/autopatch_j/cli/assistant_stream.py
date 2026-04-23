@@ -47,6 +47,7 @@ class AssistantStream:
         raw_user_text: str | None = None,
         show_chat_anchors: bool = False,
         plain_answer: bool = False,
+        suppress_answer_output: bool = False,
     ) -> list[dict[str, Any]]:
         assert self.agent is not None
         assert self.workflow_service is not None
@@ -57,7 +58,6 @@ class AssistantStream:
             "in_reasoning": False,
             "answer_after_reasoning": False,
             "reasoning_visible": False,
-            "reasoning_tick": 0,
         }
         buffered_answer_parts: list[str] = []
         start_index = len(self.agent.messages)
@@ -74,9 +74,9 @@ class AssistantStream:
 
         def on_reasoning(token: str) -> None:
             stream_state["in_reasoning"] = True
-            self.renderer.print_reasoning_status(stream_state["reasoning_tick"])
-            stream_state["reasoning_visible"] = True
-            stream_state["reasoning_tick"] += 1
+            if not stream_state["reasoning_visible"]:
+                self.renderer.print_reasoning_status(0)
+                stream_state["reasoning_visible"] = True
 
         def on_tool_start(tool_name: str) -> None:
             nonlocal current_tool_name
@@ -120,6 +120,10 @@ class AssistantStream:
                 scanner_summary=self._build_static_scan_summary(),
                 llm_summary=self._build_local_no_issue_summary(),
             )
+            self.renderer.print()
+            return new_messages
+
+        if suppress_answer_output:
             self.renderer.print()
             return new_messages
 

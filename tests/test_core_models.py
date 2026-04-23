@@ -39,6 +39,7 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
                     validation_message="ok",
                     validation_errors=[],
                     rationale="rationale",
+                    source_hint="LLM 二次复核（静态扫描未报出问题）",
                     target_check_id="F1",
                     target_snippet="snippet",
                 ),
@@ -59,6 +60,7 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
     current = restored.fetch_current_patch_item()
     assert current is not None
     assert current.status is PatchReviewStatus.PENDING
+    assert current.draft.source_hint == "LLM 二次复核（静态扫描未报出问题）"
     assert current.draft.target_check_id == "F1"
 
 

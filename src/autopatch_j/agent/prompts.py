@@ -65,3 +65,26 @@ def build_task_system_prompt(
             ),
         ]
     )
+
+
+def build_zero_finding_review_system_prompt(
+    last_scan: str | None,
+    focus_paths: list[str] | None = None,
+) -> str:
+    return "\n\n".join(
+        [
+            BASE_SYSTEM_PROMPT,
+            (
+                "当前任务是 zero_finding_review。静态扫描器在当前范围内未发现 finding，"
+                "你需要做一次轻量复核来补漏。"
+                "不要假设存在 F1/F2，也不要调用 get_finding_detail。"
+                "只有在你拿到具体代码证据、能明确指出风险并给出最小修法时，才允许 propose_patch。"
+                "如果没有明确证据支持修改，请保持简洁，不要展开长篇分析。"
+            ),
+            build_workbench_prompt(
+                pending_file=None,
+                last_scan=last_scan,
+                focus_paths=focus_paths,
+            ),
+        ]
+    )

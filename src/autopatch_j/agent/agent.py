@@ -4,7 +4,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from autopatch_j.agent.llm_client import LLMClient, ToolCall, build_default_llm_client
-from autopatch_j.agent.prompts import build_task_system_prompt
+from autopatch_j.agent.prompts import (
+    build_task_system_prompt,
+    build_zero_finding_review_system_prompt,
+)
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.models import IntentType
 from autopatch_j.tools.base import Tool, ToolResult
@@ -45,6 +48,10 @@ class AutoPatchAgent:
         ),
     }
     CODE_EXPLAIN_SINGLE_FILE_TOOL_NAMES: tuple[str, ...] = ("read_source_code",)
+    ZERO_FINDING_REVIEW_TOOL_NAMES: tuple[str, ...] = (
+        "read_source_code",
+        "propose_patch",
+    )
 
     def __init__(
         self,
@@ -75,6 +82,7 @@ class AutoPatchAgent:
         self.focus_paths: list[str] = []
         self.source_read_cache: dict[tuple[str, str | None, int | None], ToolResult] = {}
         self.code_explain_allow_symbol_search = True
+        self.patch_source_hint: str | None = None
 
     def perform_code_audit(
         self,
@@ -133,6 +141,24 @@ class AutoPatchAgent:
         return self._run_task(
             intent=IntentType.GENERAL_CHAT,
             user_text=user_text,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def perform_zero_finding_review(
+        self,
+        user_text: str,
+        on_token: ToolCallback | None = None,
+        on_reasoning: ToolCallback | None = None,
+        on_observation: ToolCallback | None = None,
+        on_tool_start: ToolCallback | None = None,
+    ) -> str:
+        return self._run_react_loop(
+            user_text=user_text,
+            system_prompt=self._build_zero_finding_review_system_prompt(),
+            allowed_tool_names=self.ZERO_FINDING_REVIEW_TOOL_NAMES,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -276,6 +302,12 @@ class AutoPatchAgent:
             focus_paths=self.focus_paths,
         )
 
+    def _build_zero_finding_review_system_prompt(self) -> str:
+        return build_zero_finding_review_system_prompt(
+            last_scan=self._fetch_latest_scan_artifact_id(),
+            focus_paths=self.focus_paths,
+        )
+
     def _fetch_latest_scan_artifact_id(self) -> str | None:
         scan_files = sorted(self.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
         return scan_files[0].stem if scan_files else None
@@ -371,9 +403,13 @@ class AutoPatchAgent:
         self.messages = []
         self.source_read_cache = {}
         self.code_explain_allow_symbol_search = True
+        self.patch_source_hint = None
 
     def set_code_explain_symbol_search_enabled(self, enabled: bool) -> None:
         self.code_explain_allow_symbol_search = enabled
+
+    def set_patch_source_hint(self, source_hint: str | None) -> None:
+        self.patch_source_hint = source_hint
 
     def normalize_repo_path(self, path: str) -> str:
         clean = path.replace("\\", "/").strip()

@@ -54,7 +54,7 @@ def _review_item(item_id: str, file_path: str) -> PatchReviewItem:
     )
 
 
-def _patch_draft(file_path: str, finding_id: str) -> PatchDraft:
+def _patch_draft(file_path: str, finding_id: str, source_hint: str | None = None) -> PatchDraft:
     return PatchDraft(
         file_path=file_path,
         old_string="old",
@@ -64,6 +64,7 @@ def _patch_draft(file_path: str, finding_id: str) -> PatchDraft:
         status="ok",
         message="ok",
         rationale=f"fix {finding_id}",
+        source_hint=source_hint,
         error_code=None,
         target_check_id=finding_id,
         target_snippet="snippet",
@@ -101,16 +102,70 @@ def test_cli_code_audit_triggers_local_scan_then_agent(tmp_path: Path) -> None:
             "agent_call": agent_call,
             "scope_paths": scope_paths,
             "render_no_issue_panel": render_no_issue_panel,
+            "suppress_answer_output": kwargs.get("suppress_answer_output", False),
         }
     )
+    cli.renderer.print_no_issue_panel = MagicMock()
+    cli.renderer.print = MagicMock()
 
     cli.handle_chat("@User.java 检查代码")
 
     assert cli.scope_service.fetch_scope.call_count == 2
     cli.scan_service.run_scan_and_persist.assert_called_once()
     cli.renderer.print_tool_start.assert_called_once_with("scan_project", caller="AGENT")
-    assert captured["agent_call"] == cli.agent.perform_code_audit
-    assert captured["render_no_issue_panel"] is True
+    assert captured["agent_call"] == cli.agent.perform_zero_finding_review
+    assert captured["render_no_issue_panel"] is False
+    assert captured["suppress_answer_output"] is True
+    cli.renderer.print_no_issue_panel.assert_called_once()
+
+
+def test_cli_zero_finding_review_persists_llm_source_hint_on_patch(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    assert cli.intent_service is not None
+    assert cli.scope_service is not None
+    assert cli.scan_service is not None
+    assert cli.workflow_service is not None
+    assert cli.agent is not None
+
+    cli.intent_service.fetch_intent = MagicMock(return_value=IntentType.CODE_AUDIT)
+    cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
+    cli.scan_service.run_scan_and_persist = MagicMock(
+        return_value=(
+            "scan-1",
+            ScanResult(
+                engine="semgrep",
+                scope=["src/main/java/demo/User.java"],
+                targets=["src/main/java/demo/User.java"],
+                status="ok",
+                message="ok",
+                findings=[],
+            ),
+        )
+    )
+    cli.renderer.print_tool_start = MagicMock()
+    cli.renderer.print_no_issue_panel = MagicMock()
+    cli.renderer.print = MagicMock()
+
+    def fake_run_agent_request(prompt, agent_call, **kwargs):
+        assert cli.artifacts is not None
+        assert cli.agent is not None
+        cli.artifacts.persist_pending_patch(
+            _patch_draft(
+                "src/main/java/demo/User.java",
+                "F0",
+                source_hint=cli.agent.patch_source_hint,
+            )
+        )
+        return []
+
+    cli._run_agent_request = fake_run_agent_request
+
+    cli.handle_chat("@User.java 检查代码")
+
+    pending = cli.artifacts.fetch_pending_patch()
+    assert pending is not None
+    assert pending.source_hint == "LLM 二次复核（静态扫描未报出问题）"
+    cli.renderer.print_no_issue_panel.assert_not_called()
 
 
 def test_cli_code_audit_targets_single_finding_prompt(tmp_path: Path) -> None:
@@ -313,7 +368,7 @@ def test_cli_new_task_in_review_state_resets_review_context(tmp_path: Path) -> N
 
     assert cli.agent.messages == []
     cli.renderer.print_info.assert_called_once()
-    assert captured["agent_call"] == cli.agent.perform_code_audit
+    assert captured["agent_call"] == cli.agent.perform_zero_finding_review
 
 
 def test_cli_code_audit_retries_current_finding_then_continues_remaining(tmp_path: Path) -> None:
@@ -435,6 +490,19 @@ def test_cli_can_initialize_without_prompt_session(tmp_path: Path) -> None:
     assert cli.artifacts.fetch_pending_patch() is None
 
 
+def test_cli_quit_clears_pending_patch_candidates_before_exit(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    cli._clear_pending_patch_candidates = MagicMock()
+
+    with patch("autopatch_j.cli.command_controller.sys.exit", side_effect=SystemExit):
+        try:
+            cli.handle_command("/quit")
+        except SystemExit:
+            pass
+
+    cli._clear_pending_patch_candidates.assert_called_once()
+
+
 def test_run_agent_request_labels_llm_tool_calls(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
     assert cli.workflow_service is not None
@@ -462,7 +530,8 @@ def test_run_agent_request_uses_distinct_observation_and_reasoning_rendering(tmp
     cli = _make_cli(tmp_path)
     assert cli.workflow_service is not None
 
-    cli.renderer.print_reasoning = MagicMock()
+    cli.renderer.print_reasoning_status = MagicMock()
+    cli.renderer.finish_reasoning_status = MagicMock()
     cli.renderer.print_observation = MagicMock()
     cli.renderer.print = MagicMock()
 
@@ -481,7 +550,8 @@ def test_run_agent_request_uses_distinct_observation_and_reasoning_rendering(tmp
 
     cli._run_agent_request(prompt="check", agent_call=fake_agent_call)
 
-    cli.renderer.print_reasoning.assert_called_once_with("思考中", end="")
+    cli.renderer.print_reasoning_status.assert_called_once_with(0)
+    cli.renderer.finish_reasoning_status.assert_called_once()
     cli.renderer.print_observation.assert_called_once_with("工具观察")
 
 

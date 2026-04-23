@@ -189,8 +189,7 @@ def test_assistant_stream_masks_reasoning_content_with_status(tmp_path: Path) ->
         plain_answer=True,
     )
 
-    assert renderer.print_reasoning_status.call_args_list[0].args[0] == 0
-    assert renderer.print_reasoning_status.call_args_list[1].args[0] == 1
+    renderer.print_reasoning_status.assert_called_once_with(0)
     renderer.finish_reasoning_status.assert_called_once()
     printed = "".join(str(call.args[0]) for call in renderer.print_plain.call_args_list)
     assert "Let me think" not in printed

@@ -36,6 +36,7 @@ class ConversationControllerContext(Protocol):
     def _run_agent_request(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
     def _should_show_full_tool_output(self, text: str) -> bool: ...
     def _build_code_audit_prompt(self, text: str, current_finding: Any, force_reread: bool) -> str: ...
+    def _build_zero_finding_review_prompt(self, text: str, file_path: str) -> str: ...
     def _build_code_explain_prompt(self, text: str, scope: CodeScope) -> str: ...
     def _build_patch_explain_prompt(self, current_item: PatchReviewItem, user_text: str) -> str: ...
     def _build_patch_revise_prompt(
@@ -155,12 +156,7 @@ class CliConversationController:
         self.context.workflow_service.persist_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
         backlog = self.context.audit_backlog_service.fetch_backlog(scan_result)
         if not backlog:
-            self.context._run_agent_request(
-                prompt=text,
-                agent_call=self.context.agent.perform_code_audit,
-                scope_paths=self.context._describe_scope_paths(scope),
-                render_no_issue_panel=True,
-            )
+            self._handle_zero_finding_review(text=text, scope=scope)
             if not self.context.workflow_service.verify_has_pending_patch():
                 self.context.workflow_service.clear_workspace()
             return
@@ -226,6 +222,35 @@ class CliConversationController:
 
         if not self.context.workflow_service.verify_has_pending_patch():
             self.context.workflow_service.clear_workspace()
+
+    def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
+        assert self.context.agent is not None
+        assert self.context.workflow_service is not None
+
+        for file_path in scope.focus_files:
+            self.context.agent.reset_history()
+            self.context.agent.set_focus_paths([file_path])
+            self.context.agent.set_patch_source_hint("LLM 二次复核（静态扫描未报出问题）")
+            prompt = self.context._build_zero_finding_review_prompt(text=text, file_path=file_path)
+            try:
+                self.context._run_agent_request(
+                    prompt=prompt,
+                    agent_call=self.context.agent.perform_zero_finding_review,
+                    scope_paths=[file_path],
+                    compact_observation=True,
+                    suppress_answer_output=True,
+                )
+            finally:
+                self.context.agent.set_patch_source_hint(None)
+            if self.context.workflow_service.verify_has_pending_patch():
+                return
+
+        self.context.renderer.print_no_issue_panel(
+            scope_paths=self.context._describe_scope_paths(scope),
+            scanner_summary=self.context._build_static_scan_summary(),
+            llm_summary=self.context._build_local_no_issue_summary(),
+        )
+        self.context.renderer.print()
 
     def handle_code_explain(self, text: str) -> None:
         assert self.context.scope_service is not None

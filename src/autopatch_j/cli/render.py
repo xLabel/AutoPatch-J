@@ -102,7 +102,16 @@ class CliRenderer:
 
         self.print_panel(diff_text, title=title, style=DECISION_STYLE)
 
-    def print_action_panel(self, file_path: str, diff: str, validation: str, rationale: str, current_idx: int = 1, total_count: int = 1) -> None:
+    def print_action_panel(
+        self,
+        file_path: str,
+        diff: str,
+        validation: str,
+        rationale: str,
+        current_idx: int = 1,
+        total_count: int = 1,
+        source_hint: str | None = None,
+    ) -> None:
         """展示补丁确认决策面板"""
         # 计算统计
         add_lines = diff.count("\n+") - diff.count("\n+++")
@@ -120,10 +129,18 @@ class CliRenderer:
         )
 
         rationale_text = Text(rationale, style="italic")
+        source_line = Text()
+        if source_hint:
+            source_line = Text.assemble(
+                ("来源: ", MUTED_STYLE),
+                (source_hint, BODY_STYLE),
+                ("\n", ""),
+            )
         
         # 组装文本页眉
         header = Text.assemble(
             "\n", stats, "\n",
+            source_line,
             ("意图: ", "bold"), rationale_text, "\n",
             ("─" * 40, MUTED_STYLE), "\n"
         )

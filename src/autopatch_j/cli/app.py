@@ -79,6 +79,7 @@ class AutoPatchCLI:
         signal.signal(signal.SIGINT, self._handle_interrupt)
 
     def _handle_interrupt(self, signum: int, frame: Any) -> None:
+        self._clear_pending_patch_candidates()
         self.renderer.print(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
         sys.exit(0)
 
@@ -189,9 +190,16 @@ class AutoPatchCLI:
         )
         self._refresh_cli_components()
 
+    def _clear_pending_patch_candidates(self) -> None:
+        if self.artifacts is not None:
+            self.artifacts.clear_pending_patch()
+        if self.agent is not None:
+            self.agent.reset_history()
+
     def run(self) -> int:
         if not self._ensure_prompt_session():
             return 1
+        self._clear_pending_patch_candidates()
 
         self.renderer.print_panel(
             "AutoPatch-J: Java 安全与正确性修复智能体\n输入 /help 查看命令，使用 @ 符号绑定上下文。",
@@ -222,6 +230,7 @@ class AutoPatchCLI:
                         rationale=pending_draft.rationale or "无说明",
                         current_idx=current_idx,
                         total_count=total_count,
+                        source_hint=pending_draft.source_hint,
                     )
                     prompt_prefix = f"<style fg='{DECISION_STYLE}' font_weight='bold'>PENDING</style> autopatch-j"
 
@@ -239,6 +248,7 @@ class AutoPatchCLI:
                     self.handle_chat(user_input)
 
             except (EOFError, KeyboardInterrupt):
+                self._clear_pending_patch_candidates()
                 break
             except Exception as exc:
                 error_message = str(exc)
@@ -285,6 +295,7 @@ class AutoPatchCLI:
         raw_user_text: str | None = None,
         show_chat_anchors: bool = False,
         plain_answer: bool = False,
+        suppress_answer_output: bool = False,
     ) -> list[dict[str, Any]]:
         return self._get_assistant_stream().run(
             prompt=prompt,
@@ -296,6 +307,7 @@ class AutoPatchCLI:
             raw_user_text=raw_user_text,
             show_chat_anchors=show_chat_anchors,
             plain_answer=plain_answer,
+            suppress_answer_output=suppress_answer_output,
         )
 
     def handle_command(self, raw_cmd: str) -> None:
@@ -446,6 +458,21 @@ class AutoPatchCLI:
             )
         lines.extend(["", f"用户原始请求: {text}"])
         return "\n".join(lines)
+
+    def _build_zero_finding_review_prompt(self, text: str, file_path: str) -> str:
+        return "\n".join(
+            [
+                "系统已完成本地静态扫描，当前目标文件在本轮扫描中没有 finding。",
+                f"当前目标文件: {file_path}",
+                "执行要求:",
+                "1. 只围绕当前文件做一次轻量复核，不要假设存在 F 编号。",
+                "2. 如需代码证据，只允许 read_source_code 当前文件。",
+                "3. 只有在拿到具体代码证据、能明确指出风险并给出最小修法时，才允许 propose_patch。",
+                "4. 如果没有明确证据支持修改，不要输出长篇分析。",
+                "",
+                f"用户原始请求: {text}",
+            ]
+        )
 
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
         assert self.workflow_service is not None

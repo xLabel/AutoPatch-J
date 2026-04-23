@@ -19,6 +19,7 @@ class PatchDraft:
     status: str  # "ok", "error", "invalid", "unavailable"
     message: str
     rationale: str | None = None
+    source_hint: str | None = None
     error_code: str | None = None
     target_check_id: str | None = None
     target_snippet: str | None = None
@@ -40,6 +41,7 @@ class PatchEngine:
         old_string: str,
         new_string: str,
         rationale: str | None = None,
+        source_hint: str | None = None,
         target_check_id: str | None = None,
         target_snippet: str | None = None,
     ) -> PatchDraft:
@@ -91,6 +93,7 @@ class PatchEngine:
             status=status,
             message=message,
             rationale=rationale,
+            source_hint=source_hint,
             error_code=None,
             target_check_id=target_check_id,
             target_snippet=target_snippet,
@@ -156,6 +159,7 @@ class PatchEngine:
             status="error",
             message=message,
             rationale=None,
+            source_hint=None,
             error_code=error_code,
             target_check_id=None,
             target_snippet=None,
