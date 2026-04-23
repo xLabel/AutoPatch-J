@@ -223,35 +223,6 @@ class CliConversationController:
         if not self.context.workflow_service.verify_has_pending_patch():
             self.context.workflow_service.clear_workspace()
 
-    def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
-        assert self.context.agent is not None
-        assert self.context.workflow_service is not None
-
-        for file_path in scope.focus_files:
-            self.context.agent.reset_history()
-            self.context.agent.set_focus_paths([file_path])
-            self.context.agent.set_patch_source_hint("LLM 二次复核（静态扫描未报出问题）")
-            prompt = self.context._build_zero_finding_review_prompt(text=text, file_path=file_path)
-            try:
-                self.context._run_agent_request(
-                    prompt=prompt,
-                    agent_call=self.context.agent.perform_zero_finding_review,
-                    scope_paths=[file_path],
-                    compact_observation=True,
-                    suppress_answer_output=True,
-                )
-            finally:
-                self.context.agent.set_patch_source_hint(None)
-            if self.context.workflow_service.verify_has_pending_patch():
-                return
-
-        self.context.renderer.print_no_issue_panel(
-            scope_paths=self.context._describe_scope_paths(scope),
-            scanner_summary=self.context._build_static_scan_summary(),
-            llm_summary=self.context._build_local_no_issue_summary(),
-        )
-        self.context.renderer.print()
-
     def handle_code_explain(self, text: str) -> None:
         assert self.context.scope_service is not None
         assert self.context.agent is not None
@@ -347,3 +318,32 @@ class CliConversationController:
         )
         if not self.context.workflow_service.verify_has_pending_patch():
             self.context.renderer.print_info("补丁队列已清空")
+
+    def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
+        assert self.context.agent is not None
+        assert self.context.workflow_service is not None
+
+        for file_path in scope.focus_files:
+            self.context.agent.reset_history()
+            self.context.agent.set_focus_paths([file_path])
+            self.context.agent.set_patch_source_hint("LLM 二次复核（静态扫描未报出问题）")
+            prompt = self.context._build_zero_finding_review_prompt(text=text, file_path=file_path)
+            try:
+                self.context._run_agent_request(
+                    prompt=prompt,
+                    agent_call=self.context.agent.perform_zero_finding_review,
+                    scope_paths=[file_path],
+                    compact_observation=True,
+                    suppress_answer_output=True,
+                )
+            finally:
+                self.context.agent.set_patch_source_hint(None)
+            if self.context.workflow_service.verify_has_pending_patch():
+                return
+
+        self.context.renderer.print_no_issue_panel(
+            scope_paths=self.context._describe_scope_paths(scope),
+            scanner_summary=self.context._build_static_scan_summary(),
+            llm_summary=self.context._build_local_no_issue_summary(),
+        )
+        self.context.renderer.print()

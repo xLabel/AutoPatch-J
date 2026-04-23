@@ -81,113 +81,6 @@ class AutoPatchCLI:
     def _handle_interrupt(self, signum: int, frame: Any) -> None:
         self.request_exit(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
 
-    def _refresh_cli_components(self) -> None:
-        self.input_controller = CliInputController(
-            index_search=lambda query: self.indexer.search(query) if self.indexer else [],
-            repo_root=self.repo_root,
-        )
-        self.command_controller = CliCommandController(self)
-        self.conversation_controller = CliConversationController(self)
-        self.assistant_stream = AssistantStream(
-            renderer=self.renderer,
-            workflow_service=self.workflow_service,
-            chat_service=self.chat_service,
-            agent=self.agent,
-            sanitize_output=self._sanitize_assistant_output,
-            prepare_display_answer=self._prepare_display_answer,
-            summarize_observation=self._summarize_observation,
-            describe_current_scope_paths=self._describe_current_scope_paths,
-            build_static_scan_summary=self._build_static_scan_summary,
-            build_local_no_issue_summary=self._build_local_no_issue_summary,
-        )
-
-    def _get_input_controller(self) -> CliInputController:
-        if getattr(self, "input_controller", None) is None:
-            self.input_controller = CliInputController(
-                index_search=lambda query: getattr(self, "indexer", None).search(query) if getattr(self, "indexer", None) else [],
-                repo_root=getattr(self, "repo_root", None),
-            )
-        self.input_controller.set_repo_root(getattr(self, "repo_root", None))
-        return self.input_controller
-
-    def _get_command_controller(self) -> CliCommandController:
-        if getattr(self, "command_controller", None) is None:
-            self.command_controller = CliCommandController(self)
-        return self.command_controller
-
-    def _get_conversation_controller(self) -> CliConversationController:
-        if getattr(self, "conversation_controller", None) is None:
-            self.conversation_controller = CliConversationController(self)
-        return self.conversation_controller
-
-    def _get_assistant_stream(self) -> AssistantStream:
-        if getattr(self, "assistant_stream", None) is None:
-            self.assistant_stream = AssistantStream(
-                renderer=self.renderer,
-                workflow_service=self.workflow_service,
-                chat_service=self.chat_service,
-                agent=self.agent,
-                sanitize_output=self._sanitize_assistant_output,
-                prepare_display_answer=self._prepare_display_answer,
-                summarize_observation=self._summarize_observation,
-                describe_current_scope_paths=self._describe_current_scope_paths,
-                build_static_scan_summary=self._build_static_scan_summary,
-                build_local_no_issue_summary=self._build_local_no_issue_summary,
-            )
-        else:
-            self.assistant_stream.workflow_service = self.workflow_service
-            self.assistant_stream.chat_service = self.chat_service
-            self.assistant_stream.agent = self.agent
-        return self.assistant_stream
-
-    def _create_prompt_session(self) -> PromptSession[str]:
-        return self._get_input_controller().create_prompt_session()
-
-    def _ensure_prompt_session(self) -> bool:
-        if self.prompt_session is not None:
-            return True
-        try:
-            self.prompt_session = self._create_prompt_session()
-            return True
-        except Exception as exc:
-            self.renderer.print_error(f"CLI 输入环境初始化失败: {exc}")
-            return False
-
-    def _pick_active_completion(self, buffer: Any) -> Any:
-        return self._get_input_controller().pick_active_completion(buffer)
-
-    def _accept_completion(self, buffer: Any) -> bool:
-        return self._get_input_controller().accept_completion(buffer)
-
-    def _select_first_completion(self, buffer: Any) -> bool:
-        return self._get_input_controller().select_first_completion(buffer)
-
-    def _should_append_space_after_completion(self, buffer: Any) -> bool:
-        return self._get_input_controller().should_append_space_after_completion(buffer)
-
-    def _init_services(self, repo_root: Path) -> None:
-        self.artifacts = ArtifactManager(repo_root)
-        self.indexer = IndexService(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
-        self.patch_engine = PatchEngine(repo_root)
-        self.fetcher = CodeFetcher(repo_root)
-        self.intent_service = IntentService()
-        self.audit_backlog_service = AuditBacklogService()
-        self.chat_service = ChatService()
-        shared_llm = build_default_llm_client()
-        self.continuity_judge_service = ContinuityJudgeService(llm=shared_llm)
-        self.scope_service = ScopeService(repo_root, self.indexer, ignored_dirs=GlobalConfig.ignored_dirs)
-        self.scan_service = ScanService(repo_root, self.artifacts)
-        self.workflow_service = WorkflowService(self.artifacts)
-        self.agent = AutoPatchAgent(
-            repo_root=repo_root,
-            artifacts=self.artifacts,
-            indexer=self.indexer,
-            patch_engine=self.patch_engine,
-            fetcher=self.fetcher,
-            llm=shared_llm,
-        )
-        self._refresh_cli_components()
-
     def _clear_pending_patch_candidates(self) -> None:
         if self.artifacts is not None:
             self.artifacts.clear_pending_patch()
@@ -549,6 +442,115 @@ class AutoPatchCLI:
 
     def handle_discard(self) -> None:
         self._get_command_controller().handle_discard()
+
+    def _refresh_cli_components(self) -> None:
+        self.input_controller = CliInputController(
+            index_search=lambda query: self.indexer.search(query) if self.indexer else [],
+            repo_root=self.repo_root,
+        )
+        self.command_controller = CliCommandController(self)
+        self.conversation_controller = CliConversationController(self)
+        self.assistant_stream = AssistantStream(
+            renderer=self.renderer,
+            workflow_service=self.workflow_service,
+            chat_service=self.chat_service,
+            agent=self.agent,
+            sanitize_output=self._sanitize_assistant_output,
+            prepare_display_answer=self._prepare_display_answer,
+            summarize_observation=self._summarize_observation,
+            describe_current_scope_paths=self._describe_current_scope_paths,
+            build_static_scan_summary=self._build_static_scan_summary,
+            build_local_no_issue_summary=self._build_local_no_issue_summary,
+        )
+
+    def _get_input_controller(self) -> CliInputController:
+        if getattr(self, "input_controller", None) is None:
+            self.input_controller = CliInputController(
+                index_search=lambda query: getattr(self, "indexer", None).search(query)
+                if getattr(self, "indexer", None)
+                else [],
+                repo_root=getattr(self, "repo_root", None),
+            )
+        self.input_controller.set_repo_root(getattr(self, "repo_root", None))
+        return self.input_controller
+
+    def _get_command_controller(self) -> CliCommandController:
+        if getattr(self, "command_controller", None) is None:
+            self.command_controller = CliCommandController(self)
+        return self.command_controller
+
+    def _get_conversation_controller(self) -> CliConversationController:
+        if getattr(self, "conversation_controller", None) is None:
+            self.conversation_controller = CliConversationController(self)
+        return self.conversation_controller
+
+    def _get_assistant_stream(self) -> AssistantStream:
+        if getattr(self, "assistant_stream", None) is None:
+            self.assistant_stream = AssistantStream(
+                renderer=self.renderer,
+                workflow_service=self.workflow_service,
+                chat_service=self.chat_service,
+                agent=self.agent,
+                sanitize_output=self._sanitize_assistant_output,
+                prepare_display_answer=self._prepare_display_answer,
+                summarize_observation=self._summarize_observation,
+                describe_current_scope_paths=self._describe_current_scope_paths,
+                build_static_scan_summary=self._build_static_scan_summary,
+                build_local_no_issue_summary=self._build_local_no_issue_summary,
+            )
+        else:
+            self.assistant_stream.workflow_service = self.workflow_service
+            self.assistant_stream.chat_service = self.chat_service
+            self.assistant_stream.agent = self.agent
+        return self.assistant_stream
+
+    def _create_prompt_session(self) -> PromptSession[str]:
+        return self._get_input_controller().create_prompt_session()
+
+    def _ensure_prompt_session(self) -> bool:
+        if self.prompt_session is not None:
+            return True
+        try:
+            self.prompt_session = self._create_prompt_session()
+            return True
+        except Exception as exc:
+            self.renderer.print_error(f"CLI 输入环境初始化失败: {exc}")
+            return False
+
+    def _pick_active_completion(self, buffer: Any) -> Any:
+        return self._get_input_controller().pick_active_completion(buffer)
+
+    def _accept_completion(self, buffer: Any) -> bool:
+        return self._get_input_controller().accept_completion(buffer)
+
+    def _select_first_completion(self, buffer: Any) -> bool:
+        return self._get_input_controller().select_first_completion(buffer)
+
+    def _should_append_space_after_completion(self, buffer: Any) -> bool:
+        return self._get_input_controller().should_append_space_after_completion(buffer)
+
+    def _init_services(self, repo_root: Path) -> None:
+        self.artifacts = ArtifactManager(repo_root)
+        self.indexer = IndexService(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
+        self.patch_engine = PatchEngine(repo_root)
+        self.fetcher = CodeFetcher(repo_root)
+        self.intent_service = IntentService()
+        self.audit_backlog_service = AuditBacklogService()
+        self.chat_service = ChatService()
+        shared_llm = build_default_llm_client()
+        self.continuity_judge_service = ContinuityJudgeService(llm=shared_llm)
+        self.scope_service = ScopeService(repo_root, self.indexer, ignored_dirs=GlobalConfig.ignored_dirs)
+        self.scan_service = ScanService(repo_root, self.artifacts)
+        self.workflow_service = WorkflowService(self.artifacts)
+        self.agent = AutoPatchAgent(
+            repo_root=repo_root,
+            artifacts=self.artifacts,
+            indexer=self.indexer,
+            patch_engine=self.patch_engine,
+            fetcher=self.fetcher,
+            llm=shared_llm,
+        )
+        self._refresh_cli_components()
 
 
 def main() -> int:
