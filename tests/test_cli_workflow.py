@@ -95,7 +95,7 @@ def test_cli_code_audit_triggers_local_scan_then_agent(tmp_path: Path) -> None:
     )
     cli.renderer.print_tool_start = MagicMock()
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
         {
             "prompt": prompt,
             "agent_call": agent_call,
@@ -148,7 +148,7 @@ def test_cli_code_audit_targets_single_finding_prompt(tmp_path: Path) -> None:
     )
     cli.renderer.print_tool_start = MagicMock()
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
         {
             "prompt": prompt,
             "agent_call": agent_call,
@@ -176,7 +176,7 @@ def test_cli_code_explain_skips_scan_and_uses_explain_entry(tmp_path: Path) -> N
     cli.scope_service.fetch_scope = MagicMock(return_value=_scope())
     cli.scan_service.fetch_scan_snapshot = MagicMock()
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
         {"agent_call": agent_call, "compact_observation": compact_observation}
     )
 
@@ -185,6 +185,23 @@ def test_cli_code_explain_skips_scan_and_uses_explain_entry(tmp_path: Path) -> N
     cli.scan_service.fetch_scan_snapshot.assert_not_called()
     assert captured["agent_call"] == cli.agent.perform_code_explain
     assert captured["compact_observation"] is True
+
+
+def test_cli_general_chat_rejects_non_programming_topics(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    assert cli.agent is not None
+
+    cli.renderer.print_user_anchor = MagicMock()
+    cli.renderer.print_assistant_anchor = MagicMock()
+    cli.renderer.print_plain = MagicMock()
+    cli.agent.perform_general_chat = MagicMock(return_value="unused")
+
+    cli._handle_general_chat("番茄炒蛋怎么做")
+
+    cli.renderer.print_user_anchor.assert_called_once_with("番茄炒蛋怎么做")
+    cli.renderer.print_assistant_anchor.assert_called_once_with()
+    cli.renderer.print_plain.assert_called_once()
+    cli.agent.perform_general_chat.assert_not_called()
 
 
 @patch.object(ContinuityJudgeService, "fetch_route", return_value=ConversationRoute.REVIEW_CONTINUE)
@@ -208,7 +225,7 @@ def test_cli_patch_revise_clears_remaining_tail_before_agent_call(
         ],
     )
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
         {"agent_call": agent_call}
     )
 
@@ -236,7 +253,7 @@ def test_cli_review_mixed_feedback_routes_to_patch_revise(
         patch_items=[_review_item("item-1", "src/main/java/demo/User.java")],
     )
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
         {"agent_call": agent_call, "prompt": prompt}
     )
 
@@ -278,7 +295,7 @@ def test_cli_new_task_in_review_state_resets_review_context(tmp_path: Path) -> N
     )
     cli.renderer.print_info = MagicMock()
     captured: dict[str, object] = {}
-    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+    cli._run_agent_request = lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
         {
             "prompt": prompt,
             "agent_call": agent_call,
@@ -489,3 +506,48 @@ def test_run_agent_request_compacts_observation_for_code_explain(tmp_path: Path)
 
     cli.renderer.print_info.assert_called_once_with("已读取: src/main/java/demo/LegacyConfig.java")
     cli.renderer.print_observation.assert_not_called()
+
+
+def test_run_agent_request_uses_plain_chat_output_with_anchor(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    assert cli.workflow_service is not None
+
+    cli.renderer.print_assistant_anchor = MagicMock()
+    cli.renderer.print_plain = MagicMock()
+    cli.renderer.print = MagicMock()
+
+    long_markdown = (
+        "## 常见解法\n"
+        "1. 暴力枚举\n"
+        "2. 哈希表\n"
+        "```python\n"
+        "def two_sum(nums, target):\n"
+        "    return []\n"
+        "```\n"
+        "哈希表一次遍历通常是最优解，时间复杂度 O(n)。\n"
+        "如果需要，我还可以继续展开完整代码。\n"
+    )
+
+    def fake_agent_call(
+        prompt: str,
+        on_token=None,
+        on_reasoning=None,
+        on_observation=None,
+        on_tool_start=None,
+    ) -> str:
+        return long_markdown
+
+    cli._run_agent_request(
+        prompt="leetcode 第1题的解法？",
+        agent_call=fake_agent_call,
+        answer_intent=IntentType.GENERAL_CHAT,
+        raw_user_text="leetcode 第1题的解法？",
+        show_chat_anchors=True,
+        plain_answer=True,
+    )
+
+    cli.renderer.print_assistant_anchor.assert_called_once_with()
+    rendered_text = cli.renderer.print_plain.call_args.args[0]
+    assert "##" not in rendered_text
+    assert "```" not in rendered_text
+    assert "如需展开，我可以继续给代码示例或逐步说明。" in rendered_text

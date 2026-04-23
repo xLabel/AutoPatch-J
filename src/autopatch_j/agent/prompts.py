@@ -15,9 +15,12 @@ TASK_PROMPTS: dict[IntentType, str] = {
     ),
     IntentType.CODE_EXPLAIN: (
         "当前任务是 code_explain。你的职责是解释代码，不做扫描，不提出补丁。"
+        "默认用 2 到 4 句纯文本短答，不要输出 Markdown 标题、教程式大纲或长篇报告。"
     ),
     IntentType.GENERAL_CHAT: (
-        "当前任务是 general_chat。请直接回答用户问题，不触发代码审计或补丁流程。"
+        "当前任务是 general_chat。请只回答编程、修复、架构、算法、工具和项目相关问题，"
+        "不要回答生活类或泛百科问题。默认用 1 到 3 段纯文本短答，不要输出 Markdown 标题、"
+        "教程式编号大纲或长篇模板化内容。"
     ),
     IntentType.PATCH_EXPLAIN: (
         "当前任务是 patch_explain。请解释当前待审核补丁的意图、风险和影响，只读回答。"

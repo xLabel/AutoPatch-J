@@ -27,6 +27,15 @@ class CliRenderer:
     def print(self, *args, **kwargs) -> None:
         self.console.print(*args, **kwargs)
 
+    def print_plain(self, message: str, end: str = "\n") -> None:
+        self.console.print(message, end=end, highlight=False, markup=False, style=BODY_STYLE)
+
+    def print_user_anchor(self, message: str) -> None:
+        self.console.print(f"[{MUTED_STYLE}]你: {message}[/]")
+
+    def print_assistant_anchor(self, label: str = "AutoPatch-J") -> None:
+        self.console.print(f"[bold {SYSTEM_STYLE}]{label}:[/]")
+
     def print_panel(self, content: Any, title: str | None = None, style: str = SYSTEM_STYLE) -> None:
         self.console.print(Panel(content, title=title, border_style=style, box=ROUNDED))
 

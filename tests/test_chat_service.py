@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from autopatch_j.core.chat_service import ChatService
+from autopatch_j.core.models import IntentType
+
+
+def test_chat_service_limits_general_chat_to_programming_topics() -> None:
+    service = ChatService()
+
+    assert service.verify_programming_related("你是谁")
+    assert service.verify_programming_related("NPE 一般发生在什么场景")
+    assert service.verify_programming_related("leetcode 第1题的解法？")
+    assert not service.verify_programming_related("番茄炒蛋怎么做")
+
+
+def test_chat_service_compacts_long_markdown_answer_by_default() -> None:
+    service = ChatService()
+    answer = (
+        "## 常见解法\n"
+        "1. 暴力枚举\n"
+        "2. 哈希表\n"
+        "```python\n"
+        "def two_sum(nums, target):\n"
+        "    return []\n"
+        "```\n"
+        "哈希表一次遍历通常是最优解，时间复杂度 O(n)，空间复杂度 O(n)。\n"
+        "如果需要，我还可以继续展开 Java 和 Python 代码实现。\n"
+    )
+
+    compacted = service.fetch_display_answer(
+        user_text="leetcode 第1题的解法？",
+        answer=answer,
+        intent=IntentType.GENERAL_CHAT,
+    )
+
+    assert "##" not in compacted
+    assert "```" not in compacted
+    assert "如需展开，我可以继续给代码示例或逐步说明。" in compacted
+
+
+def test_chat_service_keeps_more_detail_when_user_explicitly_requests_code() -> None:
+    service = ChatService()
+    answer = (
+        "## Python 示例\n"
+        "```python\n"
+        "def hello():\n"
+        "    return 'world'\n"
+        "```\n"
+    )
+
+    rendered = service.fetch_display_answer(
+        user_text="给我 Python 代码示例",
+        answer=answer,
+        intent=IntentType.GENERAL_CHAT,
+    )
+
+    assert "##" not in rendered
+    assert "```" not in rendered
+    assert "def hello()" in rendered

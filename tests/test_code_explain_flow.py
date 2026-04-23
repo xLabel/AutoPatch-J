@@ -62,7 +62,7 @@ def test_handle_code_explain_keeps_bound_method_and_disables_symbol_search_for_s
     cli.agent.perform_code_explain = MagicMock(return_value="done")
     captured: dict[str, object] = {}
     cli._run_agent_request = (
-        lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+        lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
             {
                 "prompt": prompt,
                 "agent_call": agent_call,
@@ -88,7 +88,7 @@ def test_handle_code_explain_allows_full_tool_output_when_explicitly_requested(t
     cli.agent.perform_code_explain = MagicMock(return_value="done")
     captured: dict[str, object] = {}
     cli._run_agent_request = (
-        lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False: captured.update(
+        lambda prompt, agent_call, scope_paths=None, render_no_issue_panel=False, compact_observation=False, **kwargs: captured.update(
             {
                 "prompt": prompt,
                 "agent_call": agent_call,

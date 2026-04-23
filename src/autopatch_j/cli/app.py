@@ -24,6 +24,7 @@ from autopatch_j.cli.render import (
 from autopatch_j.config import GlobalConfig, discover_repo_root, get_project_state_dir
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.audit_backlog_service import AuditBacklogService
+from autopatch_j.core.chat_service import ChatService
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.continuity_judge_service import ContinuityJudgeService
 from autopatch_j.core.index_service import IndexService
@@ -66,6 +67,7 @@ class AutoPatchCLI:
         self.intent_service: IntentService | None = None
         self.continuity_judge_service: ContinuityJudgeService | None = None
         self.audit_backlog_service: AuditBacklogService | None = None
+        self.chat_service: ChatService | None = None
         self.scope_service: ScopeService | None = None
         self.scan_service: ScanService | None = None
         self.workflow_service: WorkflowService | None = None
@@ -195,6 +197,7 @@ class AutoPatchCLI:
         self.fetcher = CodeFetcher(repo_root)
         self.intent_service = IntentService()
         self.audit_backlog_service = AuditBacklogService()
+        self.chat_service = ChatService()
         shared_llm = build_default_llm_client()
         self.continuity_judge_service = ContinuityJudgeService(llm=shared_llm)
         self.scope_service = ScopeService(repo_root, self.indexer, ignored_dirs=GlobalConfig.ignored_dirs)
@@ -449,9 +452,11 @@ class AutoPatchCLI:
     def _handle_code_explain(self, text: str) -> None:
         assert self.scope_service is not None
         assert self.agent is not None
+        assert self.chat_service is not None
 
         scope = self.scope_service.fetch_scope(text, default_to_project=False)
         compact_observation = not self._should_show_full_tool_output(text)
+        self.renderer.print_user_anchor(text)
         if scope is not None and scope.is_locked:
             self.agent.set_focus_paths(scope.focus_files)
             prompt = self._build_code_explain_prompt(text=text, scope=scope)
@@ -461,6 +466,10 @@ class AutoPatchCLI:
                 prompt=prompt,
                 agent_call=self.agent.perform_code_explain,
                 compact_observation=compact_observation,
+                answer_intent=IntentType.CODE_EXPLAIN,
+                raw_user_text=text,
+                show_chat_anchors=True,
+                plain_answer=True,
             )
             return
 
@@ -470,15 +479,29 @@ class AutoPatchCLI:
             prompt=text,
             agent_call=self.agent.perform_general_chat,
             compact_observation=compact_observation,
+            answer_intent=IntentType.GENERAL_CHAT,
+            raw_user_text=text,
+            show_chat_anchors=True,
+            plain_answer=True,
         )
 
     def _handle_general_chat(self, text: str) -> None:
         assert self.agent is not None
+        assert self.chat_service is not None
+        self.renderer.print_user_anchor(text)
+        if not self.chat_service.verify_programming_related(text):
+            self.renderer.print_assistant_anchor()
+            self.renderer.print_plain(self.chat_service.fetch_out_of_scope_reply())
+            return
         self.agent.set_focus_paths([])
         self._run_agent_request(
             prompt=text,
             agent_call=self.agent.perform_general_chat,
             compact_observation=not self._should_show_full_tool_output(text),
+            answer_intent=IntentType.GENERAL_CHAT,
+            raw_user_text=text,
+            show_chat_anchors=True,
+            plain_answer=True,
         )
 
     def _handle_patch_explain(self, text: str) -> None:
@@ -529,9 +552,14 @@ class AutoPatchCLI:
         scope_paths: list[str] | None = None,
         render_no_issue_panel: bool = False,
         compact_observation: bool = False,
+        answer_intent: IntentType | None = None,
+        raw_user_text: str | None = None,
+        show_chat_anchors: bool = False,
+        plain_answer: bool = False,
     ) -> list[dict[str, Any]]:
         assert self.agent is not None
         assert self.workflow_service is not None
+        assert self.chat_service is not None
 
         self.renderer.print()
         stream_state = {"in_reasoning": False, "answer_after_reasoning": False}
@@ -587,13 +615,33 @@ class AutoPatchCLI:
 
         buffered_answer = self._sanitize_assistant_output("".join(buffered_answer_parts))
         if buffered_answer:
+            rendered_answer = self._prepare_display_answer(
+                answer=buffered_answer,
+                answer_intent=answer_intent,
+                raw_user_text=raw_user_text,
+            )
             if stream_state["answer_after_reasoning"]:
                 self.renderer.print("\n\n")
-            self.renderer.print(buffered_answer, end="")
+            if show_chat_anchors:
+                self.renderer.print_assistant_anchor()
+            if plain_answer:
+                self.renderer.print_plain(rendered_answer, end="")
+            else:
+                self.renderer.print(rendered_answer, end="")
         else:
             sanitized_final_answer = self._sanitize_assistant_output(final_answer or "")
             if sanitized_final_answer:
-                self.renderer.print(f"\n{sanitized_final_answer}")
+                rendered_answer = self._prepare_display_answer(
+                    answer=sanitized_final_answer,
+                    answer_intent=answer_intent,
+                    raw_user_text=raw_user_text,
+                )
+                if show_chat_anchors:
+                    self.renderer.print_assistant_anchor()
+                if plain_answer:
+                    self.renderer.print_plain(f"\n{rendered_answer}")
+                else:
+                    self.renderer.print(f"\n{rendered_answer}")
         self.renderer.print()
         return new_messages
 
@@ -619,6 +667,20 @@ class AutoPatchCLI:
     def _sanitize_assistant_output(self, text: str) -> str:
         match = DSML_MARKER_PATTERN.search(text)
         return text[:match.start()].rstrip() if match else text
+
+    def _prepare_display_answer(
+        self,
+        answer: str,
+        answer_intent: IntentType | None,
+        raw_user_text: str | None,
+    ) -> str:
+        if answer_intent is None or raw_user_text is None or self.chat_service is None:
+            return answer
+        return self.chat_service.fetch_display_answer(
+            user_text=raw_user_text,
+            answer=answer,
+            intent=answer_intent,
+        )
 
     def _should_show_full_tool_output(self, text: str) -> bool:
         hints = (
