@@ -3,7 +3,7 @@
 > English · [中文](./README_CN.md)
 
 <p align="center">
-  <strong>An AI code repair agent for Java repositories</strong><br/>
+  <strong>An AI code repair agent for Java</strong><br/>
   A command-line system built with <code>Workflow</code> as the controller and <code>Agent</code> as the decision engine, covering code inspection, code explanation, patch generation, and human confirmation.
 </p>
 

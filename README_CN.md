@@ -3,7 +3,7 @@
 > 中文 · [English](./README.md)
 
 <p align="center">
-  <strong>面向 Java 仓库的 AI 代码修复智能体</strong><br/>
+  <strong>面向 Java 的 AI 代码修复智能体</strong><br/>
   一个以 <code>Workflow</code> 为主控、以 <code>Agent</code> 为决策引擎的命令行系统，支持代码检查、代码讲解、补丁生成与人工确认。
 </p>
 
