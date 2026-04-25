@@ -126,6 +126,20 @@ class CliConversationController:
         self.handle_general_chat(text)
 
     def handle_code_audit(self, text: str) -> None:
+        backlog = self._prepare_audit_workspace(text)
+        if backlog is None:
+            return
+
+        while self.context.audit_backlog_service.verify_has_pending_finding(backlog):
+            finding = self.context.audit_backlog_service.fetch_current_finding(backlog)
+            if finding is None:
+                break
+            self._process_single_finding(finding, text, backlog)
+
+        if not self.context.workflow_service.verify_has_pending_patch():
+            self.context.workflow_service.clear_workspace()
+
+    def _prepare_audit_workspace(self, text: str) -> list[AuditFindingItem] | None:
         assert self.context.scope_service is not None
         assert self.context.scan_service is not None
         assert self.context.workflow_service is not None
@@ -135,7 +149,7 @@ class CliConversationController:
         scope = self.context.scope_service.fetch_scope(text, default_to_project=True)
         if scope is None:
             self.context.renderer.print_error("未解析到可检查范围")
-            return
+            return None
 
         self.context.agent.session.set_focus_paths(scope.focus_files if scope.is_locked else [])
         try:
@@ -143,7 +157,7 @@ class CliConversationController:
             scan_id, scan_result = self.context.scan_service.run_scan_and_persist(scope)
         except RuntimeError as exc:
             self.context.renderer.print_error(str(exc))
-            return
+            return None
 
         self.context.workflow_service.persist_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
         backlog = self.context.audit_backlog_service.fetch_backlog(scan_result)
@@ -151,69 +165,79 @@ class CliConversationController:
             self._handle_zero_finding_review(text=text, scope=scope)
             if not self.context.workflow_service.verify_has_pending_patch():
                 self.context.workflow_service.clear_workspace()
+            return None
+
+        return backlog
+
+    def _process_single_finding(
+        self,
+        finding: AuditFindingItem,
+        text: str,
+        backlog: list[AuditFindingItem],
+    ) -> None:
+        self.context.agent.reset_history()
+        new_messages = self.context._run_agent_request(
+            prompt=text,
+            agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
+                raw_user_text=text,
+                current_finding=finding,
+                force_reread=False,
+                **kwargs
+            )
+        ) or []
+        decision = self.context.audit_backlog_service.infer_attempt_decision(finding, new_messages)
+        
+        if decision.outcome is AuditAttemptOutcome.PATCH_READY:
+            self.context.audit_backlog_service.persist_mark_patch_ready(backlog, finding.finding_id)
             return
 
-        while self.context.audit_backlog_service.verify_has_pending_finding(backlog):
-            current_finding = self.context.audit_backlog_service.fetch_current_finding(backlog)
-            if current_finding is None:
-                break
-
-            self.context.agent.reset_history()
-            new_messages = self.context._run_agent_request(
-                prompt=text,
-                agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
-                    raw_user_text=text,
-                    current_finding=current_finding,
-                    force_reread=False,
-                    **kwargs
-                )
-            ) or []
-            decision = self.context.audit_backlog_service.infer_attempt_decision(current_finding, new_messages)
-            if decision.outcome is AuditAttemptOutcome.PATCH_READY:
-                self.context.audit_backlog_service.persist_mark_patch_ready(backlog, current_finding.finding_id)
-                continue
-
-            if (
-                decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
-                and self.context.audit_backlog_service.verify_can_retry(current_finding)
-            ):
-                self.context.audit_backlog_service.persist_mark_retry(
-                    backlog=backlog,
-                    finding_id=current_finding.finding_id,
-                    error_code=decision.error_code,
-                    error_message=decision.error_message,
-                )
-                self.context.agent.reset_history()
-                retry_messages = self.context._run_agent_request(
-                    prompt=text,
-                    agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
-                        raw_user_text=text,
-                        current_finding=current_finding,
-                        force_reread=True,
-                        **kwargs
-                    )
-                ) or []
-                retry_decision = self.context.audit_backlog_service.infer_attempt_decision(current_finding, retry_messages)
-                if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
-                    self.context.audit_backlog_service.persist_mark_patch_ready(backlog, current_finding.finding_id)
-                else:
-                    self.context.audit_backlog_service.persist_mark_failed(
-                        backlog=backlog,
-                        finding_id=current_finding.finding_id,
-                        error_code=retry_decision.error_code,
-                        error_message=retry_decision.error_message,
-                    )
-                continue
-
-            self.context.audit_backlog_service.persist_mark_failed(
+        if (
+            decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
+            and self.context.audit_backlog_service.verify_can_retry(finding)
+        ):
+            self.context.audit_backlog_service.persist_mark_retry(
                 backlog=backlog,
-                finding_id=current_finding.finding_id,
+                finding_id=finding.finding_id,
                 error_code=decision.error_code,
                 error_message=decision.error_message,
             )
+            self._handle_finding_retry(finding, text, backlog)
+            return
 
-        if not self.context.workflow_service.verify_has_pending_patch():
-            self.context.workflow_service.clear_workspace()
+        self.context.audit_backlog_service.persist_mark_failed(
+            backlog=backlog,
+            finding_id=finding.finding_id,
+            error_code=decision.error_code,
+            error_message=decision.error_message,
+        )
+
+    def _handle_finding_retry(
+        self,
+        finding: AuditFindingItem,
+        text: str,
+        backlog: list[AuditFindingItem],
+    ) -> None:
+        self.context.agent.reset_history()
+        retry_messages = self.context._run_agent_request(
+            prompt=text,
+            agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
+                raw_user_text=text,
+                current_finding=finding,
+                force_reread=True,
+                **kwargs
+            )
+        ) or []
+        retry_decision = self.context.audit_backlog_service.infer_attempt_decision(finding, retry_messages)
+        
+        if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
+            self.context.audit_backlog_service.persist_mark_patch_ready(backlog, finding.finding_id)
+        else:
+            self.context.audit_backlog_service.persist_mark_failed(
+                backlog=backlog,
+                finding_id=finding.finding_id,
+                error_code=retry_decision.error_code,
+                error_message=retry_decision.error_message,
+            )
 
     def handle_code_explain(self, text: str) -> None:
         assert self.context.scope_service is not None

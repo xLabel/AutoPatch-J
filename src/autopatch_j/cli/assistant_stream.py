@@ -8,6 +8,51 @@ from autopatch_j.core.models import IntentType
 from autopatch_j.core.workflow_service import WorkflowService
 
 
+class _StreamExecution:
+    def __init__(self, stream: AssistantStream, compact_observation: bool) -> None:
+        self.stream = stream
+        self.renderer = stream.renderer
+        self.compact_observation = compact_observation
+        
+        self.in_reasoning: bool = False
+        self.answer_after_reasoning: bool = False
+        self.reasoning_visible: bool = False
+        self.current_tool_name: str | None = None
+        self.buffered_answer_parts: list[str] = []
+
+    def on_token(self, token: str) -> None:
+        if self.in_reasoning:
+            self.answer_after_reasoning = True
+            self.in_reasoning = False
+        self.finish_reasoning_status_if_visible()
+        self.buffered_answer_parts.append(token)
+
+    def on_reasoning(self, token: str) -> None:
+        self.in_reasoning = True
+        if not self.reasoning_visible:
+            self.renderer.print_reasoning_status(0)
+            self.reasoning_visible = True
+
+    def on_tool_start(self, tool_name: str) -> None:
+        self.finish_reasoning_status_if_visible()
+        self.current_tool_name = tool_name
+        self.renderer.print_tool_start(tool_name, caller="LLM")
+
+    def on_observation(self, message: str) -> None:
+        self.finish_reasoning_status_if_visible()
+        if self.compact_observation:
+            self.renderer.print_info(
+                self.stream._summarize_observation(self.current_tool_name, message)
+            )
+            return
+        self.renderer.print_observation(message)
+
+    def finish_reasoning_status_if_visible(self) -> None:
+        if self.reasoning_visible:
+            self.renderer.finish_reasoning_status()
+            self.reasoning_visible = False
+
+
 class AssistantStream:
     """Run one agent request and adapt its streamed events to CLI rendering."""
 
@@ -52,58 +97,19 @@ class AssistantStream:
         assert self.chat_service is not None
 
         self.renderer.print()
-        stream_state = {
-            "in_reasoning": False,
-            "answer_after_reasoning": False,
-            "reasoning_visible": False,
-        }
-        buffered_answer_parts: list[str] = []
+        
+        execution = _StreamExecution(self, compact_observation)
         start_index = len(self.agent.messages)
-        current_tool_name: str | None = None
-
-        def on_token(token: str) -> None:
-            if stream_state["in_reasoning"]:
-                stream_state["answer_after_reasoning"] = True
-                stream_state["in_reasoning"] = False
-            if stream_state["reasoning_visible"]:
-                self.renderer.finish_reasoning_status()
-                stream_state["reasoning_visible"] = False
-            buffered_answer_parts.append(token)
-
-        def on_reasoning(token: str) -> None:
-            stream_state["in_reasoning"] = True
-            if not stream_state["reasoning_visible"]:
-                self.renderer.print_reasoning_status(0)
-                stream_state["reasoning_visible"] = True
-
-        def on_tool_start(tool_name: str) -> None:
-            nonlocal current_tool_name
-            if stream_state["reasoning_visible"]:
-                self.renderer.finish_reasoning_status()
-                stream_state["reasoning_visible"] = False
-            current_tool_name = tool_name
-            self.renderer.print_tool_start(tool_name, caller="LLM")
-
-        def on_observation(message: str) -> None:
-            if stream_state["reasoning_visible"]:
-                self.renderer.finish_reasoning_status()
-                stream_state["reasoning_visible"] = False
-            if compact_observation:
-                self.renderer.print_info(self._summarize_observation(current_tool_name, message))
-                return
-            self.renderer.print_observation(message)
 
         final_answer = agent_call(
             prompt,
-            on_token=on_token,
-            on_reasoning=on_reasoning,
-            on_observation=on_observation,
-            on_tool_start=on_tool_start,
+            on_token=execution.on_token,
+            on_reasoning=execution.on_reasoning,
+            on_observation=execution.on_observation,
+            on_tool_start=execution.on_tool_start,
         )
         new_messages = list(self.agent.messages[start_index:])
-        if stream_state["reasoning_visible"]:
-            self.renderer.finish_reasoning_status()
-            stream_state["reasoning_visible"] = False
+        execution.finish_reasoning_status_if_visible()
 
         has_pending_patches = self.workflow_service.verify_has_pending_patch()
         if has_pending_patches:
@@ -111,7 +117,7 @@ class AssistantStream:
             return new_messages
 
         if render_no_issue_panel:
-            if buffered_answer_parts or final_answer:
+            if execution.buffered_answer_parts or final_answer:
                 self.renderer.print("\n")
             self.renderer.print_no_issue_panel(
                 scope_paths=scope_paths or self._describe_current_scope_paths(),
@@ -125,14 +131,14 @@ class AssistantStream:
             self.renderer.print()
             return new_messages
 
-        buffered_answer = self._sanitize_output("".join(buffered_answer_parts))
+        buffered_answer = self._sanitize_output("".join(execution.buffered_answer_parts))
         if buffered_answer:
             rendered_answer = self.chat_service.build_display_answer(
                 user_text=raw_user_text or "",
                 answer=buffered_answer,
                 intent=answer_intent,
             ) if answer_intent else buffered_answer
-            if stream_state["answer_after_reasoning"]:
+            if execution.answer_after_reasoning:
                 self.renderer.print("\n\n")
             if show_chat_anchors:
                 self.renderer.print_assistant_anchor()
