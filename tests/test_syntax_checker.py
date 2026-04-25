@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
-from autopatch_j.validators.java_syntax import JavaSyntaxValidator
+from autopatch_j.core.patch_verifier import PatchVerifier
 
 
 def test_java_syntax_validator_returns_ok_when_tree_sitter_accepts_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -29,8 +30,8 @@ def test_java_syntax_validator_returns_ok_when_tree_sitter_accepts_code(monkeypa
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
-    validator = JavaSyntaxValidator()
-    result = validator.validate("Demo.java", "class Demo {}")
+    validator = PatchVerifier(Path("."), None)
+    result = validator.verify_syntax("Demo.java", "class Demo {}")
 
     assert result.status == "ok"
 
@@ -57,8 +58,8 @@ def test_java_syntax_validator_returns_error_when_tree_has_errors(monkeypatch: p
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
-    validator = JavaSyntaxValidator()
-    result = validator.validate("Demo.java", "class Demo {")
+    validator = PatchVerifier(Path("."), None)
+    result = validator.verify_syntax("Demo.java", "class Demo {")
 
     assert result.status == "error"
     assert result.errors
@@ -74,8 +75,8 @@ def test_java_syntax_validator_returns_unavailable_when_dependency_missing(monke
 
     monkeypatch.setattr("builtins.__import__", fake_import)
 
-    validator = JavaSyntaxValidator()
-    result = validator.validate("Demo.java", "class Demo {}")
+    validator = PatchVerifier(Path("."), None)
+    result = validator.verify_syntax("Demo.java", "class Demo {}")
 
     assert result.status == "unavailable"
     assert "tree-sitter" in result.message

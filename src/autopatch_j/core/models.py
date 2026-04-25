@@ -5,7 +5,6 @@ from enum import StrEnum
 from typing import Any
 
 from autopatch_j.core.patch_engine import PatchDraft
-from autopatch_j.validators.java_syntax import SyntaxValidationResult
 
 
 class IntentType(StrEnum):
@@ -138,12 +137,13 @@ class PatchDraftData:
         )
 
     def fetch_patch_draft(self) -> PatchDraft:
+        from autopatch_j.core.patch_verifier import SyntaxCheckResult
         return PatchDraft(
             file_path=self.file_path,
             old_string=self.old_string,
             new_string=self.new_string,
             diff=self.diff,
-            validation=SyntaxValidationResult(
+            validation=SyntaxCheckResult(
                 status=self.validation_status,
                 message=self.validation_message,
                 errors=list(self.validation_errors),

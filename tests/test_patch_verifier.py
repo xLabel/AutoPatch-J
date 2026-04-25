@@ -3,17 +3,16 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
-from autopatch_j.core.validator_service import SemanticValidator
+from autopatch_j.core.patch_verifier import PatchVerifier, SyntaxCheckResult
 from autopatch_j.core.patch_engine import PatchDraft
 from autopatch_j.scanners.base import ScanResult, Finding
-from autopatch_j.validators.java_syntax import SyntaxValidationResult
 
 
 def test_verify_fix_logic():
     """验证指纹比对算法的准确性"""
     repo_root = Path("/tmp/mock-repo")
     mock_scanner = MagicMock()
-    validator = SemanticValidator(repo_root, mock_scanner)
+    validator = PatchVerifier(repo_root, mock_scanner)
     
     # 准备补丁草案快照 (修复目标代码: old_snippet)
     draft = PatchDraft(
@@ -21,7 +20,7 @@ def test_verify_fix_logic():
         old_string="MD5",
         new_string="SHA256",
         diff="...",
-        validation=SyntaxValidationResult(status="ok", message=""),
+        validation=SyntaxCheckResult(status="ok", message=""),
         status="ok",
         message="",
         target_check_id="weak-crypto",
@@ -33,7 +32,7 @@ def test_verify_fix_logic():
         engine="semgrep", scope=[], targets=[], status="ok", message="",
         findings=[] 
     )
-    success, _ = validator.perform_verification(draft)
+    success, _ = validator.verify_finding_resolved(draft)
     assert success is True
 
     # 2. 测试失败场景：漏洞特征依然存在
@@ -45,6 +44,6 @@ def test_verify_fix_logic():
                     snippet="MessageDigest.getInstance(\"MD5\")")
         ]
     )
-    success, msg = validator.perform_verification(draft)
+    success, msg = validator.verify_finding_resolved(draft)
     assert success is False
     assert "语义校验失败" in msg

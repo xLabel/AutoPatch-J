@@ -3,8 +3,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from autopatch_j.validators.java_syntax import JavaSyntaxValidator, SyntaxValidationResult
+if TYPE_CHECKING:
+    from autopatch_j.core.patch_verifier import SyntaxCheckResult
+
+
+class TargetFileNotFoundError(Exception):
+    pass
+
+
+class OldStringNotFoundError(Exception):
+    pass
+
+
+class OldStringNotUniqueError(Exception):
+    def __init__(self, occurrences: int):
+        self.occurrences = occurrences
+        super().__init__(f"old_string matched {occurrences} times.")
 
 
 @dataclass(slots=True)
@@ -15,7 +31,7 @@ class PatchDraft:
     old_string: str
     new_string: str
     diff: str
-    validation: SyntaxValidationResult
+    validation: SyntaxCheckResult
     status: str  # "ok", "error", "invalid", "unavailable"
     message: str
     rationale: str | None = None
@@ -28,30 +44,21 @@ class PatchDraft:
 class PatchEngine:
     """
     核心补丁引擎 (Core Service)
-    职责：负责 search-replace 草案生成、语法校验和物理落盘。
+    职责：负责 search-replace 草案生成和物理落盘，不包含任何语法分析。
     """
 
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root
-        self.validator = JavaSyntaxValidator()
 
     def perform_draft(
         self,
         file_path: str,
         old_string: str,
         new_string: str,
-        rationale: str | None = None,
-        source_hint: str | None = None,
-        target_check_id: str | None = None,
-        target_snippet: str | None = None,
-    ) -> PatchDraft:
+    ) -> tuple[str, str]:
         target_path = self._resolve_safe_path(file_path)
         if not target_path.exists() or not target_path.is_file():
-            return self._build_error_draft(
-                file_path=file_path,
-                message="目标文件不存在。",
-                error_code="FILE_NOT_FOUND",
-            )
+            raise TargetFileNotFoundError("目标文件不存在。")
 
         content = self._read_file_content(target_path)
         norm_content = content.replace("\r\n", "\n")
@@ -60,44 +67,13 @@ class PatchEngine:
 
         occurrences = norm_content.count(norm_old)
         if occurrences == 0:
-            return self._build_error_draft(
-                file_path=file_path,
-                message="在文件中未找到指定的 old_string（内容不匹配）。",
-                error_code="OLD_STRING_NOT_FOUND",
-            )
+            raise OldStringNotFoundError("在文件中未找到指定的 old_string（内容不匹配）。")
         if occurrences > 1:
-            return self._build_error_draft(
-                file_path=file_path,
-                message=f"old_string 匹配了 {occurrences} 处，匹配不唯一。",
-                error_code="OLD_STRING_NOT_UNIQUE",
-            )
+            raise OldStringNotUniqueError(occurrences)
 
         updated_norm_content = norm_content.replace(norm_old, norm_new, 1)
         patch_diff = self._generate_unified_diff(file_path, norm_content, updated_norm_content)
-        validation_result = self.validator.validate(file_path, updated_norm_content)
-
-        if validation_result.status == "unavailable":
-            status = "unavailable"
-        elif validation_result.status in ("ok", "skipped"):
-            status = "ok"
-        else:
-            status = "invalid"
-
-        message = "补丁起草成功并已通过语法校验。" if status == "ok" else validation_result.message
-        return PatchDraft(
-            file_path=file_path,
-            old_string=old_string,
-            new_string=new_string,
-            diff=patch_diff,
-            validation=validation_result,
-            status=status,
-            message=message,
-            rationale=rationale,
-            source_hint=source_hint,
-            error_code=None,
-            target_check_id=target_check_id,
-            target_snippet=target_snippet,
-        )
+        return updated_norm_content, patch_diff
 
     def perform_apply(self, draft: PatchDraft) -> bool:
         target_path = self._resolve_safe_path(draft.file_path)
@@ -148,19 +124,3 @@ class PatchEngine:
             n=3,
         )
         return "".join(diff)
-
-    def _build_error_draft(self, file_path: str, message: str, error_code: str) -> PatchDraft:
-        return PatchDraft(
-            file_path=file_path,
-            old_string="",
-            new_string="",
-            diff="",
-            validation=SyntaxValidationResult(status="error", message=message),
-            status="error",
-            message=message,
-            rationale=None,
-            source_hint=None,
-            error_code=error_code,
-            target_check_id=None,
-            target_snippet=None,
-        )
