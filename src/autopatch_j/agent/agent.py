@@ -7,9 +7,15 @@ from autopatch_j.agent.llm_client import LLMClient, ToolCall, build_default_llm_
 from autopatch_j.agent.prompts import (
     build_task_system_prompt,
     build_zero_finding_review_system_prompt,
+    build_code_audit_user_prompt,
+    build_code_explain_user_prompt,
+    build_patch_explain_user_prompt,
+    build_patch_revise_user_prompt,
+    build_zero_finding_review_user_prompt,
 )
+from autopatch_j.agent.session import AgentSession
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.models import IntentType, AuditFindingItem, CodeScope, PatchReviewItem
 from autopatch_j.tools.base import Tool, ToolResult
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
@@ -55,46 +61,37 @@ class AutoPatchAgent:
 
     def __init__(
         self,
-        repo_root: Path,
-        artifacts: Any,
-        indexer: Any,
-        patch_engine: Any,
-        fetcher: Any,
+        session: AgentSession,
         llm: LLMClient | None = None,
     ) -> None:
-        self.repo_root = repo_root
-        self.artifacts = artifacts
-        self.indexer = indexer
-        self.patch_engine = patch_engine
-        self.fetcher = fetcher
+        self.session = session
         self.llm = llm or build_default_llm_client()
 
         self.available_tools: dict[str, Tool] = {
             tool.name: tool
             for tool in [
-                PatchProposalTool(self),
-                SymbolSearchTool(self),
-                SourceReaderTool(self),
-                FindingRetrieverTool(self),
+                PatchProposalTool(self.session),
+                SymbolSearchTool(self.session),
+                SourceReaderTool(self.session),
+                FindingRetrieverTool(self.session),
             ]
         }
         self.messages: list[dict[str, Any]] = []
-        self.focus_paths: list[str] = []
-        self.source_read_cache: dict[tuple[str, str | None, int | None], ToolResult] = {}
-        self.code_explain_allow_symbol_search = True
-        self.patch_source_hint: str | None = None
 
     def perform_code_audit(
         self,
-        user_text: str,
+        raw_user_text: str,
+        current_finding: AuditFindingItem,
+        force_reread: bool,
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
         on_observation: ToolCallback | None = None,
         on_tool_start: ToolCallback | None = None,
     ) -> str:
+        prompt = build_code_audit_user_prompt(raw_user_text, current_finding, force_reread)
         return self._run_task(
             intent=IntentType.CODE_AUDIT,
-            user_text=user_text,
+            user_text=prompt,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -103,7 +100,8 @@ class AutoPatchAgent:
 
     def perform_code_explain(
         self,
-        user_text: str,
+        raw_user_text: str,
+        scope: CodeScope | None,
         allow_symbol_search: bool | None = None,
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
@@ -111,7 +109,7 @@ class AutoPatchAgent:
         on_tool_start: ToolCallback | None = None,
     ) -> str:
         effective_allow_symbol_search = (
-            self.code_explain_allow_symbol_search
+            self.session.code_explain_allow_symbol_search
             if allow_symbol_search is None
             else allow_symbol_search
         )
@@ -120,9 +118,10 @@ class AutoPatchAgent:
             if effective_allow_symbol_search
             else self.CODE_EXPLAIN_SINGLE_FILE_TOOL_NAMES
         )
+        prompt = build_code_explain_user_prompt(raw_user_text, scope) if scope else raw_user_text
         return self._run_task(
             intent=IntentType.CODE_EXPLAIN,
-            user_text=user_text,
+            user_text=prompt,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -132,7 +131,7 @@ class AutoPatchAgent:
 
     def perform_general_chat(
         self,
-        user_text: str,
+        raw_user_text: str,
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
         on_observation: ToolCallback | None = None,
@@ -140,7 +139,7 @@ class AutoPatchAgent:
     ) -> str:
         return self._run_task(
             intent=IntentType.GENERAL_CHAT,
-            user_text=user_text,
+            user_text=raw_user_text,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -149,14 +148,16 @@ class AutoPatchAgent:
 
     def perform_zero_finding_review(
         self,
-        user_text: str,
+        raw_user_text: str,
+        file_path: str,
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
         on_observation: ToolCallback | None = None,
         on_tool_start: ToolCallback | None = None,
     ) -> str:
+        prompt = build_zero_finding_review_user_prompt(raw_user_text, file_path)
         return self._run_react_loop(
-            user_text=user_text,
+            user_text=prompt,
             system_prompt=self._build_zero_finding_review_system_prompt(),
             allowed_tool_names=self.ZERO_FINDING_REVIEW_TOOL_NAMES,
             on_token=on_token,
@@ -167,15 +168,17 @@ class AutoPatchAgent:
 
     def perform_patch_explain(
         self,
-        user_text: str,
+        raw_user_text: str,
+        current_item: PatchReviewItem,
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
         on_observation: ToolCallback | None = None,
         on_tool_start: ToolCallback | None = None,
     ) -> str:
+        prompt = build_patch_explain_user_prompt(current_item, raw_user_text)
         return self._run_task(
             intent=IntentType.PATCH_EXPLAIN,
-            user_text=user_text,
+            user_text=prompt,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -184,15 +187,18 @@ class AutoPatchAgent:
 
     def perform_patch_revise(
         self,
-        user_text: str,
+        raw_user_text: str,
+        current_item: PatchReviewItem,
+        remaining_items: list[PatchReviewItem],
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
         on_observation: ToolCallback | None = None,
         on_tool_start: ToolCallback | None = None,
     ) -> str:
+        prompt = build_patch_revise_user_prompt(current_item, remaining_items, raw_user_text)
         return self._run_task(
             intent=IntentType.PATCH_REVISE,
-            user_text=user_text,
+            user_text=prompt,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -293,23 +299,23 @@ class AutoPatchAgent:
             return ToolResult(status="error", message=f"执行异常：{exc}")
 
     def _build_task_system_prompt(self, intent: IntentType) -> str:
-        pending = self.artifacts.fetch_pending_patch()
+        pending = self.session.artifacts.fetch_pending_patch()
         last_scan_id = self._fetch_latest_scan_artifact_id()
         return build_task_system_prompt(
             intent=intent,
             pending_file=pending.file_path if pending else None,
             last_scan=last_scan_id,
-            focus_paths=self.focus_paths,
+            focus_paths=self.session.focus_paths,
         )
 
     def _build_zero_finding_review_system_prompt(self) -> str:
         return build_zero_finding_review_system_prompt(
             last_scan=self._fetch_latest_scan_artifact_id(),
-            focus_paths=self.focus_paths,
+            focus_paths=self.session.focus_paths,
         )
 
     def _fetch_latest_scan_artifact_id(self) -> str | None:
-        scan_files = sorted(self.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
+        scan_files = sorted(self.session.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
         return scan_files[0].stem if scan_files else None
 
     def _build_llm_extra_body(self) -> dict[str, Any]:
@@ -391,58 +397,9 @@ class AutoPatchAgent:
             for call in calls
         ]
 
-    def set_focus_paths(self, paths: list[str] | None) -> None:
-        normalized: list[str] = []
-        for path in paths or []:
-            clean = self.normalize_repo_path(path)
-            if clean and clean not in normalized:
-                normalized.append(clean)
-        self.focus_paths = normalized
-
     def reset_history(self) -> None:
         self.messages = []
-        self.source_read_cache = {}
-        self.code_explain_allow_symbol_search = True
-        self.patch_source_hint = None
-
-    def set_code_explain_symbol_search_enabled(self, enabled: bool) -> None:
-        self.code_explain_allow_symbol_search = enabled
-
-    def set_patch_source_hint(self, source_hint: str | None) -> None:
-        self.patch_source_hint = source_hint
-
-    def normalize_repo_path(self, path: str) -> str:
-        clean = path.replace("\\", "/").strip()
-        if clean.startswith("./"):
-            clean = clean[2:]
-        return clean
-
-    def fetch_cached_source_read(
-        self,
-        path: str,
-        symbol: str | None,
-        line: int | None,
-    ) -> ToolResult | None:
-        key = (self.normalize_repo_path(path), symbol, line)
-        return self.source_read_cache.get(key)
-
-    def persist_cached_source_read(
-        self,
-        path: str,
-        symbol: str | None,
-        line: int | None,
-        result: ToolResult,
-    ) -> None:
-        key = (self.normalize_repo_path(path), symbol, line)
-        self.source_read_cache[key] = result
-
-    def is_focus_locked(self) -> bool:
-        return bool(self.focus_paths)
-
-    def is_path_in_focus(self, path: str) -> bool:
-        if not self.focus_paths:
-            return True
-        return self.normalize_repo_path(path) in self.focus_paths
+        self.session.clear_cache()
 
     @property
     def model_label(self) -> str:

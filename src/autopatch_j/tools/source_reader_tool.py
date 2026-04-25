@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from autopatch_j.core.index_service import IndexEntry
 from autopatch_j.tools.base import Tool, ToolResult
-
-if TYPE_CHECKING:
-    from autopatch_j.agent.agent import AutoPatchAgent
 
 
 class SourceReaderTool(Tool):

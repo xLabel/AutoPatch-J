@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from autopatch_j.core.finding_snippet_service import FindingSnippetService
 from autopatch_j.tools.base import Tool, ToolResult
-
-if TYPE_CHECKING:
-    from autopatch_j.agent.agent import AutoPatchAgent
 
 
 class PatchProposalTool(Tool):
@@ -48,6 +45,7 @@ class PatchProposalTool(Tool):
         assert self.context is not None
         engine = self.context.patch_engine
         artifacts = self.context.artifacts
+        verifier = self.context.patch_verifier
 
         if not self.context.is_path_in_focus(file_path):
             allowed = ", ".join(self.context.focus_paths)
@@ -75,28 +73,81 @@ class PatchProposalTool(Tool):
                     fallback_snippet=finding.snippet,
                 )
 
-        draft = engine.perform_draft(
-            file_path=file_path,
-            old_string=old_string,
-            new_string=new_string,
-            rationale=rationale,
-            source_hint=self.context.patch_source_hint,
-            target_check_id=target_rule,
-            target_snippet=target_snippet,
+        from autopatch_j.core.patch_engine import (
+            PatchDraft,
+            TargetFileNotFoundError,
+            OldStringNotFoundError,
+            OldStringNotUniqueError,
         )
 
-        if draft.status == "error":
+        try:
+            new_code, patch_diff = engine.perform_draft(
+                file_path=file_path,
+                old_string=old_string,
+                new_string=new_string,
+            )
+        except TargetFileNotFoundError as e:
             return ToolResult(
                 status="error",
-                message=f"补丁提案生成失败：{draft.message}",
+                message=f"补丁提案生成失败：{str(e)}",
                 payload={
                     "file_path": file_path,
                     "associated_finding_id": associated_finding_id,
-                    "error_code": draft.error_code,
-                    "error_message": draft.message,
+                    "error_code": "FILE_NOT_FOUND",
+                    "error_message": str(e),
                     "resolved_snippet": target_snippet,
                 },
             )
+        except OldStringNotFoundError as e:
+            return ToolResult(
+                status="error",
+                message=f"补丁提案生成失败：{str(e)}",
+                payload={
+                    "file_path": file_path,
+                    "associated_finding_id": associated_finding_id,
+                    "error_code": "OLD_STRING_NOT_FOUND",
+                    "error_message": str(e),
+                    "resolved_snippet": target_snippet,
+                },
+            )
+        except OldStringNotUniqueError as e:
+            return ToolResult(
+                status="error",
+                message=f"补丁提案生成失败：old_string 匹配了 {e.occurrences} 处，匹配不唯一。",
+                payload={
+                    "file_path": file_path,
+                    "associated_finding_id": associated_finding_id,
+                    "error_code": "OLD_STRING_NOT_UNIQUE",
+                    "error_message": f"old_string 匹配了 {e.occurrences} 处，匹配不唯一。",
+                    "resolved_snippet": target_snippet,
+                },
+            )
+
+        validation_result = verifier.verify_syntax(file_path, new_code)
+
+        if validation_result.status == "unavailable":
+            status = "unavailable"
+        elif validation_result.status in ("ok", "skipped"):
+            status = "ok"
+        else:
+            status = "invalid"
+
+        message_status = "补丁起草成功并已通过语法校验。" if status == "ok" else validation_result.message
+
+        draft = PatchDraft(
+            file_path=file_path,
+            old_string=old_string,
+            new_string=new_string,
+            diff=patch_diff,
+            validation=validation_result,
+            status=status,
+            message=message_status,
+            rationale=rationale,
+            source_hint=self.context.patch_source_hint,
+            error_code=None,
+            target_check_id=target_rule,
+            target_snippet=target_snippet,
+        )
 
         artifacts.persist_pending_patch(draft)
         message = f"补丁草案已加入队列。目标文件：{file_path}。\n"

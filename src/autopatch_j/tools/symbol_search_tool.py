@@ -1,11 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from autopatch_j.tools.base import Tool, ToolResult
-
-if TYPE_CHECKING:
-    from autopatch_j.agent.agent import AutoPatchAgent
 
 
 class SymbolSearchTool(Tool):
