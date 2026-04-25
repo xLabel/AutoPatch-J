@@ -95,6 +95,8 @@ def test_index_service_extracts_class_and_method_when_tree_sitter_available(
             self.start_point = (line, 0)
 
     class FakeQuery:
+        def __init__(self, _language, _query_str) -> None:
+            pass
         def captures(self, _root_node):
             return [
                 (FakeNode("Demo", 0), "class.name"),
@@ -105,9 +107,6 @@ def test_index_service_extracts_class_and_method_when_tree_sitter_available(
         def __init__(self, _language) -> None:
             pass
 
-        def query(self, _query: str) -> FakeQuery:
-            return FakeQuery()
-
     class FakeParser:
         def __init__(self, _language: FakeLanguage) -> None:
             pass
@@ -115,7 +114,7 @@ def test_index_service_extracts_class_and_method_when_tree_sitter_available(
         def parse(self, _content: bytes):
             return types.SimpleNamespace(root_node=object())
 
-    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser, Query=FakeQuery))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
     indexer = IndexService(tmp_path)
@@ -137,12 +136,13 @@ def test_index_service_marks_symbol_extract_degraded_when_runtime_fails(
 ) -> None:
     (tmp_path / "Demo.java").write_text("public class Demo { void run() {} }", encoding="utf-8")
 
+    class FakeQuery:
+        def __init__(self, _language, _query_str) -> None:
+            raise RuntimeError("query failed")
+
     class FakeLanguage:
         def __init__(self, _language) -> None:
             pass
-
-        def query(self, _query: str):
-            raise RuntimeError("query failed")
 
     class FakeParser:
         def __init__(self, _language: FakeLanguage) -> None:
@@ -151,7 +151,7 @@ def test_index_service_marks_symbol_extract_degraded_when_runtime_fails(
         def parse(self, _content: bytes):
             return types.SimpleNamespace(root_node=object())
 
-    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser, Query=FakeQuery))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
     indexer = IndexService(tmp_path)
