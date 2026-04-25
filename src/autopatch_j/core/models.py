@@ -262,3 +262,39 @@ class ActiveWorkspace:
 
     def verify_has_pending_patch(self) -> bool:
         return self.fetch_current_patch_item() is not None
+
+    def mark_applied(self) -> None:
+        item = self.fetch_current_patch_item()
+        if item:
+            item.status = PatchReviewStatus.APPLIED
+            self._advance_after_terminal_patch()
+
+    def mark_discarded(self) -> None:
+        item = self.fetch_current_patch_item()
+        if item:
+            item.status = PatchReviewStatus.DISCARDED
+            self._advance_after_terminal_patch()
+
+    def replace_tail(self, replacement_items: list[PatchReviewItem]) -> None:
+        head_items = list(self.patch_items[: self.current_patch_index])
+        self.patch_items = head_items + list(replacement_items)
+        self.current_patch_index = len(head_items)
+        if replacement_items:
+            self.mode = WorkspaceStatus.REVIEWING
+        else:
+            self.mode = WorkspaceStatus.IDLE
+
+    def _advance_after_terminal_patch(self) -> None:
+        next_index: int | None = None
+        for index in range(self.current_patch_index + 1, len(self.patch_items)):
+            if self.patch_items[index].verify_pending():
+                next_index = index
+                break
+
+        if next_index is None:
+            self.current_patch_index = len(self.patch_items)
+            self.mode = WorkspaceStatus.IDLE
+            return
+
+        self.current_patch_index = next_index
+        self.mode = WorkspaceStatus.REVIEWING

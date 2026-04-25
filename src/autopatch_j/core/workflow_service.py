@@ -60,21 +60,13 @@ class WorkflowService:
 
     def persist_applied_current_patch(self) -> ActiveWorkspace:
         workspace = self.fetch_workspace()
-        current_item = workspace.fetch_current_patch_item()
-        if current_item is None:
-            return workspace
-        current_item.status = PatchReviewStatus.APPLIED
-        self._advance_after_terminal_patch(workspace)
+        workspace.mark_applied()
         self.artifacts.persist_workspace(workspace)
         return workspace
 
     def persist_discarded_current_patch(self) -> ActiveWorkspace:
         workspace = self.fetch_workspace()
-        current_item = workspace.fetch_current_patch_item()
-        if current_item is None:
-            return workspace
-        current_item.status = PatchReviewStatus.DISCARDED
-        self._advance_after_terminal_patch(workspace)
+        workspace.mark_discarded()
         self.artifacts.persist_workspace(workspace)
         return workspace
 
@@ -83,33 +75,12 @@ class WorkflowService:
         replacement_items: list[PatchReviewItem],
     ) -> ActiveWorkspace:
         workspace = self.fetch_workspace()
-        head_items = list(workspace.patch_items[: workspace.current_patch_index])
-        workspace.patch_items = head_items + list(replacement_items)
-        workspace.current_patch_index = len(head_items)
-        if replacement_items:
-            workspace.mode = WorkspaceStatus.REVIEWING
-        else:
-            workspace.mode = WorkspaceStatus.IDLE
+        workspace.replace_tail(replacement_items)
         self.artifacts.persist_workspace(workspace)
         return workspace
 
     def clear_workspace(self) -> None:
         self.artifacts.clear_workspace()
-
-    def _advance_after_terminal_patch(self, workspace: ActiveWorkspace) -> None:
-        next_index: int | None = None
-        for index in range(workspace.current_patch_index + 1, len(workspace.patch_items)):
-            if workspace.patch_items[index].verify_pending():
-                next_index = index
-                break
-
-        if next_index is None:
-            workspace.current_patch_index = len(workspace.patch_items)
-            workspace.mode = WorkspaceStatus.IDLE
-            return
-
-        workspace.current_patch_index = next_index
-        workspace.mode = WorkspaceStatus.REVIEWING
 
     def _build_idle_workspace(self) -> ActiveWorkspace:
         return ActiveWorkspace(
