@@ -16,6 +16,14 @@ class SyntaxCheckResult:
     errors: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class VerificationResult:
+    """重扫复核结果模型"""
+    is_resolved: bool
+    message: str
+    remaining_findings: int = 0
+
+
 class PatchVerifier:
     """
     补丁质量验证中心 (QA Department)
@@ -77,17 +85,17 @@ class PatchVerifier:
         walk(node)
         return errors
 
-    def verify_finding_resolved(self, draft: PatchDraft) -> tuple[bool, str]:
+    def verify_finding_resolved(self, draft: PatchDraft) -> VerificationResult:
         """
         [事后复核]：调用 Scanner 执行增量重扫，验证补丁是否真正消灭了目标规则 (check_id)。
         """
         if not self.scanner:
-            return False, "语义重扫执行失败：未配置可用的扫描器。"
+            return VerificationResult(False, "语义重扫执行失败：未配置可用的扫描器。")
 
         rescan_result = self.scanner.scan(self.repo_root, [draft.file_path])
 
         if rescan_result.status != "ok":
-            return False, f"语义重扫执行失败：{rescan_result.message}"
+            return VerificationResult(False, f"语义重扫执行失败：{rescan_result.message}")
 
         check_id = draft.target_check_id
         is_valid_check_id = bool(check_id and str(check_id).strip() and str(check_id) != "None")
@@ -101,11 +109,11 @@ class PatchVerifier:
                         break
 
             if not is_fixed:
-                return False, f"语义校验失败：规则 '{check_id}' 在重扫中依然被触发，补丁逻辑可能不正确。"
+                return VerificationResult(False, f"语义校验失败：规则 '{check_id}' 在重扫中依然被触发，补丁逻辑可能不正确。", len(rescan_result.findings))
 
-            return True, f"精准校验通过：安全漏洞 '{check_id}' 已被成功消灭。"
+            return VerificationResult(True, f"精准校验通过：安全漏洞 '{check_id}' 已被成功消灭。", len(rescan_result.findings))
 
         if not rescan_result.findings:
-            return True, "全局校验通过：文件重扫未发现任何已知安全风险 (预防性修复生效)。"
+            return VerificationResult(True, "全局校验通过：文件重扫未发现任何已知安全风险 (预防性修复生效)。")
         else:
-            return False, f"语义校验未通过：应用补丁后该文件依然存在 {len(rescan_result.findings)} 个漏洞发现。"
+            return VerificationResult(False, f"语义校验未通过：应用补丁后该文件依然存在 {len(rescan_result.findings)} 个漏洞发现。", len(rescan_result.findings))

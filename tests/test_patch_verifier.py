@@ -32,8 +32,8 @@ def test_verify_fix_logic():
         engine="semgrep", scope=[], targets=[], status="ok", message="",
         findings=[] 
     )
-    success, _ = validator.verify_finding_resolved(draft)
-    assert success is True
+    result = validator.verify_finding_resolved(draft)
+    assert result.is_resolved is True
 
     # 2. 测试失败场景：漏洞特征依然存在
     mock_scanner.scan.return_value = ScanResult(
@@ -44,6 +44,6 @@ def test_verify_fix_logic():
                     snippet="MessageDigest.getInstance(\"MD5\")")
         ]
     )
-    success, msg = validator.verify_finding_resolved(draft)
-    assert success is False
-    assert "语义校验失败" in msg
+    result = validator.verify_finding_resolved(draft)
+    assert result.is_resolved is False
+    assert "语义校验失败" in result.message

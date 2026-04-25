@@ -172,11 +172,11 @@ class CliCommandController:
         self.context.renderer.print_success("补丁已应用")
         
         if self.context.patch_verifier:
-            success, message = self.context.patch_verifier.verify_finding_resolved(pending)
-            if success:
-                self.context.renderer.print_success(message)
+            result = self.context.patch_verifier.verify_finding_resolved(pending)
+            if result.is_resolved:
+                self.context.renderer.print_success(result.message)
             else:
-                self.context.renderer.print_error(message)
+                self.context.renderer.print_error(result.message)
 
     def handle_discard(self) -> None:
         self.context.renderer.print_info("已丢弃当前草案")

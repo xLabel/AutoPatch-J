@@ -29,6 +29,7 @@ class AgentSession:
     source_read_cache: dict[tuple[str, str | None, int | None], ToolResult] = field(default_factory=dict)
     patch_source_hint: str | None = None
     code_explain_allow_symbol_search: bool = True
+    action_history: list[str] = field(default_factory=list)
 
     def set_focus_paths(self, paths: list[str] | None) -> None:
         normalized: list[str] = []
@@ -60,7 +61,18 @@ class AgentSession:
         key = (self.normalize_repo_path(path), symbol, line)
         self.source_read_cache[key] = result
 
+    def record_action(self, action_fingerprint: str) -> None:
+        self.action_history.append(action_fingerprint)
+        if len(self.action_history) > 10:
+            self.action_history.pop(0)
+
+    def is_stuck_in_loop(self) -> bool:
+        if len(self.action_history) >= 3:
+            return self.action_history[-1] == self.action_history[-2] == self.action_history[-3]
+        return False
+
     def clear_cache(self) -> None:
         self.source_read_cache.clear()
         self.patch_source_hint = None
         self.code_explain_allow_symbol_search = True
+        self.action_history.clear()

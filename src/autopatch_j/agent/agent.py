@@ -265,6 +265,14 @@ class AutoPatchAgent:
             if not response.tool_calls:
                 return response.content
 
+            fingerprint = "|".join([f"{call.name}:{call.raw_arguments}" for call in response.tool_calls])
+            self.session.record_action(fingerprint)
+            if self.session.is_stuck_in_loop():
+                stuck_message = "检测到大模型陷入死循环（连续 3 次执行相同的不合法操作），已主动阻断以节省成本。请人工介入审查。"
+                if on_observation:
+                    on_observation(stuck_message)
+                return stuck_message
+
             for call in response.tool_calls:
                 if on_tool_start:
                     on_tool_start(call.name)
