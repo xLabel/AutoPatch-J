@@ -132,7 +132,7 @@ class IndexService:
         """使用 Tree-sitter 提取 Java 类和方法。"""
         symbols: list[IndexEntry] = []
         try:
-            from tree_sitter import Language, Parser
+            from tree_sitter import Language, Parser, Query
             import tree_sitter_java as tsjava
             
             content = full_path.read_text(encoding="utf-8", errors="replace")
@@ -140,7 +140,7 @@ class IndexService:
             parser = Parser(language)
             tree = parser.parse(content.encode("utf-8"))
             
-            query = language.query("(class_declaration name: (identifier) @class.name) (method_declaration name: (identifier) @method.name)")
+            query = Query(language, "(class_declaration name: (identifier) @class.name) (method_declaration name: (identifier) @method.name)")
             captures = query.captures(tree.root_node)
             
             for node, tag in captures:
