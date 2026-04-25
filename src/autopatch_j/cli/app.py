@@ -10,6 +10,7 @@ from prompt_toolkit import HTML, PromptSession
 
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.agent.llm_client import build_default_llm_client
+from autopatch_j.agent.session import AgentSession
 from autopatch_j.cli.assistant_stream import AssistantStream
 from autopatch_j.cli.command_controller import CliCommandController
 from autopatch_j.cli.conversation_controller import CliConversationController
@@ -39,6 +40,8 @@ from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
 from autopatch_j.core.scan_service import ScanService
 from autopatch_j.core.scope_service import ScopeService
 from autopatch_j.core.workflow_service import WorkflowService
+from autopatch_j.core.patch_verifier import PatchVerifier
+from autopatch_j.scanners import get_scanner, DEFAULT_SCANNER_NAME
 
 DSML_MARKER_PATTERN = re.compile(r"<[^>\n]*DSML[^>\n]*>", re.IGNORECASE)
 
@@ -58,6 +61,7 @@ class AutoPatchCLI:
         self.indexer: IndexService | None = None
         self.patch_engine: PatchEngine | None = None
         self.fetcher: CodeFetcher | None = None
+        self.patch_verifier: PatchVerifier | None = None
         self.intent_service: IntentService | None = None
         self.continuity_judge_service: ContinuityJudgeService | None = None
         self.audit_backlog_service: AuditBacklogService | None = None
@@ -72,7 +76,7 @@ class AutoPatchCLI:
         self.conversation_controller: CliConversationController | None = None
         self.assistant_stream: AssistantStream | None = None
         self.prompt_session: PromptSession[str] | None = None
-        self._refresh_cli_components()
+
         if self.repo_root:
             self._init_services(self.repo_root)
 
@@ -139,13 +143,13 @@ class AutoPatchCLI:
                     continue
 
                 if user_input.startswith("/"):
-                    self.handle_command(user_input)
+                    self.command_controller.handle_command(user_input)
                     continue
 
                 if current_item is not None:
-                    self._handle_review_input(user_input, current_item)
+                    self.conversation_controller.handle_review_input(user_input, current_item)
                 else:
-                    self.handle_chat(user_input)
+                    self.conversation_controller.handle_chat(user_input)
 
             except (EOFError, KeyboardInterrupt):
                 self._finalize_cli_exit()
@@ -163,27 +167,6 @@ class AutoPatchCLI:
 
         return 0
 
-    def _handle_review_input(self, user_input: str, current_item: PatchReviewItem) -> None:
-        self._get_conversation_controller().handle_review_input(user_input, current_item)
-
-    def handle_chat(self, text: str) -> None:
-        self._get_conversation_controller().handle_chat(text)
-
-    def _handle_code_audit(self, text: str) -> None:
-        self._get_conversation_controller().handle_code_audit(text)
-
-    def _handle_code_explain(self, text: str) -> None:
-        self._get_conversation_controller().handle_code_explain(text)
-
-    def _handle_general_chat(self, text: str) -> None:
-        self._get_conversation_controller().handle_general_chat(text)
-
-    def _handle_patch_explain(self, text: str) -> None:
-        self._get_conversation_controller().handle_patch_explain(text)
-
-    def _handle_patch_revise(self, text: str) -> None:
-        self._get_conversation_controller().handle_patch_revise(text)
-
     def _run_agent_request(
         self,
         prompt: str,
@@ -197,7 +180,7 @@ class AutoPatchCLI:
         plain_answer: bool = False,
         suppress_answer_output: bool = False,
     ) -> list[dict[str, Any]]:
-        return self._get_assistant_stream().run(
+        return self.assistant_stream.run(
             prompt=prompt,
             agent_call=agent_call,
             scope_paths=scope_paths,
@@ -210,26 +193,9 @@ class AutoPatchCLI:
             suppress_answer_output=suppress_answer_output,
         )
 
-    def handle_command(self, raw_cmd: str) -> None:
-        self._get_command_controller().handle_command(raw_cmd)
-
     def _sanitize_assistant_output(self, text: str) -> str:
         match = DSML_MARKER_PATTERN.search(text)
         return text[:match.start()].rstrip() if match else text
-
-    def _prepare_display_answer(
-        self,
-        answer: str,
-        answer_intent: IntentType | None,
-        raw_user_text: str | None,
-    ) -> str:
-        if answer_intent is None or raw_user_text is None or self.chat_service is None:
-            return answer
-        return self.chat_service.build_display_answer(
-            user_text=raw_user_text,
-            answer=answer,
-            intent=answer_intent,
-        )
 
     def _should_show_full_tool_output(self, text: str) -> bool:
         hints = (
@@ -274,105 +240,11 @@ class AutoPatchCLI:
             return f"已完成工具: {tool_name}"
         return "已更新工具结果"
 
-    def _build_patch_explain_prompt(self, current_item: PatchReviewItem, user_text: str) -> str:
-        draft = current_item.draft
-        return (
-            f"当前待确认补丁文件: {current_item.file_path}\n"
-            f"补丁意图: {draft.rationale or '无说明'}\n"
-            f"补丁差异:\n{draft.diff}\n\n"
-            f"用户问题:\n{user_text}"
-        )
-
-    def _build_patch_revise_prompt(
-        self,
-        current_item: PatchReviewItem,
-        remaining_items: list[PatchReviewItem],
-        user_text: str,
-    ) -> str:
-        draft = current_item.draft
-        remaining_files = "\n".join(f"- {item.file_path}" for item in remaining_items)
-        return (
-            f"当前待重写补丁文件: {current_item.file_path}\n"
-            f"当前补丁意图: {draft.rationale or '无说明'}\n"
-            f"当前补丁差异:\n{draft.diff}\n\n"
-            "以下补丁尾部已失效，需要基于用户反馈整体重建:\n"
-            f"{remaining_files}\n\n"
-            f"用户反馈:\n{user_text}\n"
-            "请基于最新意见重新生成 remaining_patch_items。"
-        )
-
     def _build_local_no_issue_summary(self) -> str:
         return "模型复核未发现需要修复的问题。"
 
     def _build_static_scan_summary(self) -> str:
         return "当前范围未发现安全或正确性问题。"
-
-    def _build_code_explain_prompt(self, text: str, scope: CodeScope) -> str:
-        if scope.kind is CodeScopeKind.SINGLE_FILE:
-            return (
-                f"当前解释范围仅限文件: {scope.focus_files[0]}\n"
-                "请只基于当前文件可见内容解释代码功能，不要主动搜索、读取或推断焦点范围外的类型实现、调用方或配置来源。"
-                "如果出现外部类型名，只能基于当前文件里的使用方式做保守说明。"
-                "回答默认控制在 2 到 4 句；除非用户明确要求详细展开，否则不要输出分节报告。\n\n"
-                f"用户问题:\n{text}"
-            )
-
-        joined_paths = "\n".join(f"- {path}" for path in scope.focus_files)
-        return (
-            "当前任务是代码讲解。你可以在当前焦点范围内使用 search_symbols 和 read_source_code 辅助解释，"
-            "但不要越过当前 focus scope。回答默认控制在 1 段或 3 个要点以内；"
-            "除非用户明确要求详细展开，否则不要输出长篇报告。\n"
-            f"当前焦点范围:\n{joined_paths}\n\n"
-            f"用户问题:\n{text}"
-        )
-
-    def _build_code_audit_prompt(
-        self,
-        text: str,
-        current_finding: AuditFindingItem,
-        force_reread: bool,
-    ) -> str:
-        lines = [
-            "系统已完成本地静态扫描。你当前只允许处理一个 finding，不要切换到其他目标。",
-            f"当前目标: {current_finding.finding_id}",
-            f"文件位置: {current_finding.file_path}:{current_finding.start_line}",
-            f"规则 ID: {current_finding.check_id}",
-            f"问题描述: {current_finding.message}",
-            f"代码证据:\n```java\n{current_finding.snippet}\n```",
-            "",
-            "执行要求:",
-            f"1. 只处理 {current_finding.finding_id}，不要切换到其他 F 编号。",
-            "2. 优先根据 F 编号调用 get_finding_detail 获取详情。",
-            f"3. 如需漏洞详情，associated_finding_id 必须使用 {current_finding.finding_id}。",
-            f"4. 如需最新源代码，可读取 {current_finding.file_path}。",
-            f"5. 如形成补丁，propose_patch 时必须传 associated_finding_id={current_finding.finding_id}。",
-            "6. 如果你判断当前目标不值得修复，只输出一句短结论，不要展开长篇分析。",
-        ]
-        if force_reread:
-            lines.extend(
-                [
-                    "",
-                    "上一次 propose_patch 因 old_string 不匹配失败。",
-                    f"这一次你必须先 read_source_code({current_finding.file_path})，再重新 propose_patch。",
-                ]
-            )
-        lines.extend(["", f"用户原始请求: {text}"])
-        return "\n".join(lines)
-
-    def _build_zero_finding_review_prompt(self, text: str, file_path: str) -> str:
-        return "\n".join(
-            [
-                "系统已完成本地静态扫描，当前目标文件在本轮扫描中没有 finding。",
-                f"当前目标文件: {file_path}",
-                "执行要求:",
-                "1. 只围绕当前文件做一次轻量复核，不要假设存在 F 编号。",
-                "2. 如需代码证据，只允许 read_source_code 当前文件。",
-                "3. 只有在拿到具体代码证据、能明确指出风险并给出最小修法时，才允许 propose_patch。",
-                "4. 如果没有明确证据支持修改，不要输出长篇分析。",
-                "",
-                f"用户原始请求: {text}",
-            ]
-        )
 
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
         assert self.workflow_service is not None
@@ -394,8 +266,8 @@ class AutoPatchCLI:
         scan_paths = self._collect_latest_scan_paths()
         if scan_paths:
             return scan_paths
-        if self.agent and self.agent.focus_paths:
-            return list(self.agent.focus_paths)
+        if self.agent and self.agent.session.focus_paths:
+            return list(self.agent.session.focus_paths)
         return ["褰撳墠鑼冨洿"]
 
     def _collect_latest_scan_paths(self) -> list[str]:
@@ -422,112 +294,15 @@ class AutoPatchCLI:
                     resolved.append(normalized)
         return resolved
 
-    def handle_help(self) -> None:
-        self._get_command_controller().handle_help()
-
-    def handle_scanners(self) -> None:
-        self._get_command_controller().handle_scanners()
-
-    def handle_init(self) -> None:
-        self._get_command_controller().handle_init()
-
-    def handle_status(self) -> None:
-        self._get_command_controller().handle_status()
-
-    def handle_reindex(self) -> None:
-        self._get_command_controller().handle_reindex()
-
-    def handle_apply(self, pending: PatchDraft) -> None:
-        self._get_command_controller().handle_apply(pending)
-
-    def handle_discard(self) -> None:
-        self._get_command_controller().handle_discard()
-
-    def _refresh_cli_components(self) -> None:
-        self.input_controller = CliInputController(
-            index_search=lambda query: self.indexer.search(query) if self.indexer else [],
-            repo_root=self.repo_root,
-        )
-        self.command_controller = CliCommandController(self)
-        self.conversation_controller = CliConversationController(self)
-        self.assistant_stream = AssistantStream(
-            renderer=self.renderer,
-            workflow_service=self.workflow_service,
-            chat_service=self.chat_service,
-            agent=self.agent,
-            sanitize_output=self._sanitize_assistant_output,
-            prepare_display_answer=self._prepare_display_answer,
-            summarize_observation=self._summarize_observation,
-            describe_current_scope_paths=self._describe_current_scope_paths,
-            build_static_scan_summary=self._build_static_scan_summary,
-            build_local_no_issue_summary=self._build_local_no_issue_summary,
-        )
-
-    def _get_input_controller(self) -> CliInputController:
-        if getattr(self, "input_controller", None) is None:
-            self.input_controller = CliInputController(
-                index_search=lambda query: getattr(self, "indexer", None).search(query)
-                if getattr(self, "indexer", None)
-                else [],
-                repo_root=getattr(self, "repo_root", None),
-            )
-        self.input_controller.set_repo_root(getattr(self, "repo_root", None))
-        return self.input_controller
-
-    def _get_command_controller(self) -> CliCommandController:
-        if getattr(self, "command_controller", None) is None:
-            self.command_controller = CliCommandController(self)
-        return self.command_controller
-
-    def _get_conversation_controller(self) -> CliConversationController:
-        if getattr(self, "conversation_controller", None) is None:
-            self.conversation_controller = CliConversationController(self)
-        return self.conversation_controller
-
-    def _get_assistant_stream(self) -> AssistantStream:
-        if getattr(self, "assistant_stream", None) is None:
-            self.assistant_stream = AssistantStream(
-                renderer=self.renderer,
-                workflow_service=self.workflow_service,
-                chat_service=self.chat_service,
-                agent=self.agent,
-                sanitize_output=self._sanitize_assistant_output,
-                prepare_display_answer=self._prepare_display_answer,
-                summarize_observation=self._summarize_observation,
-                describe_current_scope_paths=self._describe_current_scope_paths,
-                build_static_scan_summary=self._build_static_scan_summary,
-                build_local_no_issue_summary=self._build_local_no_issue_summary,
-            )
-        else:
-            self.assistant_stream.workflow_service = self.workflow_service
-            self.assistant_stream.chat_service = self.chat_service
-            self.assistant_stream.agent = self.agent
-        return self.assistant_stream
-
-    def _create_prompt_session(self) -> PromptSession[str]:
-        return self._get_input_controller().create_prompt_session()
-
     def _ensure_prompt_session(self) -> bool:
         if self.prompt_session is not None:
             return True
         try:
-            self.prompt_session = self._create_prompt_session()
+            self.prompt_session = self.input_controller.create_prompt_session()
             return True
         except Exception as exc:
             self.renderer.print_error(f"CLI 输入环境初始化失败: {exc}")
             return False
-
-    def _pick_active_completion(self, buffer: Any) -> Any:
-        return self._get_input_controller().pick_active_completion(buffer)
-
-    def _accept_completion(self, buffer: Any) -> bool:
-        return self._get_input_controller().accept_completion(buffer)
-
-    def _select_first_completion(self, buffer: Any) -> bool:
-        return self._get_input_controller().select_first_completion(buffer)
-
-    def _should_append_space_after_completion(self, buffer: Any) -> bool:
-        return self._get_input_controller().should_append_space_after_completion(buffer)
 
     def _init_services(self, repo_root: Path) -> None:
         self.artifacts = ArtifactManager(repo_root)
@@ -542,15 +317,41 @@ class AutoPatchCLI:
         self.scope_service = ScopeService(repo_root, self.indexer, ignored_dirs=GlobalConfig.ignored_dirs)
         self.scan_service = ScanService(repo_root, self.artifacts)
         self.workflow_service = WorkflowService(self.artifacts)
-        self.agent = AutoPatchAgent(
+
+        scanner = get_scanner(DEFAULT_SCANNER_NAME)
+        self.patch_verifier = PatchVerifier(repo_root, scanner) if scanner else None
+
+        agent_session = AgentSession(
             repo_root=repo_root,
             artifacts=self.artifacts,
             indexer=self.indexer,
             patch_engine=self.patch_engine,
             fetcher=self.fetcher,
+            patch_verifier=self.patch_verifier,
+        )
+
+        self.agent = AutoPatchAgent(
+            session=agent_session,
             llm=shared_llm,
         )
-        self._refresh_cli_components()
+
+        self.input_controller = CliInputController(
+            index_search=lambda query: self.indexer.search(query) if self.indexer else [],
+            repo_root=self.repo_root,
+        )
+        self.command_controller = CliCommandController(self)
+        self.conversation_controller = CliConversationController(self)
+        self.assistant_stream = AssistantStream(
+            renderer=self.renderer,
+            workflow_service=self.workflow_service,
+            chat_service=self.chat_service,
+            agent=self.agent,
+            sanitize_output=self._sanitize_assistant_output,
+            summarize_observation=self._summarize_observation,
+            describe_current_scope_paths=self._describe_current_scope_paths,
+            build_static_scan_summary=self._build_static_scan_summary,
+            build_local_no_issue_summary=self._build_local_no_issue_summary,
+        )
 
 
 def main() -> int:

@@ -8,7 +8,6 @@ from autopatch_j.cli.render import DECISION_STYLE, SYSTEM_STYLE
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.index_service import IndexService
 from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
-from autopatch_j.core.validator_service import SemanticValidator
 from autopatch_j.core.workflow_service import WorkflowService
 from autopatch_j.scanners import ALL_SCANNERS, DEFAULT_SCANNER_NAME, get_scanner
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
@@ -20,6 +19,7 @@ class CommandControllerContext(Protocol):
     artifacts: Any
     indexer: IndexService | None
     patch_engine: PatchEngine | None
+    patch_verifier: Any | None
     workflow_service: WorkflowService | None
     renderer: Any
 
@@ -170,10 +170,9 @@ class CliCommandController:
             return
 
         self.context.renderer.print_success("补丁已应用")
-        scanner = get_scanner(DEFAULT_SCANNER_NAME)
-        if scanner:
-            validator = SemanticValidator(self.context.repo_root, scanner)
-            success, message = validator.perform_verification(pending)
+        
+        if self.context.patch_verifier:
+            success, message = self.context.patch_verifier.verify_finding_resolved(pending)
             if success:
                 self.context.renderer.print_success(message)
             else:

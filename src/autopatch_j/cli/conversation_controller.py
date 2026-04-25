@@ -29,24 +29,16 @@ class ConversationControllerContext(Protocol):
     workflow_service: WorkflowService | None
     audit_backlog_service: AuditBacklogService | None
     chat_service: ChatService | None
+    command_controller: Any
 
-    def handle_command(self, raw_cmd: str) -> None: ...
     def handle_apply(self, pending: Any) -> None: ...
     def handle_discard(self) -> None: ...
     def _run_agent_request(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
     def _should_show_full_tool_output(self, text: str) -> bool: ...
-    def _build_code_audit_prompt(self, text: str, current_finding: Any, force_reread: bool) -> str: ...
-    def _build_zero_finding_review_prompt(self, text: str, file_path: str) -> str: ...
-    def _build_code_explain_prompt(self, text: str, scope: CodeScope) -> str: ...
-    def _build_patch_explain_prompt(self, current_item: PatchReviewItem, user_text: str) -> str: ...
-    def _build_patch_revise_prompt(
-        self,
-        current_item: PatchReviewItem,
-        remaining_items: list[PatchReviewItem],
-        user_text: str,
-    ) -> str: ...
     def _describe_scope_paths(self, scope: CodeScope) -> list[str]: ...
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]: ...
+    def _build_static_scan_summary(self) -> str: ...
+    def _build_local_no_issue_summary(self) -> str: ...
 
 
 class CliConversationController:
@@ -107,7 +99,7 @@ class CliConversationController:
         )
 
         if route is ConversationRoute.COMMAND:
-            self.context.handle_command(text)
+            self.context.command_controller.handle_command(text)
             return
 
         if route is ConversationRoute.NEW_TASK:
@@ -145,7 +137,7 @@ class CliConversationController:
             self.context.renderer.print_error("未解析到可检查范围")
             return
 
-        self.context.agent.set_focus_paths(scope.focus_files if scope.is_locked else [])
+        self.context.agent.session.set_focus_paths(scope.focus_files if scope.is_locked else [])
         try:
             self.context.renderer.print_tool_start("scan_project", caller="AGENT")
             scan_id, scan_result = self.context.scan_service.run_scan_and_persist(scope)
@@ -167,14 +159,14 @@ class CliConversationController:
                 break
 
             self.context.agent.reset_history()
-            prompt = self.context._build_code_audit_prompt(
-                text=text,
-                current_finding=current_finding,
-                force_reread=False,
-            )
             new_messages = self.context._run_agent_request(
-                prompt=prompt,
-                agent_call=self.context.agent.perform_code_audit,
+                prompt=text,
+                agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
+                    raw_user_text=text,
+                    current_finding=current_finding,
+                    force_reread=False,
+                    **kwargs
+                )
             ) or []
             decision = self.context.audit_backlog_service.infer_attempt_decision(current_finding, new_messages)
             if decision.outcome is AuditAttemptOutcome.PATCH_READY:
@@ -192,14 +184,14 @@ class CliConversationController:
                     error_message=decision.error_message,
                 )
                 self.context.agent.reset_history()
-                retry_prompt = self.context._build_code_audit_prompt(
-                    text=text,
-                    current_finding=current_finding,
-                    force_reread=True,
-                )
                 retry_messages = self.context._run_agent_request(
-                    prompt=retry_prompt,
-                    agent_call=self.context.agent.perform_code_audit,
+                    prompt=text,
+                    agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
+                        raw_user_text=text,
+                        current_finding=current_finding,
+                        force_reread=True,
+                        **kwargs
+                    )
                 ) or []
                 retry_decision = self.context.audit_backlog_service.infer_attempt_decision(current_finding, retry_messages)
                 if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
@@ -232,13 +224,17 @@ class CliConversationController:
         compact_observation = not self.context._should_show_full_tool_output(text)
         self.context.renderer.print_user_anchor(text)
         if scope is not None and scope.is_locked:
-            self.context.agent.set_focus_paths(scope.focus_files)
-            prompt = self.context._build_code_explain_prompt(text=text, scope=scope)
+            self.context.agent.session.set_focus_paths(scope.focus_files)
             allow_symbol_search = scope.kind.value != "single_file"
-            self.context.agent.set_code_explain_symbol_search_enabled(allow_symbol_search)
+            self.context.agent.session.code_explain_allow_symbol_search = allow_symbol_search
             self.context._run_agent_request(
-                prompt=prompt,
-                agent_call=self.context.agent.perform_code_explain,
+                prompt=text,
+                agent_call=lambda p, **kwargs: self.context.agent.perform_code_explain(
+                    raw_user_text=text,
+                    scope=scope,
+                    allow_symbol_search=allow_symbol_search,
+                    **kwargs
+                ),
                 compact_observation=compact_observation,
                 answer_intent=IntentType.CODE_EXPLAIN,
                 raw_user_text=text,
@@ -247,11 +243,14 @@ class CliConversationController:
             )
             return
 
-        self.context.agent.set_focus_paths([])
-        self.context.agent.set_code_explain_symbol_search_enabled(True)
+        self.context.agent.session.set_focus_paths([])
+        self.context.agent.session.code_explain_allow_symbol_search = True
         self.context._run_agent_request(
             prompt=text,
-            agent_call=self.context.agent.perform_general_chat,
+            agent_call=lambda p, **kwargs: self.context.agent.perform_general_chat(
+                raw_user_text=text,
+                **kwargs
+            ),
             compact_observation=compact_observation,
             answer_intent=IntentType.GENERAL_CHAT,
             raw_user_text=text,
@@ -267,10 +266,13 @@ class CliConversationController:
             self.context.renderer.print_assistant_anchor()
             self.context.renderer.print_plain(self.context.chat_service.fetch_out_of_scope_reply())
             return
-        self.context.agent.set_focus_paths([])
+        self.context.agent.session.set_focus_paths([])
         self.context._run_agent_request(
             prompt=text,
-            agent_call=self.context.agent.perform_general_chat,
+            agent_call=lambda p, **kwargs: self.context.agent.perform_general_chat(
+                raw_user_text=text,
+                **kwargs
+            ),
             compact_observation=not self.context._should_show_full_tool_output(text),
             answer_intent=IntentType.GENERAL_CHAT,
             raw_user_text=text,
@@ -288,11 +290,14 @@ class CliConversationController:
             return
 
         focus_paths = self.context._fetch_review_scope_paths(current_item)
-        self.context.agent.set_focus_paths(focus_paths)
-        prompt = self.context._build_patch_explain_prompt(current_item=current_item, user_text=text)
+        self.context.agent.session.set_focus_paths(focus_paths)
         self.context._run_agent_request(
-            prompt=prompt,
-            agent_call=self.context.agent.perform_patch_explain,
+            prompt=text,
+            agent_call=lambda p, **kwargs: self.context.agent.perform_patch_explain(
+                raw_user_text=text,
+                current_item=current_item,
+                **kwargs
+            ),
         )
 
     def handle_patch_revise(self, text: str) -> None:
@@ -305,16 +310,16 @@ class CliConversationController:
             return
 
         remaining_items = self.context.workflow_service.fetch_remaining_patch_items()
-        prompt = self.context._build_patch_revise_prompt(
-            current_item=current_item,
-            remaining_items=remaining_items,
-            user_text=text,
-        )
-        self.context.agent.set_focus_paths(self.context._fetch_review_scope_paths(current_item))
+        self.context.agent.session.set_focus_paths(self.context._fetch_review_scope_paths(current_item))
         self.context.workflow_service.replace_remaining_patch_items([])
         self.context._run_agent_request(
-            prompt=prompt,
-            agent_call=self.context.agent.perform_patch_revise,
+            prompt=text,
+            agent_call=lambda p, **kwargs: self.context.agent.perform_patch_revise(
+                raw_user_text=text,
+                current_item=current_item,
+                remaining_items=remaining_items,
+                **kwargs
+            ),
         )
         if not self.context.workflow_service.verify_has_pending_patch():
             self.context.renderer.print_info("补丁队列已清空")
@@ -325,19 +330,22 @@ class CliConversationController:
 
         for file_path in scope.focus_files:
             self.context.agent.reset_history()
-            self.context.agent.set_focus_paths([file_path])
-            self.context.agent.set_patch_source_hint("LLM 二次复核（静态扫描未报出问题）")
-            prompt = self.context._build_zero_finding_review_prompt(text=text, file_path=file_path)
+            self.context.agent.session.set_focus_paths([file_path])
+            self.context.agent.session.patch_source_hint = "LLM 二次复核（静态扫描未报出问题）"
             try:
                 self.context._run_agent_request(
-                    prompt=prompt,
-                    agent_call=self.context.agent.perform_zero_finding_review,
+                    prompt=text,
+                    agent_call=lambda p, **kwargs: self.context.agent.perform_zero_finding_review(
+                        raw_user_text=text,
+                        file_path=file_path,
+                        **kwargs
+                    ),
                     scope_paths=[file_path],
                     compact_observation=True,
                     suppress_answer_output=True,
                 )
             finally:
-                self.context.agent.set_patch_source_hint(None)
+                self.context.agent.session.patch_source_hint = None
             if self.context.workflow_service.verify_has_pending_patch():
                 return
 

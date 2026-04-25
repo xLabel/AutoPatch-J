@@ -19,7 +19,6 @@ class AssistantStream:
         chat_service: ChatService | None,
         agent: Any,
         sanitize_output: Callable[[str], str],
-        prepare_display_answer: Callable[[str, IntentType | None, str | None], str],
         summarize_observation: Callable[[str | None, str], str],
         describe_current_scope_paths: Callable[[], list[str]],
         build_static_scan_summary: Callable[[], str],
@@ -30,7 +29,6 @@ class AssistantStream:
         self.chat_service = chat_service
         self.agent = agent
         self._sanitize_output = sanitize_output
-        self._prepare_display_answer = prepare_display_answer
         self._summarize_observation = summarize_observation
         self._describe_current_scope_paths = describe_current_scope_paths
         self._build_static_scan_summary = build_static_scan_summary
@@ -129,11 +127,11 @@ class AssistantStream:
 
         buffered_answer = self._sanitize_output("".join(buffered_answer_parts))
         if buffered_answer:
-            rendered_answer = self._prepare_display_answer(
+            rendered_answer = self.chat_service.build_display_answer(
+                user_text=raw_user_text or "",
                 answer=buffered_answer,
-                answer_intent=answer_intent,
-                raw_user_text=raw_user_text,
-            )
+                intent=answer_intent,
+            ) if answer_intent else buffered_answer
             if stream_state["answer_after_reasoning"]:
                 self.renderer.print("\n\n")
             if show_chat_anchors:
@@ -145,11 +143,11 @@ class AssistantStream:
         else:
             sanitized_final_answer = self._sanitize_output(final_answer or "")
             if sanitized_final_answer:
-                rendered_answer = self._prepare_display_answer(
+                rendered_answer = self.chat_service.build_display_answer(
+                    user_text=raw_user_text or "",
                     answer=sanitized_final_answer,
-                    answer_intent=answer_intent,
-                    raw_user_text=raw_user_text,
-                )
+                    intent=answer_intent,
+                ) if answer_intent else sanitized_final_answer
                 if show_chat_anchors:
                     self.renderer.print_assistant_anchor()
                 if plain_answer:
