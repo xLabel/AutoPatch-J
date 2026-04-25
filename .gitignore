@@ -55,4 +55,5 @@ target/
 .pytest_temp/
 agent_verify/
 GEMINI.md
+AGENTS.md
 run.bat
