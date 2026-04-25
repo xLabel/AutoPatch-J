@@ -11,9 +11,9 @@ from prompt_toolkit import HTML, PromptSession
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.agent.llm_client import build_default_llm_client
 from autopatch_j.agent.session import AgentSession
-from autopatch_j.cli.assistant_stream import AssistantStream
+from autopatch_j.cli.stream_adapter import StreamAdapter
 from autopatch_j.cli.command_controller import CliCommandController
-from autopatch_j.cli.conversation_controller import CliConversationController
+from autopatch_j.cli.workflow_controller import CliWorkflowController
 from autopatch_j.cli.input_controller import CliInputController
 from autopatch_j.cli.render import (
     DECISION_STYLE,
@@ -24,9 +24,9 @@ from autopatch_j.cli.render import (
 from autopatch_j.config import GlobalConfig, discover_repo_root
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.audit_backlog_service import AuditBacklogService
-from autopatch_j.core.chat_service import ChatService
+from autopatch_j.core.chat_filter_service import ChatFilterService
 from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.continuity_judge_service import ContinuityJudgeService
+from autopatch_j.core.conversation_router import ConversationRouter
 from autopatch_j.core.index_service import IndexService
 from autopatch_j.core.intent_service import IntentService
 from autopatch_j.core.models import (
@@ -63,9 +63,9 @@ class AutoPatchCLI:
         self.fetcher: CodeFetcher | None = None
         self.patch_verifier: PatchVerifier | None = None
         self.intent_service: IntentService | None = None
-        self.continuity_judge_service: ContinuityJudgeService | None = None
+        self.conversation_router: ConversationRouter | None = None
         self.audit_backlog_service: AuditBacklogService | None = None
-        self.chat_service: ChatService | None = None
+        self.chat_filter_service: ChatFilterService | None = None
         self.scope_service: ScopeService | None = None
         self.scan_service: ScanService | None = None
         self.workflow_service: WorkflowService | None = None
@@ -73,8 +73,8 @@ class AutoPatchCLI:
 
         self.input_controller: CliInputController | None = None
         self.command_controller: CliCommandController | None = None
-        self.conversation_controller: CliConversationController | None = None
-        self.assistant_stream: AssistantStream | None = None
+        self.workflow_controller: CliWorkflowController | None = None
+        self.stream_adapter: StreamAdapter | None = None
         self.prompt_session: PromptSession[str] | None = None
 
         if self.repo_root:
@@ -147,9 +147,9 @@ class AutoPatchCLI:
                     continue
 
                 if current_item is not None:
-                    self.conversation_controller.handle_review_input(user_input, current_item)
+                    self.workflow_controller.handle_review_input(user_input, current_item)
                 else:
-                    self.conversation_controller.handle_chat(user_input)
+                    self.workflow_controller.handle_chat(user_input)
 
             except (EOFError, KeyboardInterrupt):
                 self._finalize_cli_exit()
@@ -180,7 +180,7 @@ class AutoPatchCLI:
         plain_answer: bool = False,
         suppress_answer_output: bool = False,
     ) -> list[dict[str, Any]]:
-        return self.assistant_stream.run(
+        return self.stream_adapter.run(
             prompt=prompt,
             agent_call=agent_call,
             scope_paths=scope_paths,
@@ -311,9 +311,9 @@ class AutoPatchCLI:
         self.fetcher = CodeFetcher(repo_root)
         self.intent_service = IntentService()
         self.audit_backlog_service = AuditBacklogService()
-        self.chat_service = ChatService()
+        self.chat_filter_service = ChatFilterService()
         shared_llm = build_default_llm_client()
-        self.continuity_judge_service = ContinuityJudgeService(llm=shared_llm)
+        self.conversation_router = ConversationRouter(llm=shared_llm)
         self.scope_service = ScopeService(repo_root, self.indexer, ignored_dirs=GlobalConfig.ignored_dirs)
         self.scan_service = ScanService(repo_root, self.artifacts)
         self.workflow_service = WorkflowService(self.artifacts)
@@ -340,11 +340,11 @@ class AutoPatchCLI:
             repo_root=self.repo_root,
         )
         self.command_controller = CliCommandController(self)
-        self.conversation_controller = CliConversationController(self)
-        self.assistant_stream = AssistantStream(
+        self.workflow_controller = CliWorkflowController(self)
+        self.stream_adapter = StreamAdapter(
             renderer=self.renderer,
             workflow_service=self.workflow_service,
-            chat_service=self.chat_service,
+            chat_filter_service=self.chat_filter_service,
             agent=self.agent,
             sanitize_output=self._sanitize_assistant_output,
             summarize_observation=self._summarize_observation,

@@ -4,8 +4,8 @@ import re
 from typing import Any, Protocol
 
 from autopatch_j.core.audit_backlog_service import AuditBacklogService
-from autopatch_j.core.chat_service import ChatService
-from autopatch_j.core.continuity_judge_service import ContinuityJudgeService
+from autopatch_j.core.chat_filter_service import ChatFilterService
+from autopatch_j.core.conversation_router import ConversationRouter
 from autopatch_j.core.intent_service import IntentService
 from autopatch_j.core.models import (
     AuditAttemptOutcome,
@@ -19,20 +19,18 @@ from autopatch_j.core.scope_service import ScopeService
 from autopatch_j.core.workflow_service import WorkflowService
 
 
-class ConversationControllerContext(Protocol):
+class WorkflowControllerContext(Protocol):
     renderer: Any
     agent: Any
     intent_service: IntentService | None
-    continuity_judge_service: ContinuityJudgeService | None
+    conversation_router: ConversationRouter | None
     scope_service: ScopeService | None
     scan_service: ScanService | None
     workflow_service: WorkflowService | None
     audit_backlog_service: AuditBacklogService | None
-    chat_service: ChatService | None
+    chat_filter_service: ChatFilterService | None
     command_controller: Any
 
-    def handle_apply(self, pending: Any) -> None: ...
-    def handle_discard(self) -> None: ...
     def _run_agent_request(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
     def _should_show_full_tool_output(self, text: str) -> bool: ...
     def _describe_scope_paths(self, scope: CodeScope) -> list[str]: ...
@@ -41,10 +39,10 @@ class ConversationControllerContext(Protocol):
     def _build_local_no_issue_summary(self) -> str: ...
 
 
-class CliConversationController:
+class CliWorkflowController:
     """Route user text into audit, explain, chat, and patch review flows."""
 
-    def __init__(self, context: ConversationControllerContext) -> None:
+    def __init__(self, context: WorkflowControllerContext) -> None:
         self.context = context
 
     def handle_review_input(self, user_input: str, current_item: PatchReviewItem) -> None:
@@ -52,14 +50,14 @@ class CliConversationController:
         assert self.context.workflow_service is not None
 
         if user_input.lower() == "apply":
-            self.context.handle_apply(current_draft)
+            self.context.command_controller.handle_apply(current_draft)
             self.context.workflow_service.persist_applied_current_patch()
             if not self.context.workflow_service.verify_has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
 
         if user_input.lower() == "discard":
-            self.context.handle_discard()
+            self.context.command_controller.handle_discard()
             self.context.workflow_service.persist_discarded_current_patch()
             if not self.context.workflow_service.verify_has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
@@ -72,7 +70,7 @@ class CliConversationController:
             [
                 self.context.agent,
                 self.context.intent_service,
-                self.context.continuity_judge_service,
+                self.context.conversation_router,
                 self.context.scope_service,
                 self.context.scan_service,
                 self.context.workflow_service,
@@ -90,7 +88,7 @@ class CliConversationController:
         requested_scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
         current_item = self.context.workflow_service.fetch_current_patch_item() if has_pending_review else None
         current_workspace = self.context.workflow_service.fetch_workspace() if has_pending_review else None
-        route = self.context.continuity_judge_service.fetch_route(
+        route = self.context.conversation_router.fetch_route(
             user_text=text,
             has_pending_review=has_pending_review,
             requested_scope=requested_scope,
@@ -242,7 +240,7 @@ class CliConversationController:
     def handle_code_explain(self, text: str) -> None:
         assert self.context.scope_service is not None
         assert self.context.agent is not None
-        assert self.context.chat_service is not None
+        assert self.context.chat_filter_service is not None
 
         scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
         compact_observation = not self.context._should_show_full_tool_output(text)
@@ -284,11 +282,11 @@ class CliConversationController:
 
     def handle_general_chat(self, text: str) -> None:
         assert self.context.agent is not None
-        assert self.context.chat_service is not None
+        assert self.context.chat_filter_service is not None
         self.context.renderer.print_user_anchor(text)
-        if not self.context.chat_service.verify_programming_related(text):
+        if not self.context.chat_filter_service.verify_programming_related(text):
             self.context.renderer.print_assistant_anchor()
-            self.context.renderer.print_plain(self.context.chat_service.fetch_out_of_scope_reply())
+            self.context.renderer.print_plain(self.context.chat_filter_service.fetch_out_of_scope_reply())
             return
         self.context.agent.session.set_focus_paths([])
         self.context._run_agent_request(

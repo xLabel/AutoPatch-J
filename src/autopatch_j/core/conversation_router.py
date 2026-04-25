@@ -8,7 +8,7 @@ from autopatch_j.core.models import CodeScope, ConversationRoute
 
 
 @dataclass(slots=True)
-class ContinuityJudgeService:
+class ConversationRouter:
     """
     会话连续性判定服务 (Core Service)
     职责：判断当前输入是新任务、当前审核的继续操作，还是命令。

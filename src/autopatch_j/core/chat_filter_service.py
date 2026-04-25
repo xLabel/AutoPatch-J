@@ -5,7 +5,7 @@ import re
 from autopatch_j.core.models import IntentType
 
 
-class ChatService:
+class ChatFilterService:
     """
     聊天体验治理服务 (Core Service)
     职责：限制闲聊范围，并为聊天型回答做本地压缩与去 Markdown 化。

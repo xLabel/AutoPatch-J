@@ -3,13 +3,13 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from autopatch_j.cli.render import CliRenderer
-from autopatch_j.core.chat_service import ChatService
+from autopatch_j.core.chat_filter_service import ChatFilterService
 from autopatch_j.core.models import IntentType
 from autopatch_j.core.workflow_service import WorkflowService
 
 
 class _StreamExecution:
-    def __init__(self, stream: AssistantStream, compact_observation: bool) -> None:
+    def __init__(self, stream: StreamAdapter, compact_observation: bool) -> None:
         self.stream = stream
         self.renderer = stream.renderer
         self.compact_observation = compact_observation
@@ -53,7 +53,7 @@ class _StreamExecution:
             self.reasoning_visible = False
 
 
-class AssistantStream:
+class StreamAdapter:
     """Run one agent request and adapt its streamed events to CLI rendering."""
 
     def __init__(
@@ -61,7 +61,7 @@ class AssistantStream:
         *,
         renderer: CliRenderer,
         workflow_service: WorkflowService | None,
-        chat_service: ChatService | None,
+        chat_filter_service: ChatFilterService | None,
         agent: Any,
         sanitize_output: Callable[[str], str],
         summarize_observation: Callable[[str | None, str], str],
@@ -71,7 +71,7 @@ class AssistantStream:
     ) -> None:
         self.renderer = renderer
         self.workflow_service = workflow_service
-        self.chat_service = chat_service
+        self.chat_filter_service = chat_filter_service
         self.agent = agent
         self._sanitize_output = sanitize_output
         self._summarize_observation = summarize_observation
@@ -94,7 +94,7 @@ class AssistantStream:
     ) -> list[dict[str, Any]]:
         assert self.agent is not None
         assert self.workflow_service is not None
-        assert self.chat_service is not None
+        assert self.chat_filter_service is not None
 
         self.renderer.print()
         
@@ -133,7 +133,7 @@ class AssistantStream:
 
         buffered_answer = self._sanitize_output("".join(execution.buffered_answer_parts))
         if buffered_answer:
-            rendered_answer = self.chat_service.build_display_answer(
+            rendered_answer = self.chat_filter_service.build_display_answer(
                 user_text=raw_user_text or "",
                 answer=buffered_answer,
                 intent=answer_intent,
@@ -149,7 +149,7 @@ class AssistantStream:
         else:
             sanitized_final_answer = self._sanitize_output(final_answer or "")
             if sanitized_final_answer:
-                rendered_answer = self.chat_service.build_display_answer(
+                rendered_answer = self.chat_filter_service.build_display_answer(
                     user_text=raw_user_text or "",
                     answer=sanitized_final_answer,
                     intent=answer_intent,

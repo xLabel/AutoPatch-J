@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.core.continuity_judge_service import ContinuityJudgeService
+from autopatch_j.core.conversation_router import ConversationRouter
 from autopatch_j.core.models import CodeScope, CodeScopeKind, ConversationRoute
 
 
@@ -14,7 +14,7 @@ def _scope() -> CodeScope:
 
 
 def test_continuity_judge_treats_scope_change_as_new_task() -> None:
-    service = ContinuityJudgeService()
+    service = ConversationRouter()
 
     route = service.fetch_route(
         user_text="@demo 检查代码",
@@ -28,7 +28,7 @@ def test_continuity_judge_treats_scope_change_as_new_task() -> None:
 
 
 def test_continuity_judge_defaults_ambiguous_review_input_to_review_continue() -> None:
-    service = ContinuityJudgeService()
+    service = ConversationRouter()
 
     route = service.fetch_route(
         user_text="这个再看看",
@@ -51,7 +51,7 @@ def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> No
 
             return Response()
 
-    service = ContinuityJudgeService(llm=FakeLLM())  # type: ignore[arg-type]
+    service = ConversationRouter(llm=FakeLLM())  # type: ignore[arg-type]
 
     route = service.fetch_route(
         user_text="重新检查一下",
