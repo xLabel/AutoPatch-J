@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pytest
 from pathlib import Path
-from autopatch_j.core.patch_engine import PatchEngine
-
+from autopatch_j.core.patch_engine import PatchEngine, TargetFileNotFoundError, OldStringNotFoundError, OldStringNotUniqueError
+from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.core.patch_verifier import SyntaxCheckResult
 
 def test_patch_lifecycle(tmp_path: Path):
     """验证补丁的完整生命周期：起草 -> 验证 -> 应用"""
@@ -15,17 +16,25 @@ def test_patch_lifecycle(tmp_path: Path):
     new = "System.out.println(\"new\");"
     
     # 1. 测试起草 (Draft)
-    draft = engine.perform_draft("App.java", old, new)
-    assert draft.status in ("ok", "unavailable")
+    new_c, diff_c = engine.perform_draft("App.java", old, new)
+    assert new_c is not None
+    assert diff_c is not None
     
     # 2. 测试应用 (Apply)
-    if draft.status == "ok":
-        success = engine.perform_apply(draft)
-        assert success
-        updated_content = java_file.read_text(encoding="utf-8")
-        assert "new" in updated_content
-        assert "old" not in updated_content
-
+    draft = PatchDraft(
+        file_path="App.java",
+        old_string=old,
+        new_string=new,
+        diff=diff_c,
+        validation=SyntaxCheckResult(status="ok", message=""),
+        status="ok",
+        message=""
+    )
+    success = engine.perform_apply(draft)
+    assert success
+    updated_content = java_file.read_text(encoding="utf-8")
+    assert "new" in updated_content
+    assert "old" not in updated_content
 
 def test_windows_crlf_matching(tmp_path: Path):
     """
@@ -42,17 +51,25 @@ def test_windows_crlf_matching(tmp_path: Path):
     old_code = "    public void test() {\n        return;\n    }"
     new_code = "    public void test() {\n        // Fixed\n        return;\n    }"
     
-    draft = engine.perform_draft("Win.java", old_code, new_code)
+    new_c, diff_c = engine.perform_draft("Win.java", old_code, new_code)
+
+    assert new_c is not None
+    assert "Fixed" in diff_c
     
-    assert draft.status != "error", f"匹配失败：{draft.message}"
-    assert "Fixed" in draft.diff
-    
+    draft = PatchDraft(
+        file_path="Win.java",
+        old_string=old_code,
+        new_string=new_code,
+        diff=diff_c,
+        validation=SyntaxCheckResult(status="ok", message=""),
+        status="ok",
+        message=""
+    )
     # 验证应用后是否依然保持了 CRLF (或至少成功应用)
     success = engine.perform_apply(draft)
     assert success
     final_content = java_file.read_text(encoding="utf-8")
     assert "// Fixed" in final_content
-
 
 def test_create_draft_failures(tmp_path: Path):
     """验证物理门禁的拦截逻辑"""
@@ -62,14 +79,12 @@ def test_create_draft_failures(tmp_path: Path):
     engine = PatchEngine(tmp_path)
     
     # 匹配不到
-    draft_missing = engine.perform_draft("Test.java", "non-existent", "...")
-    assert draft_missing.status == "error"
+    with pytest.raises(OldStringNotFoundError):
+        engine.perform_draft("Test.java", "non-existent", "...")
     
     # 匹配不唯一
-    draft_ambiguous = engine.perform_draft("Test.java", "code();", "...")
-    assert draft_ambiguous.status == "error"
-    assert "匹配了 2 处" in draft_ambiguous.message
-
+    with pytest.raises(OldStringNotUniqueError):
+        engine.perform_draft("Test.java", "code();", "...")
 
 def test_path_traversal_defense(tmp_path: Path):
     """验证安全底线：拦截路径穿越攻击"""

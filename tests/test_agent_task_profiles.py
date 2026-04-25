@@ -3,12 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.agent.llm_client import LLMClient, LLMResponse
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.index_service import IndexService
 from autopatch_j.core.patch_engine import PatchEngine
+from autopatch_j.core.patch_verifier import PatchVerifier
 
 
 def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> AutoPatchAgent:
@@ -19,7 +21,8 @@ def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> AutoPatchAgent:
     patch_engine = PatchEngine(repo_root)
     fetcher = CodeFetcher(repo_root)
     indexer.rebuild_index()
-    return AutoPatchAgent(repo_root, artifacts, indexer, patch_engine, fetcher, llm=mock_llm)
+    session = AgentSession(repo_root, artifacts, indexer, patch_engine, fetcher)
+    return AutoPatchAgent(session=session, llm=mock_llm)
 
 
 def _fetch_tool_names(mock_llm: MagicMock) -> list[str]:
@@ -32,7 +35,7 @@ def test_perform_code_explain_uses_navigation_tool_profile_by_default(tmp_path: 
     mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_code_explain("@User.java explain code")
+    agent.perform_code_explain("@User.java explain code", scope=None)
 
     assert _fetch_tool_names(mock_llm) == ["search_symbols", "read_source_code"]
 
@@ -42,7 +45,7 @@ def test_perform_code_explain_disables_symbol_search_in_single_file_mode(tmp_pat
     mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_code_explain("@User.java explain code", allow_symbol_search=False)
+    agent.perform_code_explain("@User.java explain code", scope=None, allow_symbol_search=False)
 
     assert _fetch_tool_names(mock_llm) == ["read_source_code"]
 
@@ -52,7 +55,7 @@ def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> 
     mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_code_audit("@User.java audit code")
+    agent.perform_code_audit("@User.java audit code", current_finding=MagicMock(), force_reread=False)
 
     assert _fetch_tool_names(mock_llm) == [
         "get_finding_detail",
@@ -66,7 +69,7 @@ def test_perform_zero_finding_review_uses_lightweight_tool_profile(tmp_path: Pat
     mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_zero_finding_review("@User.java 检查代码")
+    agent.perform_zero_finding_review("@User.java 检查代码", file_path="User.java")
 
     assert _fetch_tool_names(mock_llm) == [
         "read_source_code",
@@ -79,7 +82,7 @@ def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
     mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_patch_revise("add one comment")
+    agent.perform_patch_revise("add one comment", current_item=MagicMock(), remaining_items=[])
 
     assert _fetch_tool_names(mock_llm) == [
         "search_symbols",
@@ -156,13 +159,12 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
 
 def test_model_label_returns_llm_model_name() -> None:
     llm = LLMClient(api_key="key", base_url="https://example.com", model="deepseek-chat")
-    agent = AutoPatchAgent(
+    session = AgentSession(
         repo_root=Path("."),
         artifacts=MagicMock(),
         indexer=MagicMock(),
         patch_engine=MagicMock(),
         fetcher=MagicMock(),
-        llm=llm,
     )
-
+    agent = AutoPatchAgent(session=session, llm=llm)
     assert agent.model_label == "deepseek-chat"

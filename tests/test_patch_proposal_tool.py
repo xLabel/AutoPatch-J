@@ -4,15 +4,18 @@ from pathlib import Path
 
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.patch_engine import PatchEngine
+from autopatch_j.core.patch_verifier import PatchVerifier
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
 
 
-class _FakeAgentContext:
+class _FakeAgentSession:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root
         self.patch_engine = PatchEngine(repo_root)
         self.artifacts = ArtifactManager(repo_root)
         self.focus_paths = ["src/main/java/demo/UserService.java"]
+        self.patch_source_hint = None
+        self.patch_verifier = PatchVerifier(repo_root, None)
 
     def is_path_in_focus(self, path: str) -> bool:
         return path in self.focus_paths
@@ -26,7 +29,7 @@ def test_patch_proposal_tool_returns_structured_old_string_error(tmp_path: Path)
         encoding="utf-8",
     )
 
-    tool = PatchProposalTool(_FakeAgentContext(tmp_path))
+    tool = PatchProposalTool(_FakeAgentSession(tmp_path))
     result = tool.execute(
         file_path="src/main/java/demo/UserService.java",
         old_string='return "admin".equals(user.getName());',

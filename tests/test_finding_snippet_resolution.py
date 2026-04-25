@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.index_service import IndexService
 from autopatch_j.core.patch_engine import PatchEngine
+from autopatch_j.core.patch_verifier import PatchVerifier
 from autopatch_j.scanners.base import Finding, ScanResult
 from autopatch_j.scanners.semgrep import normalize_semgrep_payload
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
@@ -19,7 +21,9 @@ def _build_agent(repo_root: Path) -> AutoPatchAgent:
     patch_engine = PatchEngine(repo_root)
     fetcher = CodeFetcher(repo_root)
     indexer.rebuild_index()
-    return AutoPatchAgent(repo_root, artifacts, indexer, patch_engine, fetcher, llm=None)
+    patch_verifier = PatchVerifier(repo_root, None)
+    session = AgentSession(repo_root, artifacts, indexer, patch_engine, fetcher, patch_verifier)
+    return AutoPatchAgent(session=session, llm=None)
 
 
 def test_normalize_semgrep_payload_prefers_source_lines_over_dirty_extra_lines(tmp_path: Path) -> None:
@@ -76,8 +80,8 @@ def test_get_finding_detail_repairs_legacy_bad_snippet_from_snapshot(tmp_path: P
     )
 
     agent = _build_agent(tmp_path)
-    agent.set_focus_paths(["src/main/java/demo/UserService.java"])
-    agent.artifacts.persist_scan_result(
+    agent.session.set_focus_paths(["src/main/java/demo/UserService.java"])
+    agent.session.artifacts.persist_scan_result(
         ScanResult(
             engine="semgrep",
             scope=["src/main/java/demo/UserService.java"],
@@ -98,7 +102,7 @@ def test_get_finding_detail_repairs_legacy_bad_snippet_from_snapshot(tmp_path: P
         )
     )
 
-    result = FindingRetrieverTool(agent).execute("F1")
+    result = FindingRetrieverTool(agent.session).execute("F1")
 
     assert result.status == "ok"
     assert 'return user.getName().equals("admin");' in result.message
@@ -119,8 +123,8 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
     )
 
     agent = _build_agent(tmp_path)
-    agent.set_focus_paths(["src/main/java/demo/UserService.java"])
-    agent.artifacts.persist_scan_result(
+    agent.session.set_focus_paths(["src/main/java/demo/UserService.java"])
+    agent.session.artifacts.persist_scan_result(
         ScanResult(
             engine="semgrep",
             scope=["src/main/java/demo/UserService.java"],
@@ -141,7 +145,7 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
         )
     )
 
-    result = PatchProposalTool(agent).execute(
+    result = PatchProposalTool(agent.session).execute(
         file_path="src/main/java/demo/UserService.java",
         old_string='return user.getName().equals("admin");',
         new_string='return "admin".equals(user.getName());',
@@ -149,7 +153,7 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
         associated_finding_id="F1",
     )
 
-    pending = agent.artifacts.fetch_pending_patch()
+    pending = agent.session.artifacts.fetch_pending_patch()
     assert result.status in {"ok", "invalid"}
     assert pending is not None
     assert pending.target_snippet == 'return user.getName().equals("admin");'

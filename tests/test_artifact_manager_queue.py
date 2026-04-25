@@ -4,7 +4,7 @@ from pathlib import Path
 
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.patch_engine import PatchDraft
-from autopatch_j.validators.java_syntax import SyntaxValidationResult
+from autopatch_j.core.patch_verifier import SyntaxCheckResult
 
 
 def _draft(file_path: str, rationale: str) -> PatchDraft:
@@ -13,7 +13,7 @@ def _draft(file_path: str, rationale: str) -> PatchDraft:
         old_string="old",
         new_string="new",
         diff="diff",
-        validation=SyntaxValidationResult(status="ok", message="ok"),
+        validation=SyntaxCheckResult(status="ok", message="ok"),
         status="ok",
         message="ok",
         rationale=rationale,
