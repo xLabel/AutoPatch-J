@@ -202,16 +202,17 @@ def install_managed_semgrep_runtime(
         subprocess.run(
             [python_executable, "-m", "venv", str(semgrep_venv_dir())],
             check=True,
-            capture_output=True
+            capture_output=True,
+            encoding="utf-8"
         )
-        
+
         pip_executable = semgrep_venv_bin_dir() / ("pip.exe" if os.name == "nt" else "pip")
         subprocess.run(
             [str(pip_executable), "install", "--quiet", f"semgrep=={version}"],
             check=True,
-            capture_output=True
+            capture_output=True,
+            encoding="utf-8"
         )
-
     if resolve_user_runtime_binary() is None:
         return (
             "error",
