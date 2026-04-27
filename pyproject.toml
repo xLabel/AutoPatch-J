@@ -7,7 +7,7 @@ name = "autopatch-j"
 version = "0.1.0"
 description = "Minimal AI coding patch agent for Java repositories"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 authors = [
   { name = "weijianguan" }
 ]

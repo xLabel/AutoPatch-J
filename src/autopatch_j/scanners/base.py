@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 
-class ScannerName(StrEnum):
+class ScannerName(str, Enum):
     SEMGREP = "semgrep"
     SPOTBUGS = "spotbugs"
     PMD = "pmd"
