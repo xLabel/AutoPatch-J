@@ -262,6 +262,7 @@ class AutoPatchAgent:
                     "role": "assistant",
                     "content": assistant_content,
                     "tool_calls": self._serialize_tool_calls(response.tool_calls) if response.tool_calls else None,
+                    "reasoning_content": response.reasoning_content,
                 }
             )
 
@@ -366,14 +367,26 @@ class AutoPatchAgent:
             }
             if message.get("tool_calls") is not None:
                 llm_message["tool_calls"] = message["tool_calls"]
+            
+            # DeepSeek V3/V4 深度思考模式要求：如果产生了思考链，必须在多轮对话中原样传回。
+            # 如果配置了思考力度或显式开启了思考，即便为空也建议带上字段以符合某些 API 的强校验。
+            reasoning = message.get("reasoning_content")
+            if reasoning is not None:
+                llm_message["reasoning_content"] = reasoning
+            elif GlobalConfig.llm_reasoning_effort or "thinking" in GlobalConfig.llm_extra_body:
+                llm_message["reasoning_content"] = ""
+                
             return llm_message
+
         if role == "tool":
+            # OpenAI/DeepSeek 标准：role为 tool 时，仅允许 tool_call_id 和 content 字段。
+            # 这里的 name, tool_status, tool_payload 仅供本地业务使用，发送给 API 前必须剔除。
             return {
                 "role": "tool",
                 "tool_call_id": message.get("tool_call_id", ""),
-                "name": message.get("name", ""),
                 "content": message.get("content", ""),
             }
+
         return {
             "role": role,
             "content": message.get("content", ""),
