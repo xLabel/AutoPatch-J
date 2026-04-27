@@ -149,7 +149,7 @@ class LLMClient:
         on_reasoning_token: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         stream_options = None
-        if extra_body and extra_body.get("enable_thinking"):
+        if extra_body and (extra_body.get("enable_thinking") or "thinking" in extra_body):
              stream_options = {"include_usage": True}
 
         kwargs = {
@@ -177,10 +177,14 @@ class LLMClient:
             
             delta = chunk.choices[0].delta
             
-            reasoning = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-            if reasoning:
+            # 兼容不同厂商的思考链字段名 (reasoning_content 或 reasoning)
+            reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning is None:
+                reasoning = getattr(delta, "reasoning", None)
+            
+            if reasoning is not None:
                 full_reasoning += reasoning
-                if on_reasoning_token:
+                if on_reasoning_token and reasoning:
                     on_reasoning_token(reasoning)
 
             if delta.content:
