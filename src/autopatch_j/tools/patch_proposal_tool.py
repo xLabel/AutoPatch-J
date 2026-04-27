@@ -81,7 +81,7 @@ class PatchProposalTool(Tool):
         )
 
         try:
-            new_code, patch_diff = engine.perform_draft(
+            new_code, patch_diff = engine.create_draft(
                 file_path=file_path,
                 old_string=old_string,
                 new_string=new_string,

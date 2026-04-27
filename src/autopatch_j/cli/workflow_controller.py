@@ -88,7 +88,7 @@ class CliWorkflowController:
         requested_scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
         current_item = self.context.workflow_service.get_current_patch() if has_pending_review else None
         current_workspace = self.context.workflow_service.fetch_workspace() if has_pending_review else None
-        route = self.context.conversation_router.fetch_route(
+        route = self.context.conversation_router.determine_route(
             user_text=text,
             has_pending_review=has_pending_review,
             requested_scope=requested_scope,
@@ -105,9 +105,9 @@ class CliWorkflowController:
             if has_pending_review:
                 self.context.workflow_service.clear_workspace()
                 self.context.renderer.print_info("已切换到新任务")
-            intent = self.context.intent_service.fetch_intent(text, has_pending_review=False)
+            intent = self.context.intent_service.detect_intent(text, has_pending_review=False)
         else:
-            intent = self.context.intent_service.fetch_intent(text, has_pending_review=True)
+            intent = self.context.intent_service.detect_intent(text, has_pending_review=True)
 
         if intent is IntentType.CODE_AUDIT:
             self.handle_code_audit(text)

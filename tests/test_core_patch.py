@@ -16,7 +16,7 @@ def test_patch_lifecycle(tmp_path: Path):
     new = "System.out.println(\"new\");"
     
     # 1. 测试起草 (Draft)
-    new_c, diff_c = engine.perform_draft("App.java", old, new)
+    new_c, diff_c = engine.create_draft("App.java", old, new)
     assert new_c is not None
     assert diff_c is not None
     
@@ -30,7 +30,7 @@ def test_patch_lifecycle(tmp_path: Path):
         status="ok",
         message=""
     )
-    success = engine.perform_apply(draft)
+    success = engine.apply_patch(draft)
     assert success
     updated_content = java_file.read_text(encoding="utf-8")
     assert "new" in updated_content
@@ -51,7 +51,7 @@ def test_windows_crlf_matching(tmp_path: Path):
     old_code = "    public void test() {\n        return;\n    }"
     new_code = "    public void test() {\n        // Fixed\n        return;\n    }"
     
-    new_c, diff_c = engine.perform_draft("Win.java", old_code, new_code)
+    new_c, diff_c = engine.create_draft("Win.java", old_code, new_code)
 
     assert new_c is not None
     assert "Fixed" in diff_c
@@ -66,7 +66,7 @@ def test_windows_crlf_matching(tmp_path: Path):
         message=""
     )
     # 验证应用后是否依然保持了 CRLF (或至少成功应用)
-    success = engine.perform_apply(draft)
+    success = engine.apply_patch(draft)
     assert success
     final_content = java_file.read_text(encoding="utf-8")
     assert "// Fixed" in final_content
@@ -80,15 +80,15 @@ def test_create_draft_failures(tmp_path: Path):
     
     # 匹配不到
     with pytest.raises(OldStringNotFoundError):
-        engine.perform_draft("Test.java", "non-existent", "...")
+        engine.create_draft("Test.java", "non-existent", "...")
     
     # 匹配不唯一
     with pytest.raises(OldStringNotUniqueError):
-        engine.perform_draft("Test.java", "code();", "...")
+        engine.create_draft("Test.java", "code();", "...")
 
 def test_path_traversal_defense(tmp_path: Path):
     """验证安全底线：拦截路径穿越攻击"""
     engine = PatchEngine(tmp_path)
     with pytest.raises(PermissionError) as excinfo:
-        engine.perform_draft("../../../etc/passwd", "any", "any")
+        engine.create_draft("../../../etc/passwd", "any", "any")
     assert "安全风险拦截" in str(excinfo.value)

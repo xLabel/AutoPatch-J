@@ -16,7 +16,7 @@ def _scope() -> CodeScope:
 def test_continuity_judge_treats_scope_change_as_new_task() -> None:
     service = ConversationRouter()
 
-    route = service.fetch_route(
+    route = service.determine_route(
         user_text="@demo 检查代码",
         has_pending_review=True,
         requested_scope=_scope(),
@@ -30,7 +30,7 @@ def test_continuity_judge_treats_scope_change_as_new_task() -> None:
 def test_continuity_judge_defaults_ambiguous_review_input_to_review_continue() -> None:
     service = ConversationRouter()
 
-    route = service.fetch_route(
+    route = service.determine_route(
         user_text="这个再看看",
         has_pending_review=True,
         requested_scope=None,
@@ -53,7 +53,7 @@ def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> No
 
     service = ConversationRouter(llm=FakeLLM())  # type: ignore[arg-type]
 
-    route = service.fetch_route(
+    route = service.determine_route(
         user_text="重新检查一下",
         has_pending_review=True,
         requested_scope=None,

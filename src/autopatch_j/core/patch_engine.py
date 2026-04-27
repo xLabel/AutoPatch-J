@@ -50,7 +50,7 @@ class PatchEngine:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root
 
-    def perform_draft(
+    def create_draft(
         self,
         file_path: str,
         old_string: str,
@@ -75,7 +75,7 @@ class PatchEngine:
         patch_diff = self._generate_unified_diff(file_path, norm_content, updated_norm_content)
         return updated_norm_content, patch_diff
 
-    def perform_apply(self, draft: PatchDraft) -> bool:
+    def apply_patch(self, draft: PatchDraft) -> bool:
         target_path = self._resolve_safe_path(draft.file_path)
         if not target_path.exists():
             return False

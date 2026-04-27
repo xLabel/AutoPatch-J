@@ -165,7 +165,7 @@ class CliCommandController:
     def handle_apply(self, pending: PatchDraft) -> None:
         assert self.context.patch_engine is not None
         self.context.renderer.print_step(f"正在应用补丁至 {pending.file_path}...")
-        if not self.context.patch_engine.perform_apply(pending):
+        if not self.context.patch_engine.apply_patch(pending):
             self.context.renderer.print_error("应用失败。")
             return
 

@@ -13,11 +13,11 @@ from autopatch_j.core.scope_service import ScopeService
 def test_intent_service_prefers_local_rules() -> None:
     service = IntentService()
 
-    assert service.fetch_intent("@A.java 检查代码", has_pending_review=False) is IntentType.CODE_AUDIT
-    assert service.fetch_intent("@A.java 解释一下代码的功能", has_pending_review=False) is IntentType.CODE_EXPLAIN
-    assert service.fetch_intent("为什么这么改？", has_pending_review=True) is IntentType.PATCH_EXPLAIN
-    assert service.fetch_intent("加一句注释", has_pending_review=True) is IntentType.PATCH_REVISE
-    assert service.fetch_intent("加一行注释说明原因", has_pending_review=True) is IntentType.PATCH_REVISE
+    assert service.detect_intent("@A.java 检查代码", has_pending_review=False) is IntentType.CODE_AUDIT
+    assert service.detect_intent("@A.java 解释一下代码的功能", has_pending_review=False) is IntentType.CODE_EXPLAIN
+    assert service.detect_intent("为什么这么改？", has_pending_review=True) is IntentType.PATCH_EXPLAIN
+    assert service.detect_intent("加一句注释", has_pending_review=True) is IntentType.PATCH_REVISE
+    assert service.detect_intent("加一行注释说明原因", has_pending_review=True) is IntentType.PATCH_REVISE
 
 
 def test_intent_service_falls_back_to_llm_classifier() -> None:
@@ -27,14 +27,14 @@ def test_intent_service_falls_back_to_llm_classifier() -> None:
         )
     )
 
-    assert service.fetch_intent("@A.java 看看这个", has_pending_review=False) is IntentType.GENERAL_CHAT
-    assert service.fetch_intent("@A.java 这个咋样", has_pending_review=True) is IntentType.PATCH_EXPLAIN
+    assert service.detect_intent("@A.java 看看这个", has_pending_review=False) is IntentType.GENERAL_CHAT
+    assert service.detect_intent("@A.java 这个咋样", has_pending_review=True) is IntentType.PATCH_EXPLAIN
 
 
 def test_intent_service_defaults_review_ambiguity_to_patch_revise() -> None:
     service = IntentService()
 
-    assert service.fetch_intent("这个再看看", has_pending_review=True) is IntentType.PATCH_REVISE
+    assert service.detect_intent("这个再看看", has_pending_review=True) is IntentType.PATCH_REVISE
 
 
 def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> None:
