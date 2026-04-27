@@ -94,11 +94,11 @@ def test_symbol_indexer_extracts_class_and_method_when_tree_sitter_available(
             self.text = text.encode("utf-8")
             self.start_point = (line, 0)
 
-    class FakeQuery:
-        def __init__(self, _language, _query_str) -> None:
+    class FakeQueryCursor:
+        def __init__(self, _query) -> None:
             pass
         def captures(self, _root_node):
-            # 0.23.0+ 返回字典
+            # 0.25.2+ 返回字典
             return {
                 "class.name": [FakeNode("Demo", 0)],
                 "method.name": [FakeNode("run", 0)],
@@ -115,13 +115,17 @@ def test_symbol_indexer_extracts_class_and_method_when_tree_sitter_available(
         def parse(self, _content: bytes):
             return types.SimpleNamespace(root_node=object())
 
-    # 模拟 tree_sitter 模块，必须包含 Language, Parser, Query
+    class FakeQuery:
+        def __init__(self, _language, _query_str) -> None:
+            pass
+
+    # 模拟 tree_sitter 模块，必须对齐 0.25.2 的类结构
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(
         Language=FakeLanguage, 
         Parser=FakeParser,
-        Query=FakeQuery
+        Query=FakeQuery,
+        QueryCursor=FakeQueryCursor
     ))
-    # 模拟 tree_sitter_java.language() 返回 PyCapsule
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
     symbol_indexer = SymbolIndexer(tmp_path)
@@ -149,7 +153,11 @@ def test_symbol_indexer_marks_symbol_extract_degraded_when_runtime_fails(
 
     class FakeQuery:
         def __init__(self, _language, _query_str) -> None:
-            # 模拟 Query 构造时报错
+            pass
+
+    class FakeQueryCursor:
+        def __init__(self, _query) -> None:
+            # 模拟执行时报错
             raise RuntimeError("query failed")
 
     class FakeParser:
@@ -162,7 +170,8 @@ def test_symbol_indexer_marks_symbol_extract_degraded_when_runtime_fails(
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(
         Language=FakeLanguage, 
         Parser=FakeParser,
-        Query=FakeQuery
+        Query=FakeQuery,
+        QueryCursor=FakeQueryCursor
     ))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 

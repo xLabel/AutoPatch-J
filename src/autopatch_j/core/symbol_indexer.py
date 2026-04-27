@@ -134,7 +134,7 @@ class SymbolIndexer:
         """使用 Tree-sitter 提取 Java 类和方法。"""
         symbols: list[IndexEntry] = []
         try:
-            from tree_sitter import Language, Parser, Query
+            from tree_sitter import Language, Parser, Query, QueryCursor
             import tree_sitter_java as tsjava
             
             content = full_path.read_text(encoding="utf-8", errors="replace")
@@ -143,11 +143,11 @@ class SymbolIndexer:
             parser = Parser(language)
             tree = parser.parse(content.encode("utf-8"))
             
-            # 0.23.0+: 推荐直接使用 Query 构造函数
+            # 0.25.2+: Query 不再有 captures 方法，必须通过 QueryCursor 调度
             query = Query(language, "(class_declaration name: (identifier) @class.name) (method_declaration name: (identifier) @method.name)")
-            captures = query.captures(tree.root_node)
+            captures = QueryCursor(query).captures(tree.root_node)
             
-            # 0.23.0+: captures 返回 dict[str, list[Node]]
+            # 返回格式为 dict[str, list[Node]]
             for tag, nodes in captures.items():
                 for node in nodes:
                     symbols.append(IndexEntry(
