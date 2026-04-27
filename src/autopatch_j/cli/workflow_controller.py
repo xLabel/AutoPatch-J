@@ -52,14 +52,14 @@ class CliWorkflowController:
         if user_input.lower() == "apply":
             self.context.command_controller.handle_apply(current_draft)
             self.context.workflow_service.persist_applied_current_patch()
-            if not self.context.workflow_service.verify_has_pending_patch():
+            if not self.context.workflow_service.has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
 
         if user_input.lower() == "discard":
             self.context.command_controller.handle_discard()
             self.context.workflow_service.persist_discarded_current_patch()
-            if not self.context.workflow_service.verify_has_pending_patch():
+            if not self.context.workflow_service.has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
 
@@ -84,9 +84,9 @@ class CliWorkflowController:
             self.context.renderer.print_info("请继续输入代码指令")
             return
 
-        has_pending_review = self.context.workflow_service.verify_has_pending_patch()
+        has_pending_review = self.context.workflow_service.has_pending_patch()
         requested_scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
-        current_item = self.context.workflow_service.fetch_current_patch_item() if has_pending_review else None
+        current_item = self.context.workflow_service.get_current_patch() if has_pending_review else None
         current_workspace = self.context.workflow_service.fetch_workspace() if has_pending_review else None
         route = self.context.conversation_router.fetch_route(
             user_text=text,
@@ -134,7 +134,7 @@ class CliWorkflowController:
                 break
             self._process_single_finding(finding, text, backlog)
 
-        if not self.context.workflow_service.verify_has_pending_patch():
+        if not self.context.workflow_service.has_pending_patch():
             self.context.workflow_service.clear_workspace()
 
     def _prepare_audit_workspace(self, text: str) -> list[AuditFindingItem] | None:
@@ -161,7 +161,7 @@ class CliWorkflowController:
         backlog = self.context.audit_backlog_service.fetch_backlog(scan_result)
         if not backlog:
             self._handle_zero_finding_review(text=text, scope=scope)
-            if not self.context.workflow_service.verify_has_pending_patch():
+            if not self.context.workflow_service.has_pending_patch():
                 self.context.workflow_service.clear_workspace()
             return None
 
@@ -306,7 +306,7 @@ class CliWorkflowController:
         assert self.context.workflow_service is not None
         assert self.context.agent is not None
 
-        current_item = self.context.workflow_service.fetch_current_patch_item()
+        current_item = self.context.workflow_service.get_current_patch()
         if current_item is None:
             self.context.renderer.print_error("当前没有待确认补丁")
             return
@@ -326,12 +326,12 @@ class CliWorkflowController:
         assert self.context.workflow_service is not None
         assert self.context.agent is not None
 
-        current_item = self.context.workflow_service.fetch_current_patch_item()
+        current_item = self.context.workflow_service.get_current_patch()
         if current_item is None:
             self.context.renderer.print_error("当前没有待确认补丁")
             return
 
-        remaining_items = self.context.workflow_service.fetch_remaining_patch_items()
+        remaining_items = self.context.workflow_service.get_remaining_patches()
         self.context.agent.session.set_focus_paths(self.context._fetch_review_scope_paths(current_item))
         self.context.workflow_service.replace_remaining_patch_items([])
         self.context._run_agent_request(
@@ -343,7 +343,7 @@ class CliWorkflowController:
                 **kwargs
             ),
         )
-        if not self.context.workflow_service.verify_has_pending_patch():
+        if not self.context.workflow_service.has_pending_patch():
             self.context.renderer.print_info("补丁队列已清空")
 
     def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
@@ -368,7 +368,7 @@ class CliWorkflowController:
                 )
             finally:
                 self.context.agent.session.patch_source_hint = None
-            if self.context.workflow_service.verify_has_pending_patch():
+            if self.context.workflow_service.has_pending_patch():
                 return
 
         self.context.renderer.print_no_issue_panel(

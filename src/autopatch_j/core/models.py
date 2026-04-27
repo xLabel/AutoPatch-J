@@ -165,7 +165,7 @@ class PatchReviewItem:
     status: PatchReviewStatus
     draft: PatchDraftData
 
-    def verify_pending(self) -> bool:
+    def is_pending(self) -> bool:
         return self.status is PatchReviewStatus.PENDING
 
     def to_dict(self) -> dict[str, Any]:
@@ -202,7 +202,7 @@ class AuditFindingItem:
     last_error_code: str | None = None
     last_error_message: str | None = None
 
-    def verify_pending(self) -> bool:
+    def is_pending(self) -> bool:
         return self.status is AuditFindingStatus.PENDING
 
 
@@ -242,35 +242,35 @@ class ActiveWorkspace:
             current_patch_index=int(data.get("current_patch_index", 0)),
         )
 
-    def fetch_current_patch_item(self) -> PatchReviewItem | None:
+    def get_current_patch(self) -> PatchReviewItem | None:
         if not self.patch_items:
             return None
         if self.current_patch_index < 0 or self.current_patch_index >= len(self.patch_items):
             return None
         return self.patch_items[self.current_patch_index]
 
-    def fetch_remaining_patch_items(self) -> list[PatchReviewItem]:
+    def get_remaining_patches(self) -> list[PatchReviewItem]:
         if self.current_patch_index < 0:
             return list(self.patch_items)
         return list(self.patch_items[self.current_patch_index :])
 
-    def fetch_review_progress(self) -> tuple[int, int]:
+    def get_review_progress(self) -> tuple[int, int]:
         total_count = len(self.patch_items)
-        if self.fetch_current_patch_item() is None or total_count == 0:
+        if self.get_current_patch() is None or total_count == 0:
             return 0, total_count
         return self.current_patch_index + 1, total_count
 
-    def verify_has_pending_patch(self) -> bool:
-        return self.fetch_current_patch_item() is not None
+    def has_pending_patch(self) -> bool:
+        return self.get_current_patch() is not None
 
     def mark_applied(self) -> None:
-        item = self.fetch_current_patch_item()
+        item = self.get_current_patch()
         if item:
             item.status = PatchReviewStatus.APPLIED
             self._advance_after_terminal_patch()
 
     def mark_discarded(self) -> None:
-        item = self.fetch_current_patch_item()
+        item = self.get_current_patch()
         if item:
             item.status = PatchReviewStatus.DISCARDED
             self._advance_after_terminal_patch()
@@ -287,7 +287,7 @@ class ActiveWorkspace:
     def _advance_after_terminal_patch(self) -> None:
         next_index: int | None = None
         for index in range(self.current_patch_index + 1, len(self.patch_items)):
-            if self.patch_items[index].verify_pending():
+            if self.patch_items[index].is_pending():
                 next_index = index
                 break
 

@@ -25,17 +25,17 @@ class WorkflowService:
         workspace = self.artifacts.fetch_workspace()
         return workspace or self._build_idle_workspace()
 
-    def fetch_current_patch_item(self) -> PatchReviewItem | None:
-        return self.fetch_workspace().fetch_current_patch_item()
+    def get_current_patch(self) -> PatchReviewItem | None:
+        return self.fetch_workspace().get_current_patch()
 
-    def fetch_remaining_patch_items(self) -> list[PatchReviewItem]:
-        return self.fetch_workspace().fetch_remaining_patch_items()
+    def get_remaining_patches(self) -> list[PatchReviewItem]:
+        return self.fetch_workspace().get_remaining_patches()
 
-    def fetch_review_progress(self) -> tuple[int, int]:
-        return self.fetch_workspace().fetch_review_progress()
+    def get_review_progress(self) -> tuple[int, int]:
+        return self.fetch_workspace().get_review_progress()
 
-    def verify_has_pending_patch(self) -> bool:
-        return self.fetch_workspace().verify_has_pending_patch()
+    def has_pending_patch(self) -> bool:
+        return self.fetch_workspace().has_pending_patch()
 
     def persist_review_workspace(
         self,

@@ -93,17 +93,17 @@ class ArtifactManager:
         head_items = list(workspace.patch_items[: workspace.current_patch_index])
         pending_drafts = [draft] + [
             self._build_patch_draft_from_review_item(item)
-            for item in workspace.fetch_remaining_patch_items()
+            for item in workspace.get_remaining_patches()
         ]
         self._persist_workspace_pending_drafts(head_items, pending_drafts, workspace)
 
     def fetch_pending_patches(self) -> list[PatchDraft]:
         workspace = self.fetch_workspace()
-        if workspace is None or not workspace.verify_has_pending_patch():
+        if workspace is None or not workspace.has_pending_patch():
             return []
         return [
             self._build_patch_draft_from_review_item(item)
-            for item in workspace.fetch_remaining_patch_items()
+            for item in workspace.get_remaining_patches()
         ]
 
     def fetch_pending_patch(self) -> PatchDraft | None:

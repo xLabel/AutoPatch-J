@@ -128,7 +128,7 @@ class CliCommandController:
         )
         table.add_row("[bold]静态扫描器[/]", scanner_status)
 
-        pending = self.context.workflow_service.fetch_current_patch_item()
+        pending = self.context.workflow_service.get_current_patch()
         buffer_status = (
             f"[bold yellow]存在待确认补丁 ({pending.file_path})[/]"
             if pending

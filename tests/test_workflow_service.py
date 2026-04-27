@@ -65,8 +65,8 @@ def test_artifact_manager_persists_workspace_round_trip(tmp_path: Path) -> None:
     assert restored.mode is WorkspaceStatus.REVIEWING
     assert restored.scope is not None
     assert restored.scope.focus_files == workspace.scope.focus_files
-    assert restored.fetch_current_patch_item() is not None
-    assert restored.fetch_current_patch_item().item_id == "item-1"
+    assert restored.get_current_patch() is not None
+    assert restored.get_current_patch().item_id == "item-1"
 
 
 def test_workflow_service_persist_review_workspace_starts_review_mode(tmp_path: Path) -> None:
@@ -83,9 +83,9 @@ def test_workflow_service_persist_review_workspace_starts_review_mode(tmp_path: 
 
     assert workspace.mode is WorkspaceStatus.REVIEWING
     assert workspace.current_patch_index == 0
-    assert service.verify_has_pending_patch() is True
-    assert service.fetch_current_patch_item() is not None
-    assert service.fetch_current_patch_item().item_id == "item-1"
+    assert service.has_pending_patch() is True
+    assert service.get_current_patch() is not None
+    assert service.get_current_patch().item_id == "item-1"
 
 
 def test_workflow_service_persist_applied_current_patch_advances_until_idle(tmp_path: Path) -> None:
@@ -133,5 +133,5 @@ def test_workflow_service_replace_remaining_patch_items_keeps_applied_head(tmp_p
     assert replaced.mode is WorkspaceStatus.REVIEWING
     assert [item.item_id for item in replaced.patch_items] == ["item-1", "item-3", "item-4"]
     assert replaced.patch_items[0].status is PatchReviewStatus.APPLIED
-    assert replaced.fetch_current_patch_item() is not None
-    assert replaced.fetch_current_patch_item().item_id == "item-3"
+    assert replaced.get_current_patch() is not None
+    assert replaced.get_current_patch().item_id == "item-3"
