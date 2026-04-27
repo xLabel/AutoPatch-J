@@ -81,7 +81,7 @@ def test_get_finding_detail_repairs_legacy_bad_snippet_from_snapshot(tmp_path: P
 
     agent = _build_agent(tmp_path)
     agent.session.set_focus_paths(["src/main/java/demo/UserService.java"])
-    agent.session.artifacts.persist_scan_result(
+    agent.session.artifacts.save_scan_result(
         ScanResult(
             engine="semgrep",
             scope=["src/main/java/demo/UserService.java"],
@@ -124,7 +124,7 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
 
     agent = _build_agent(tmp_path)
     agent.session.set_focus_paths(["src/main/java/demo/UserService.java"])
-    agent.session.artifacts.persist_scan_result(
+    agent.session.artifacts.save_scan_result(
         ScanResult(
             engine="semgrep",
             scope=["src/main/java/demo/UserService.java"],
@@ -153,7 +153,7 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
         associated_finding_id="F1",
     )
 
-    pending = agent.session.artifacts.fetch_pending_patch()
+    pending = agent.session.artifacts.load_pending_patch()
     assert result.status in {"ok", "invalid"}
     assert pending is not None
     assert pending.target_snippet == 'return user.getName().equals("admin");'

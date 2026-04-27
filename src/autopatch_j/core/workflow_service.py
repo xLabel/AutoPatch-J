@@ -21,23 +21,23 @@ class WorkflowService:
 
     artifacts: ArtifactManager
 
-    def fetch_workspace(self) -> ActiveWorkspace:
-        workspace = self.artifacts.fetch_workspace()
+    def load_workspace(self) -> ActiveWorkspace:
+        workspace = self.artifacts.load_workspace()
         return workspace or self._build_idle_workspace()
 
     def get_current_patch(self) -> PatchReviewItem | None:
-        return self.fetch_workspace().get_current_patch()
+        return self.load_workspace().get_current_patch()
 
     def get_remaining_patches(self) -> list[PatchReviewItem]:
-        return self.fetch_workspace().get_remaining_patches()
+        return self.load_workspace().get_remaining_patches()
 
     def get_review_progress(self) -> tuple[int, int]:
-        return self.fetch_workspace().get_review_progress()
+        return self.load_workspace().get_review_progress()
 
     def has_pending_patch(self) -> bool:
-        return self.fetch_workspace().has_pending_patch()
+        return self.load_workspace().has_pending_patch()
 
-    def persist_review_workspace(
+    def initialize_review_workspace(
         self,
         scope: CodeScope,
         latest_scan_id: str | None,
@@ -50,33 +50,33 @@ class WorkflowService:
             patch_items=list(patch_items),
             current_patch_index=0,
         )
-        self.artifacts.persist_workspace(workspace)
+        self.artifacts.save_workspace(workspace)
         return workspace
 
     def persist_idle_workspace(self) -> ActiveWorkspace:
         workspace = self._build_idle_workspace()
-        self.artifacts.persist_workspace(workspace)
+        self.artifacts.save_workspace(workspace)
         return workspace
 
-    def persist_applied_current_patch(self) -> ActiveWorkspace:
-        workspace = self.fetch_workspace()
+    def mark_current_patch_applied(self) -> ActiveWorkspace:
+        workspace = self.load_workspace()
         workspace.mark_applied()
-        self.artifacts.persist_workspace(workspace)
+        self.artifacts.save_workspace(workspace)
         return workspace
 
-    def persist_discarded_current_patch(self) -> ActiveWorkspace:
-        workspace = self.fetch_workspace()
+    def mark_current_patch_discarded(self) -> ActiveWorkspace:
+        workspace = self.load_workspace()
         workspace.mark_discarded()
-        self.artifacts.persist_workspace(workspace)
+        self.artifacts.save_workspace(workspace)
         return workspace
 
     def replace_remaining_patch_items(
         self,
         replacement_items: list[PatchReviewItem],
     ) -> ActiveWorkspace:
-        workspace = self.fetch_workspace()
+        workspace = self.load_workspace()
         workspace.replace_tail(replacement_items)
-        self.artifacts.persist_workspace(workspace)
+        self.artifacts.save_workspace(workspace)
         return workspace
 
     def clear_workspace(self) -> None:

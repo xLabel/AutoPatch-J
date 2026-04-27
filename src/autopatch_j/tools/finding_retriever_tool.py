@@ -42,7 +42,7 @@ class FindingRetrieverTool(Tool):
             return ToolResult(status="error", message="系统中未找到扫描记录，请先发起一次代码检查。")
 
         active_scan_id = scan_files[0].stem
-        finding = artifacts.fetch_finding_by_index(active_scan_id, finding_index)
+        finding = artifacts.get_finding_by_index(active_scan_id, finding_index)
         if not finding:
             return ToolResult(
                 status="error",

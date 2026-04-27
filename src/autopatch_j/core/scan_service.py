@@ -18,7 +18,7 @@ class ScanService:
         self.repo_root = repo_root.resolve()
         self.artifacts = artifacts
 
-    def run_scan_and_persist(self, scope: CodeScope) -> tuple[str, ScanResult]:
+    def run_scan_and_save(self, scope: CodeScope) -> tuple[str, ScanResult]:
         scanner = get_scanner(DEFAULT_SCANNER_NAME)
         if scanner is None:
             raise RuntimeError(f"未找到默认扫描器：{DEFAULT_SCANNER_NAME}")
@@ -27,5 +27,5 @@ class ScanService:
         if result.status != "ok":
             raise RuntimeError(result.message)
 
-        artifact_id = self.artifacts.persist_scan_result(result)
+        artifact_id = self.artifacts.save_scan_result(result)
         return artifact_id, result

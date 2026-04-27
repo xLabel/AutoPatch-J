@@ -119,7 +119,7 @@ class AutoPatchCLI:
 
         while True:
             try:
-                workspace = self.workflow_service.fetch_workspace() if self.workflow_service else None
+                workspace = self.workflow_service.load_workspace() if self.workflow_service else None
                 current_item = workspace.get_current_patch() if workspace else None
                 pending_draft = current_item.draft.fetch_patch_draft() if current_item else None
                 current_idx, total_count = workspace.get_review_progress() if workspace else (0, 0)
@@ -248,7 +248,7 @@ class AutoPatchCLI:
 
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
         assert self.workflow_service is not None
-        workspace = self.workflow_service.fetch_workspace()
+        workspace = self.workflow_service.load_workspace()
         if workspace.scope is not None and workspace.scope.focus_files:
             return list(workspace.scope.focus_files)
         return [current_item.file_path]
@@ -260,7 +260,7 @@ class AutoPatchCLI:
 
     def _describe_current_scope_paths(self) -> list[str]:
         workflow_service = getattr(self, "workflow_service", None)
-        workspace = workflow_service.fetch_workspace() if workflow_service else None
+        workspace = workflow_service.load_workspace() if workflow_service else None
         if workspace is not None and workspace.scope is not None and workspace.scope.focus_files:
             return list(workspace.scope.focus_files)
         scan_paths = self._collect_latest_scan_paths()
@@ -276,7 +276,7 @@ class AutoPatchCLI:
         scan_files = sorted(self.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
             return []
-        latest = self.artifacts.fetch_scan_result(scan_files[0].stem)
+        latest = self.artifacts.load_scan_result(scan_files[0].stem)
         if latest is None:
             return []
 
