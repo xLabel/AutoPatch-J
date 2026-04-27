@@ -105,11 +105,8 @@ def test_symbol_indexer_extracts_class_and_method_when_tree_sitter_available(
             }
 
     class FakeLanguage:
-        def __init__(self) -> None:
+        def __init__(self, _capsule) -> None:
             pass
-        
-        def query(self, _query_str):
-            return FakeQuery(self, _query_str)
 
     class FakeParser:
         def __init__(self, _language: FakeLanguage) -> None:
@@ -118,8 +115,14 @@ def test_symbol_indexer_extracts_class_and_method_when_tree_sitter_available(
         def parse(self, _content: bytes):
             return types.SimpleNamespace(root_node=object())
 
-    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Parser=FakeParser))
-    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: FakeLanguage()))
+    # 模拟 tree_sitter 模块，必须包含 Language, Parser, Query
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(
+        Language=FakeLanguage, 
+        Parser=FakeParser,
+        Query=FakeQuery
+    ))
+    # 模拟 tree_sitter_java.language() 返回 PyCapsule
+    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
     symbol_indexer = SymbolIndexer(tmp_path)
     stats = symbol_indexer.rebuild_index()
@@ -141,10 +144,12 @@ def test_symbol_indexer_marks_symbol_extract_degraded_when_runtime_fails(
     (tmp_path / "Demo.java").write_text("public class Demo { void run() {} }", encoding="utf-8")
 
     class FakeLanguage:
-        def __init__(self) -> None:
+        def __init__(self, _capsule) -> None:
             pass
-        
-        def query(self, _query_str):
+
+    class FakeQuery:
+        def __init__(self, _language, _query_str) -> None:
+            # 模拟 Query 构造时报错
             raise RuntimeError("query failed")
 
     class FakeParser:
@@ -154,8 +159,12 @@ def test_symbol_indexer_marks_symbol_extract_degraded_when_runtime_fails(
         def parse(self, _content: bytes):
             return types.SimpleNamespace(root_node=object())
 
-    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Parser=FakeParser))
-    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: FakeLanguage()))
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(
+        Language=FakeLanguage, 
+        Parser=FakeParser,
+        Query=FakeQuery
+    ))
+    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
     symbol_indexer = SymbolIndexer(tmp_path)
     stats = symbol_indexer.rebuild_index()
