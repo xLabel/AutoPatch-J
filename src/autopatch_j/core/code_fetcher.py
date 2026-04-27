@@ -91,7 +91,6 @@ class CodeFetcher:
             from tree_sitter import Language, Parser
             import tree_sitter_java as tsjava
 
-            # 0.23.0+: tsjava.language() 返回 PyCapsule，必须用 Language() 包装
             language = Language(tsjava.language())
             parser = Parser(language)
 

@@ -138,16 +138,13 @@ class SymbolIndexer:
             import tree_sitter_java as tsjava
             
             content = full_path.read_text(encoding="utf-8", errors="replace")
-            # 0.23.0+: tsjava.language() 返回 PyCapsule，必须用 Language() 包装
             language = Language(tsjava.language())
             parser = Parser(language)
             tree = parser.parse(content.encode("utf-8"))
             
-            # 0.25.2+: Query 不再有 captures 方法，必须通过 QueryCursor 调度
             query = Query(language, "(class_declaration name: (identifier) @class.name) (method_declaration name: (identifier) @method.name)")
             captures = QueryCursor(query).captures(tree.root_node)
             
-            # 返回格式为 dict[str, list[Node]]
             for tag, nodes in captures.items():
                 for node in nodes:
                     symbols.append(IndexEntry(

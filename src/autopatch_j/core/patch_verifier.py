@@ -54,7 +54,6 @@ class PatchVerifier:
             )
 
         try:
-            # 0.23.0+: tsjava.language() 返回 PyCapsule，必须用 Language() 包装
             language = Language(tsjava.language())
             parser = Parser(language)
             tree = parser.parse(new_source_code.encode("utf-8"))
