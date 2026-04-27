@@ -20,7 +20,7 @@ class ToolContext(Protocol):
     """
     repo_root: Path
     artifacts: Any
-    indexer: Any
+    symbol_indexer: Any
     patch_engine: Any
     fetcher: Any
     patch_verifier: Any

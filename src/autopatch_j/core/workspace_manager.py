@@ -13,7 +13,7 @@ from autopatch_j.core.models import (
 
 
 @dataclass(slots=True)
-class WorkflowService:
+class WorkspaceManager:
     """
     工作流编排服务 (Core Service)
     职责：统一驱动工作台状态推进，不在 CLI 或 Agent 中分散维护审核状态。

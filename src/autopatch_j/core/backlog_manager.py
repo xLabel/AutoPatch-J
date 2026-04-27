@@ -13,7 +13,7 @@ from autopatch_j.scanners.base import ScanResult
 
 
 @dataclass(slots=True)
-class AuditBacklogService:
+class BacklogManager:
     """
     finding 推进服务 (Core Service)
     职责：把一次扫描结果展开成可推进的 finding backlog，并给出补丁尝试后的状态决策。

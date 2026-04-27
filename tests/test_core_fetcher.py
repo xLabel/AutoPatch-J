@@ -5,7 +5,7 @@ import types
 from pathlib import Path
 
 from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.index_service import IndexEntry
+from autopatch_j.core.symbol_indexer import IndexEntry
 
 
 def test_fetch_logic(tmp_path: Path):

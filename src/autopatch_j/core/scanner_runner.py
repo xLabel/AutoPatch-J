@@ -8,7 +8,7 @@ from autopatch_j.scanners import DEFAULT_SCANNER_NAME, get_scanner
 from autopatch_j.scanners.base import JavaScanner, ScanResult
 
 
-class ScanService:
+class ScannerRunner:
     """
     基准扫描服务 (Core Service)
     职责：统一触发扫描器并持久化扫描快照。

@@ -4,7 +4,7 @@ import re
 from typing import Iterable, Callable
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
-from autopatch_j.core.index_service import IndexEntry
+from autopatch_j.core.symbol_indexer import IndexEntry
 
 
 class AutoPatchCompleter(Completer):

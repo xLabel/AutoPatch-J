@@ -12,7 +12,7 @@ from autopatch_j.core.models import (
     PatchReviewStatus,
     WorkspaceStatus,
 )
-from autopatch_j.core.workflow_service import WorkflowService
+from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
 def _scope() -> CodeScope:
@@ -69,8 +69,8 @@ def test_artifact_manager_persists_workspace_round_trip(tmp_path: Path) -> None:
     assert restored.get_current_patch().item_id == "item-1"
 
 
-def test_workflow_service_persist_review_workspace_starts_review_mode(tmp_path: Path) -> None:
-    service = WorkflowService(ArtifactManager(tmp_path))
+def test_workspace_manager_persist_review_workspace_starts_review_mode(tmp_path: Path) -> None:
+    service = WorkspaceManager(ArtifactManager(tmp_path))
 
     workspace = service.initialize_review_workspace(
         scope=_scope(),
@@ -88,8 +88,8 @@ def test_workflow_service_persist_review_workspace_starts_review_mode(tmp_path: 
     assert service.get_current_patch().item_id == "item-1"
 
 
-def test_workflow_service_persist_applied_current_patch_advances_until_idle(tmp_path: Path) -> None:
-    service = WorkflowService(ArtifactManager(tmp_path))
+def test_workspace_manager_persist_applied_current_patch_advances_until_idle(tmp_path: Path) -> None:
+    service = WorkspaceManager(ArtifactManager(tmp_path))
     service.initialize_review_workspace(
         scope=_scope(),
         latest_scan_id="scan-3",
@@ -110,8 +110,8 @@ def test_workflow_service_persist_applied_current_patch_advances_until_idle(tmp_
     assert second_pass.mode is WorkspaceStatus.IDLE
 
 
-def test_workflow_service_replace_remaining_patch_items_keeps_applied_head(tmp_path: Path) -> None:
-    service = WorkflowService(ArtifactManager(tmp_path))
+def test_workspace_manager_replace_remaining_patch_items_keeps_applied_head(tmp_path: Path) -> None:
+    service = WorkspaceManager(ArtifactManager(tmp_path))
     service.initialize_review_workspace(
         scope=_scope(),
         latest_scan_id="scan-4",

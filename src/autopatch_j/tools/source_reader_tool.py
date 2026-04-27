@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autopatch_j.core.index_service import IndexEntry
+from autopatch_j.core.symbol_indexer import IndexEntry
 from autopatch_j.tools.base import Tool, ToolResult
 
 
@@ -40,7 +40,7 @@ class SourceReaderTool(Tool):
         full_path = self.context.repo_root / path
         if not full_path.exists():
             filename = Path(path).name
-            results = self.context.indexer.search(filename, limit=1)
+            results = self.context.symbol_indexer.search(filename, limit=1)
             if results:
                 path = results[0].path
 

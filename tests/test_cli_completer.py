@@ -3,7 +3,7 @@ from __future__ import annotations
 from prompt_toolkit.document import Document
 
 from autopatch_j.cli.completer import AutoPatchCompleter
-from autopatch_j.core.index_service import IndexEntry
+from autopatch_j.core.symbol_indexer import IndexEntry
 
 
 def _apply_completion(text: str, completion_text: str, start_position: int) -> str:
