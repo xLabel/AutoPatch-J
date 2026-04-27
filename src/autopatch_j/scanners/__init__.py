@@ -25,7 +25,7 @@ ALL_SCANNERS: list[JavaScanner] = [
 
 def get_scanner(name: ScannerName | str) -> JavaScanner | None:
     """根据名称获取扫描器实例"""
-    target = str(name).lower()
+    target = name.value if isinstance(name, ScannerName) else str(name).lower()
     for s in ALL_SCANNERS:
         if s.name == target:
             return s

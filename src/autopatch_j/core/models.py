@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from typing import Any
 
 from autopatch_j.core.patch_engine import PatchDraft
 
 
-class IntentType(StrEnum):
+class IntentType(str, Enum):
     CODE_AUDIT = "code_audit"
     CODE_EXPLAIN = "code_explain"
     GENERAL_CHAT = "general_chat"
@@ -15,36 +15,36 @@ class IntentType(StrEnum):
     PATCH_REVISE = "patch_revise"
 
 
-class ConversationRoute(StrEnum):
+class ConversationRoute(str, Enum):
     NEW_TASK = "new_task"
     REVIEW_CONTINUE = "review_continue"
     COMMAND = "command"
 
 
-class WorkspaceStatus(StrEnum):
+class WorkspaceStatus(str, Enum):
     IDLE = "idle"
     REVIEWING = "reviewing"
 
 
-class CodeScopeKind(StrEnum):
+class CodeScopeKind(str, Enum):
     SINGLE_FILE = "single_file"
     MULTI_FILE = "multi_file"
     PROJECT = "project"
 
 
-class PatchReviewStatus(StrEnum):
+class PatchReviewStatus(str, Enum):
     PENDING = "pending"
     APPLIED = "applied"
     DISCARDED = "discarded"
 
 
-class AuditFindingStatus(StrEnum):
+class AuditFindingStatus(str, Enum):
     PENDING = "pending"
     PATCH_READY = "patch_ready"
     FAILED = "failed"
 
 
-class AuditAttemptOutcome(StrEnum):
+class AuditAttemptOutcome(str, Enum):
     PATCH_READY = "patch_ready"
     RETRYABLE_ERROR = "retryable_error"
     NO_PATCH = "no_patch"
