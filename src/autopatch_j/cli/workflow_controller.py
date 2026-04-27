@@ -314,7 +314,7 @@ class CliWorkflowController:
         assert self.context.workspace_manager is not None
         assert self.context.agent is not None
 
-        current_item = self.context.workspace_manager.get_current_patch()
+        current_item = self.context.workspace_manager.load_workspace().get_current_patch()
         if current_item is None:
             self.context.renderer.print_error("当前没有待确认补丁")
             return
