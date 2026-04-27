@@ -20,10 +20,10 @@ class WorkspaceManager:
     确保在 CLI 或 Agent 中不分散维护审核状态，保证人工确认流的原子性和连续性。
     """
 
-    artifacts: ArtifactManager
+    artifact_manager: ArtifactManager
 
     def load_workspace(self) -> ActiveWorkspace:
-        workspace = self.artifacts.load_workspace()
+        workspace = self.artifact_manager.load_workspace()
         return workspace or self._build_idle_workspace()
 
     def get_current_patch(self) -> PatchReviewItem | None:
@@ -51,24 +51,24 @@ class WorkspaceManager:
             patch_items=list(patch_items),
             current_patch_index=0,
         )
-        self.artifacts.save_workspace(workspace)
+        self.artifact_manager.save_workspace(workspace)
         return workspace
 
     def persist_idle_workspace(self) -> ActiveWorkspace:
         workspace = self._build_idle_workspace()
-        self.artifacts.save_workspace(workspace)
+        self.artifact_manager.save_workspace(workspace)
         return workspace
 
     def mark_current_patch_applied(self) -> ActiveWorkspace:
         workspace = self.load_workspace()
         workspace.mark_applied()
-        self.artifacts.save_workspace(workspace)
+        self.artifact_manager.save_workspace(workspace)
         return workspace
 
     def mark_current_patch_discarded(self) -> ActiveWorkspace:
         workspace = self.load_workspace()
         workspace.mark_discarded()
-        self.artifacts.save_workspace(workspace)
+        self.artifact_manager.save_workspace(workspace)
         return workspace
 
     def replace_remaining_patch_items(
@@ -77,11 +77,11 @@ class WorkspaceManager:
     ) -> ActiveWorkspace:
         workspace = self.load_workspace()
         workspace.replace_tail(replacement_items)
-        self.artifacts.save_workspace(workspace)
+        self.artifact_manager.save_workspace(workspace)
         return workspace
 
     def clear_workspace(self) -> None:
-        self.artifacts.clear_workspace()
+        self.artifact_manager.clear_workspace()
 
     def _build_idle_workspace(self) -> ActiveWorkspace:
         return ActiveWorkspace(

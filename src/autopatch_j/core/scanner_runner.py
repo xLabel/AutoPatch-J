@@ -14,9 +14,9 @@ class ScannerRunner:
     职责：统一触发扫描器并持久化扫描快照。
     """
 
-    def __init__(self, repo_root: Path, artifacts: ArtifactManager) -> None:
+    def __init__(self, repo_root: Path, artifact_manager: ArtifactManager) -> None:
         self.repo_root = repo_root.resolve()
-        self.artifacts = artifacts
+        self.artifact_manager = artifact_manager
 
     def run_scan_and_save(self, scope: CodeScope) -> tuple[str, ScanResult]:
         scanner = get_scanner(DEFAULT_SCANNER_NAME)
@@ -27,5 +27,5 @@ class ScannerRunner:
         if result.status != "ok":
             raise RuntimeError(result.message)
 
-        artifact_id = self.artifacts.save_scan_result(result)
+        artifact_id = self.artifact_manager.save_scan_result(result)
         return artifact_id, result

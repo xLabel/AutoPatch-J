@@ -1,3 +1,3 @@
-from autopatch_j.agent.agent import AutoPatchAgent
+from autopatch_j.agent.agent import Agent
 
-__all__ = ["AutoPatchAgent"]
+__all__ = ["Agent"]

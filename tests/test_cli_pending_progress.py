@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from autopatch_j.cli.app import AutoPatchCLI
+from autopatch_j.cli.app import CLI
 from autopatch_j.core.models import (
     ActiveWorkspace,
     CodeScope,
@@ -15,9 +15,9 @@ from autopatch_j.core.models import (
 )
 
 
-def _make_cli(tmp_path: Path) -> AutoPatchCLI:
+def _make_cli(tmp_path: Path) -> CLI:
     (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
-    return AutoPatchCLI(tmp_path)
+    return CLI(tmp_path)
 
 
 def _scope() -> CodeScope:

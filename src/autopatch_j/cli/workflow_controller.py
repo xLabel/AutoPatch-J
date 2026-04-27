@@ -22,13 +22,13 @@ from autopatch_j.core.workspace_manager import WorkspaceManager
 class WorkflowControllerContext(Protocol):
     renderer: Any
     agent: Any
-    intent_detector: IntentDetector | None
-    conversation_router: ConversationRouter | None
-    scope_service: ScopeService | None
-    scanner_runner: ScannerRunner | None
-    workspace_manager: WorkspaceManager | None
-    backlog_manager: BacklogManager | None
-    chat_filter: ChatFilter | None
+    intent_detector: Any
+    conversation_router: Any
+    scope_service: Any
+    scanner_runner: Any
+    workspace_manager: Any
+    backlog_manager: Any
+    chat_filter: Any
     command_controller: Any
 
     def _run_agent_request(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
@@ -44,10 +44,10 @@ class CliWorkflowController:
     工作流总控与调度中心 (Workflow Orchestrator)。
     核心职责：接收原始输入，调用意图识别，并编排复杂的业务流。
     
-    典型流转过程 (以 code_audit 为例)：
-    1. 解析范围 (Scope) -> 2. 触发静态扫描 (ScannerRunner) -> 
-    3. 压入漏洞待办 (BacklogManager) -> 4. 逐个驱动 Agent 修复 (AutoPatchAgent) -> 
-    5. 失败重试或跳过 -> 6. 最终进入人工确认队列 (WorkspaceManager)。
+    Typical process (e.g., code_audit):
+    1. Resolve scope (Scope) -> 2. Trigger static scan (ScannerRunner) -> 
+    3. Push to backlog (BacklogManager) -> 4. Drive Agent repair one by one (Agent) -> 
+    5. Retry or skip on failure -> 6. Final human confirmation (WorkspaceManager).
     """
 
     def __init__(self, context: WorkflowControllerContext) -> None:

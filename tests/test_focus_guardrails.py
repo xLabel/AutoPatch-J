@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from autopatch_j.agent.session import AgentSession
-from autopatch_j.agent.agent import AutoPatchAgent
+from autopatch_j.agent.agent import Agent
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.symbol_indexer import SymbolIndexer
@@ -14,20 +14,20 @@ from autopatch_j.tools.source_reader_tool import SourceReaderTool
 from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 
 
-def _build_agent(repo_root: Path) -> AutoPatchAgent:
-    artifacts = ArtifactManager(repo_root)
+def _build_agent(repo_root: Path) -> Agent:
+    artifact_manager = ArtifactManager(repo_root)
     symbol_indexer = SymbolIndexer(repo_root)
     patch_engine = PatchEngine(repo_root)
-    fetcher = CodeFetcher(repo_root)
+    code_fetcher = CodeFetcher(repo_root)
     symbol_indexer.rebuild_index()
     session = AgentSession(
         repo_root=repo_root,
-        artifact_manager=artifacts,
+        artifact_manager=artifact_manager,
         symbol_indexer=symbol_indexer,
         patch_engine=patch_engine,
-        code_fetcher=fetcher
+        code_fetcher=code_fetcher
     )
-    return AutoPatchAgent(session=session, llm=None)
+    return Agent(session=session, llm=None)
 
 
 def test_focus_lock_blocks_unrelated_read_and_patch(tmp_path: Path) -> None:

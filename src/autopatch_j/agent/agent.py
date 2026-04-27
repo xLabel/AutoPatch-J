@@ -26,7 +26,7 @@ from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 ToolCallback = Callable[[str], None]
 
 
-class AutoPatchAgent:
+class Agent:
     """
     大模型智能决策引擎 (ReAct Execution Engine)。
     核心职责：
@@ -312,7 +312,7 @@ class AutoPatchAgent:
             return ToolResult(status="error", message=f"执行异常：{exc}")
 
     def _build_task_system_prompt(self, intent: IntentType) -> str:
-        pending = self.session.artifacts.load_pending_patch()
+        pending = self.session.artifact_manager.load_pending_patch()
         last_scan_id = self._fetch_latest_scan_artifact_id()
         return build_task_system_prompt(
             intent=intent,
@@ -328,7 +328,7 @@ class AutoPatchAgent:
         )
 
     def _fetch_latest_scan_artifact_id(self) -> str | None:
-        scan_files = sorted(self.session.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
+        scan_files = sorted(self.session.artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
         return scan_files[0].stem if scan_files else None
 
     def _build_llm_extra_body(self) -> dict[str, Any]:

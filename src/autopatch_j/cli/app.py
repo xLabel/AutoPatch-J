@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from prompt_toolkit import HTML, PromptSession
 
-from autopatch_j.agent.agent import AutoPatchAgent
+from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.llm_client import build_default_llm_client
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.cli.stream_adapter import StreamAdapter
@@ -46,7 +46,7 @@ from autopatch_j.scanners import get_scanner, DEFAULT_SCANNER_NAME
 DSML_MARKER_PATTERN = re.compile(r"<[^>\n]*DSML[^>\n]*>", re.IGNORECASE)
 
 
-class AutoPatchCLI:
+class CLI:
     """
     AutoPatch-J CLI 门面与依赖注入容器 (DI Container)。
     核心职责：
@@ -72,7 +72,7 @@ class AutoPatchCLI:
         self.scope_service: ScopeService | None = None
         self.scanner_runner: ScannerRunner | None = None
         self.workspace_manager: WorkspaceManager | None = None
-        self.agent: AutoPatchAgent | None = None
+        self.agent: Agent | None = None
 
         self.input_controller: CliInputController | None = None
         self.command_controller: CliCommandController | None = None
@@ -333,7 +333,7 @@ class AutoPatchCLI:
             patch_verifier=self.patch_verifier,
         )
 
-        self.agent = AutoPatchAgent(
+        self.agent = Agent(
             session=agent_session,
             llm=shared_llm,
         )
@@ -358,5 +358,5 @@ class AutoPatchCLI:
 
 
 def main() -> int:
-    cli = AutoPatchCLI(Path.cwd())
+    cli = CLI(Path.cwd())
     return cli.run()
