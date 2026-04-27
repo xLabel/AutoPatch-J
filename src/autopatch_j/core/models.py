@@ -197,13 +197,13 @@ class AuditFindingItem:
     end_line: int
     message: str
     snippet: str
-    status: CodeAuditFindingStatus = CodeAuditFindingStatus.PENDING
+    status: AuditFindingStatus = AuditFindingStatus.PENDING
     retry_count: int = 0
     last_error_code: str | None = None
     last_error_message: str | None = None
 
     def is_pending(self) -> bool:
-        return self.status is CodeAuditFindingStatus.PENDING
+        return self.status is AuditFindingStatus.PENDING
 
 
 @dataclass(slots=True)

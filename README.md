@@ -348,7 +348,7 @@ pip install -e .[test]
 ```bash
 set LLM_API_KEY=your_api_key
 set LLM_BASE_URL=https://api.deepseek.com
-set LLM_MODEL=deepseek-chat
+set LLM_MODEL=deepseek-v4-flash
 ```
 
 ### Launch
