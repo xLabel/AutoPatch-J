@@ -134,26 +134,30 @@ class SymbolIndexer:
         """使用 Tree-sitter 提取 Java 类和方法。"""
         symbols: list[IndexEntry] = []
         try:
-            from tree_sitter import Language, Parser, Query
+            from tree_sitter import Parser
             import tree_sitter_java as tsjava
             
             content = full_path.read_text(encoding="utf-8", errors="replace")
-            language = Language(tsjava.language())
+            # 0.23.0+: tsjava.language() 返回 Language 对象，无需包装
+            language = tsjava.language()
             parser = Parser(language)
             tree = parser.parse(content.encode("utf-8"))
             
-            query = Query(language, "(class_declaration name: (identifier) @class.name) (method_declaration name: (identifier) @method.name)")
+            # 0.23.0+: 推荐使用 language.query()
+            query = language.query("(class_declaration name: (identifier) @class.name) (method_declaration name: (identifier) @method.name)")
             captures = query.captures(tree.root_node)
             
-            for node, tag in captures:
-                symbols.append(IndexEntry(
-                    path=rel_path, 
-                    name=node.text.decode("utf-8"), 
-                    kind="class" if tag == "class.name" else "method", 
-                    line=node.start_point[0] + 1, 
-                    container=rel_path,
-                    mtime=mtime
-                ))
+            # 0.23.0+: captures 返回 dict[str, list[Node]]
+            for tag, nodes in captures.items():
+                for node in nodes:
+                    symbols.append(IndexEntry(
+                        path=rel_path, 
+                        name=node.text.decode("utf-8"), 
+                        kind="class" if tag == "class.name" else "method", 
+                        line=node.start_point[0] + 1, 
+                        container=rel_path,
+                        mtime=mtime
+                    ))
         except ImportError as exc:
             self._mark_symbol_extract_degraded(str(exc), enabled=False)
         except Exception as exc:

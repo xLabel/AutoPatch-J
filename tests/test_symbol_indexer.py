@@ -98,14 +98,18 @@ def test_symbol_indexer_extracts_class_and_method_when_tree_sitter_available(
         def __init__(self, _language, _query_str) -> None:
             pass
         def captures(self, _root_node):
-            return [
-                (FakeNode("Demo", 0), "class.name"),
-                (FakeNode("run", 0), "method.name"),
-            ]
+            # 0.23.0+ 返回字典
+            return {
+                "class.name": [FakeNode("Demo", 0)],
+                "method.name": [FakeNode("run", 0)],
+            }
 
     class FakeLanguage:
-        def __init__(self, _language) -> None:
+        def __init__(self) -> None:
             pass
+        
+        def query(self, _query_str):
+            return FakeQuery(self, _query_str)
 
     class FakeParser:
         def __init__(self, _language: FakeLanguage) -> None:
@@ -114,8 +118,8 @@ def test_symbol_indexer_extracts_class_and_method_when_tree_sitter_available(
         def parse(self, _content: bytes):
             return types.SimpleNamespace(root_node=object())
 
-    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser, Query=FakeQuery))
-    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Parser=FakeParser))
+    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: FakeLanguage()))
 
     symbol_indexer = SymbolIndexer(tmp_path)
     stats = symbol_indexer.rebuild_index()
@@ -136,13 +140,12 @@ def test_symbol_indexer_marks_symbol_extract_degraded_when_runtime_fails(
 ) -> None:
     (tmp_path / "Demo.java").write_text("public class Demo { void run() {} }", encoding="utf-8")
 
-    class FakeQuery:
-        def __init__(self, _language, _query_str) -> None:
-            raise RuntimeError("query failed")
-
     class FakeLanguage:
-        def __init__(self, _language) -> None:
+        def __init__(self) -> None:
             pass
+        
+        def query(self, _query_str):
+            raise RuntimeError("query failed")
 
     class FakeParser:
         def __init__(self, _language: FakeLanguage) -> None:
@@ -151,8 +154,8 @@ def test_symbol_indexer_marks_symbol_extract_degraded_when_runtime_fails(
         def parse(self, _content: bytes):
             return types.SimpleNamespace(root_node=object())
 
-    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser, Query=FakeQuery))
-    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Parser=FakeParser))
+    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: FakeLanguage()))
 
     symbol_indexer = SymbolIndexer(tmp_path)
     stats = symbol_indexer.rebuild_index()

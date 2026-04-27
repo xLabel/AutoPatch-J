@@ -88,10 +88,11 @@ class CodeFetcher:
         self.last_extract_mode = "full"
         self.last_extract_error = None
         try:
-            from tree_sitter import Language, Parser
+            from tree_sitter import Parser
             import tree_sitter_java as tsjava
 
-            language = Language(tsjava.language())
+            # 0.23.0+: tsjava.language() 返回 Language 对象
+            language = tsjava.language()
             parser = Parser(language)
 
             normalized_content = content.replace("\r\n", "\n")

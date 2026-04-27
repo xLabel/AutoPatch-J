@@ -45,7 +45,7 @@ class PatchVerifier:
             return SyntaxCheckResult(status="skipped", message="非 Java 文件，跳过语法校验。")
 
         try:
-            from tree_sitter import Language, Parser
+            from tree_sitter import Parser
             import tree_sitter_java as tsjava
         except ImportError:
             return SyntaxCheckResult(
@@ -54,7 +54,8 @@ class PatchVerifier:
             )
 
         try:
-            language = Language(tsjava.language())
+            # 0.23.0+: tsjava.language() 返回 Language 对象
+            language = tsjava.language()
             parser = Parser(language)
             tree = parser.parse(new_source_code.encode("utf-8"))
             
