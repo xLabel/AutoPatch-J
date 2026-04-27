@@ -330,9 +330,11 @@ class AutoPatchAgent:
         return scan_files[0].stem if scan_files else None
 
     def _build_llm_extra_body(self) -> dict[str, Any]:
-        if "deepseek" in GlobalConfig.llm_model.lower() and "aliyuncs" in GlobalConfig.llm_base_url:
-            return {"enable_thinking": True}
-        return {}
+        import json
+        try:
+            return json.loads(GlobalConfig.llm_extra_body)
+        except json.JSONDecodeError:
+            return {}
 
     def _dehydrate_history(self, current_system_prompt: str) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = [{"role": "system", "content": current_system_prompt}]

@@ -3,15 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from autopatch_j.agent.llm_client import LLMClient
-
-
-pytestmark = pytest.mark.skipif(
-    not LLMClient.ENABLE_DSML_COMPAT,
-    reason="DSML compatibility is temporarily disabled while using the official API.",
-)
 
 
 def _chunk(
@@ -30,7 +22,7 @@ def _chunk(
 
 
 def test_chat_parses_dsml_tool_call_and_hides_markup() -> None:
-    client = LLMClient(api_key="test-key", base_url="https://example.invalid/v1", model="test-model")
+    client = LLMClient(api_key="test-key", base_url="https://example.invalid/v1", model="test-model", stream_dialect="bailian-dsml")
     client.client = MagicMock()
 
     client.client.chat.completions.create.return_value = [
@@ -56,7 +48,7 @@ def test_chat_parses_dsml_tool_call_and_hides_markup() -> None:
 
 
 def test_chat_parses_dsml_tool_call_with_preamble_and_spacing() -> None:
-    client = LLMClient(api_key="test-key", base_url="https://example.invalid/v1", model="test-model")
+    client = LLMClient(api_key="test-key", base_url="https://example.invalid/v1", model="test-model", stream_dialect="bailian-dsml")
     client.client = MagicMock()
 
     client.client.chat.completions.create.return_value = [

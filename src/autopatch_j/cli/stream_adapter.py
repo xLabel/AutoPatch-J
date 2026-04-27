@@ -28,10 +28,11 @@ class _StreamExecution:
         self.buffered_answer_parts.append(token)
 
     def on_reasoning(self, token: str) -> None:
+        if not self.in_reasoning:
+            self.renderer.print("\n[dim italic]-- 深度思考中 --[/]")
         self.in_reasoning = True
-        if not self.reasoning_visible:
-            self.renderer.print_reasoning_status(0)
-            self.reasoning_visible = True
+        self.reasoning_visible = True
+        self.renderer.print_reasoning(token)
 
     def on_tool_start(self, tool_name: str) -> None:
         self.finish_reasoning_status_if_visible()

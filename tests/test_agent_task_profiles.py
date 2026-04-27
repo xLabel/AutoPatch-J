@@ -158,7 +158,7 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
 
 
 def test_model_label_returns_llm_model_name() -> None:
-    llm = LLMClient(api_key="key", base_url="https://example.com", model="deepseek-chat")
+    llm = LLMClient(api_key="key", base_url="https://example.com", model="deepseek-v4-flash")
     session = AgentSession(
         repo_root=Path("."),
         artifacts=MagicMock(),
@@ -167,4 +167,4 @@ def test_model_label_returns_llm_model_name() -> None:
         fetcher=MagicMock(),
     )
     agent = AutoPatchAgent(session=session, llm=llm)
-    assert agent.model_label == "deepseek-chat"
+    assert agent.model_label == "deepseek-v4-flash"

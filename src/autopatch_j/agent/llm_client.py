@@ -129,14 +129,14 @@ class LLMClient:
        将特定厂商的黑盒参数与专属标签（如百炼的 <｜DSML｜>）同核心业务逻辑彻底解耦。
     """
 
-    ENABLE_DSML_COMPAT = False
-
-    def __init__(self, api_key: str, base_url: str, model: str) -> None:
+    def __init__(self, api_key: str, base_url: str, model: str, reasoning_effort: str | None = None, stream_dialect: str = "standard") -> None:
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.stream_dialect = stream_dialect
 
     def _create_dialect(self) -> MessageDialect:
-        if self.ENABLE_DSML_COMPAT:
+        if self.stream_dialect == "bailian-dsml":
             return DeepSeekAliyunDialect()
         return StandardDialect()
 
@@ -152,14 +152,18 @@ class LLMClient:
         if extra_body and extra_body.get("enable_thinking"):
              stream_options = {"include_usage": True}
 
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            tools=tools,
-            stream=True,
-            extra_body=extra_body,
-            stream_options=stream_options
-        )
+        kwargs = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "stream": True,
+            "extra_body": extra_body,
+            "stream_options": stream_options
+        }
+        if self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+
+        response = self.client.chat.completions.create(**kwargs)
 
         full_content = ""
         visible_content = ""
@@ -237,5 +241,7 @@ def build_default_llm_client() -> LLMClient | None:
     return LLMClient(
         api_key=GlobalConfig.llm_api_key,
         base_url=GlobalConfig.llm_base_url,
-        model=GlobalConfig.llm_model
+        model=GlobalConfig.llm_model,
+        reasoning_effort=GlobalConfig.llm_reasoning_effort,
+        stream_dialect=GlobalConfig.llm_stream_dialect
     )
