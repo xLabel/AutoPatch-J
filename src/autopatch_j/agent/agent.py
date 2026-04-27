@@ -368,8 +368,8 @@ class AutoPatchAgent:
             if message.get("tool_calls") is not None:
                 llm_message["tool_calls"] = message["tool_calls"]
             
-            # DeepSeek V3/V4 深度思考模式要求：如果产生了思考链，必须在多轮对话中原样传回。
-            # 如果配置了思考力度或显式开启了思考，即便为空也建议带上字段以符合某些 API 的强校验。
+            # DeepSeek V4 深度思考模式契约要求：如果产生了思考链，必须在多轮对话中原样传回，否则会报 400 错误。
+            # 如果配置了思考力度或显式开启了思考，即便为空也建议带上字段以符合 V4 API 的强校验。
             reasoning = message.get("reasoning_content")
             if reasoning is not None:
                 llm_message["reasoning_content"] = reasoning
