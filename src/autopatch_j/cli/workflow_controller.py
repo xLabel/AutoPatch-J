@@ -94,9 +94,9 @@ class CliWorkflowController:
             self.context.renderer.print_info("请继续输入代码指令")
             return
 
-        has_pending_review = self.context.workspace_manager.has_pending_patch()
+        has_pending_review = self.context.workspace_manager.load_workspace().has_pending_patch()
         requested_scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
-        current_item = self.context.workspace_manager.get_current_patch() if has_pending_review else None
+        current_item = self.context.workspace_manager.load_workspace().get_current_patch() if has_pending_review else None
         current_workspace = self.context.workspace_manager.load_workspace() if has_pending_review else None
         route = self.context.conversation_router.determine_route(
             user_text=text,
@@ -169,7 +169,7 @@ class CliWorkflowController:
         backlog = self.context.backlog_manager.fetch_backlog(scan_result)
         if not backlog:
             self._handle_zero_finding_review(text=text, scope=scope)
-            if not self.context.workspace_manager.has_pending_patch():
+            if not self.context.workspace_manager.load_workspace().has_pending_patch():
                 self.context.workspace_manager.clear_workspace()
             return None
 
