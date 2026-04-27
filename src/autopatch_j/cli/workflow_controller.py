@@ -59,16 +59,18 @@ class CliWorkflowController:
 
         if user_input.lower() == "apply":
             self.context.command_controller.handle_apply(current_draft)
-            workspace = self.context.workspace_manager.mark_current_patch_applied()
-            if not workspace.has_pending_patch():
-                self.context.renderer.print_info("补丁队列已清空")
+            with self.context.workspace_manager.edit() as workspace:
+                workspace.mark_applied()
+                if not workspace.has_pending_patch():
+                    self.context.renderer.print_info("补丁队列已清空")
             return
 
         if user_input.lower() == "discard":
             self.context.command_controller.handle_discard()
-            workspace = self.context.workspace_manager.mark_current_patch_discarded()
-            if not workspace.has_pending_patch():
-                self.context.renderer.print_info("补丁队列已清空")
+            with self.context.workspace_manager.edit() as workspace:
+                workspace.mark_discarded()
+                if not workspace.has_pending_patch():
+                    self.context.renderer.print_info("补丁队列已清空")
             return
 
         self.handle_chat(user_input)
@@ -111,7 +113,8 @@ class CliWorkflowController:
         if route is ConversationRoute.NEW_TASK:
             self.context.agent.reset_history()
             if has_pending_review:
-                self.context.workspace_manager.clear_workspace()
+                with self.context.workspace_manager.edit() as workspace:
+                    workspace.clear_workspace() # Oops, wait, WorkspaceManager.clear_workspace was kept but it is also proxy? No, it delegates to artifact_manager.
                 self.context.renderer.print_info("已切换到新任务")
             intent = self.context.intent_detector.detect_intent(text, has_pending_review=False)
         else:
@@ -331,14 +334,17 @@ class CliWorkflowController:
         assert self.context.workspace_manager is not None
         assert self.context.agent is not None
 
-        current_item = self.context.workspace_manager.get_current_patch()
+        current_item = self.context.workspace_manager.load_workspace().get_current_patch()
         if current_item is None:
             self.context.renderer.print_error("当前没有待确认补丁")
             return
 
-        remaining_items = self.context.workspace_manager.get_remaining_patches()
+        remaining_items = self.context.workspace_manager.load_workspace().get_remaining_patches()
         self.context.agent.session.set_focus_paths(self.context._fetch_review_scope_paths(current_item))
-        self.context.workspace_manager.replace_remaining_patch_items([])
+        
+        with self.context.workspace_manager.edit() as workspace:
+            workspace.replace_tail([])
+
         self.context._run_agent_request(
             prompt=text,
             agent_call=lambda p, **kwargs: self.context.agent.perform_patch_revise(
@@ -348,7 +354,7 @@ class CliWorkflowController:
                 **kwargs
             ),
         )
-        if not self.context.workspace_manager.has_pending_patch():
+        if not self.context.workspace_manager.load_workspace().has_pending_patch():
             self.context.renderer.print_info("补丁队列已清空")
 
     def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
@@ -373,7 +379,7 @@ class CliWorkflowController:
                 )
             finally:
                 self.context.agent.session.patch_source_hint = None
-            if self.context.workspace_manager.has_pending_patch():
+            if self.context.workspace_manager.load_workspace().has_pending_patch():
                 return
 
         self.context.renderer.print_no_issue_panel(

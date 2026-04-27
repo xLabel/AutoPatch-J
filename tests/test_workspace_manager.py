@@ -99,8 +99,15 @@ def test_workspace_manager_persist_applied_current_patch_advances_until_idle(tmp
         ],
     )
 
-    first_pass = service.mark_current_patch_applied()
-    second_pass = service.mark_current_patch_applied()
+    with service.edit() as workspace:
+        workspace.mark_applied()
+    
+    first_pass = service.load_workspace()
+    
+    with service.edit() as workspace:
+        workspace.mark_applied()
+        
+    second_pass = service.load_workspace()
 
     assert first_pass.patch_items[0].status is PatchReviewStatus.APPLIED
     assert first_pass.current_patch_index == 1
@@ -120,14 +127,18 @@ def test_workspace_manager_replace_remaining_patch_items_keeps_applied_head(tmp_
             _item("item-2", "src/main/java/demo/UserService.java", "F2"),
         ],
     )
-    service.mark_current_patch_applied()
+    with service.edit() as workspace:
+        workspace.mark_applied()
 
-    replaced = service.replace_remaining_patch_items(
-        [
-            _item("item-3", "src/main/java/demo/UserService.java", "F2"),
-            _item("item-4", "src/main/java/demo/UserHelper.java", "F3"),
-        ]
-    )
+    with service.edit() as workspace:
+        workspace.replace_tail(
+            [
+                _item("item-3", "src/main/java/demo/UserService.java", "F2"),
+                _item("item-4", "src/main/java/demo/UserHelper.java", "F3"),
+            ]
+        )
+        
+    replaced = service.load_workspace()
 
     assert replaced.current_patch_index == 1
     assert replaced.mode is WorkspaceStatus.REVIEWING
