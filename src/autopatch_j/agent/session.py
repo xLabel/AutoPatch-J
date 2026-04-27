@@ -22,10 +22,10 @@ class AgentSession:
     3. 记录动作指纹 (action_history)，用于触发防死循环断路器 (Loop Breaker)。
     """
     repo_root: Path
-    artifacts: ArtifactManager
+    artifact_manager: ArtifactManager
     symbol_indexer: SymbolIndexer
     patch_engine: PatchEngine
-    fetcher: CodeFetcher
+    code_fetcher: CodeFetcher
     patch_verifier: PatchVerifier | None = None
     
     focus_paths: list[str] = field(default_factory=list)

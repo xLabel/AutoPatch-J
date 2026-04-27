@@ -20,7 +20,13 @@ def _build_agent(repo_root: Path) -> AutoPatchAgent:
     patch_engine = PatchEngine(repo_root)
     fetcher = CodeFetcher(repo_root)
     symbol_indexer.rebuild_index()
-    session = AgentSession(repo_root, artifacts, symbol_indexer, patch_engine, fetcher)
+    session = AgentSession(
+        repo_root=repo_root,
+        artifact_manager=artifacts,
+        symbol_indexer=symbol_indexer,
+        patch_engine=patch_engine,
+        code_fetcher=fetcher
+    )
     return AutoPatchAgent(session=session, llm=None)
 
 
@@ -86,7 +92,7 @@ def test_source_reader_uses_same_turn_cache(tmp_path: Path) -> None:
         calls.append("fetch")
         return "public class LegacyConfig {}"
 
-    agent.session.fetcher.fetch_entry_source = fake_fetch_entry_source  # type: ignore[method-assign]
+    agent.session.code_fetcher.fetch_entry_source = fake_fetch_entry_source  # type: ignore[method-assign]
     tool = SourceReaderTool(agent.session)
 
     first = tool.execute("src/main/java/demo/LegacyConfig.java")

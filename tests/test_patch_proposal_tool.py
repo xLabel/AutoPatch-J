@@ -12,7 +12,7 @@ class _FakeAgentSession:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root
         self.patch_engine = PatchEngine(repo_root)
-        self.artifacts = ArtifactManager(repo_root)
+        self.artifact_manager = ArtifactManager(repo_root)
         self.focus_paths = ["src/main/java/demo/UserService.java"]
         self.patch_source_hint = None
         self.patch_verifier = PatchVerifier(repo_root, None)

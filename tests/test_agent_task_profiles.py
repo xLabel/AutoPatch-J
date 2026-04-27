@@ -21,7 +21,13 @@ def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> AutoPatchAgent:
     patch_engine = PatchEngine(repo_root)
     fetcher = CodeFetcher(repo_root)
     symbol_indexer.rebuild_index()
-    session = AgentSession(repo_root, artifacts, symbol_indexer, patch_engine, fetcher)
+    session = AgentSession(
+        repo_root=repo_root,
+        artifact_manager=artifacts,
+        symbol_indexer=symbol_indexer,
+        patch_engine=patch_engine,
+        code_fetcher=fetcher
+    )
     return AutoPatchAgent(session=session, llm=mock_llm)
 
 
@@ -161,10 +167,10 @@ def test_model_label_returns_llm_model_name() -> None:
     llm = LLMClient(api_key="key", base_url="https://example.com", model="deepseek-v4-flash")
     session = AgentSession(
         repo_root=Path("."),
-        artifacts=MagicMock(),
+        artifact_manager=MagicMock(),
         symbol_indexer=MagicMock(),
         patch_engine=MagicMock(),
-        fetcher=MagicMock(),
+        code_fetcher=MagicMock(),
     )
     agent = AutoPatchAgent(session=session, llm=llm)
     assert agent.model_label == "deepseek-v4-flash"

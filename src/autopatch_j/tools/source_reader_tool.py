@@ -35,12 +35,13 @@ class SourceReaderTool(Tool):
 
     def execute(self, path: str, symbol: str | None = None, line: int | None = None) -> ToolResult:
         assert self.context is not None
-        fetcher = self.context.fetcher
+        code_fetcher = self.context.code_fetcher
+        symbol_indexer = self.context.symbol_indexer
 
         full_path = self.context.repo_root / path
         if not full_path.exists():
             filename = Path(path).name
-            results = self.context.symbol_indexer.search(filename, limit=1)
+            results = symbol_indexer.search(filename, limit=1)
             if results:
                 path = results[0].path
 
@@ -64,7 +65,7 @@ class SourceReaderTool(Tool):
             )
         else:
             entry = IndexEntry(path=path, name=path, kind="file", line=0)
-        code = fetcher.fetch_entry_source(entry)
+        code = code_fetcher.fetch_entry_source(entry)
 
         if code.startswith("错误"):
             return ToolResult(status="error", message=code)

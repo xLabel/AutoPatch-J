@@ -61,9 +61,9 @@ def _item(
 
 def test_run_renders_pending_patch_with_absolute_progress(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    assert cli.artifacts is not None
+    assert cli.artifact_manager is not None
 
-    cli.artifacts.save_workspace(
+    cli.artifact_manager.save_workspace(
         ActiveWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
@@ -110,9 +110,9 @@ def test_run_renders_pending_patch_with_absolute_progress(tmp_path: Path) -> Non
 
 def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    assert cli.artifacts is not None
+    assert cli.artifact_manager is not None
 
-    cli.artifacts.save_workspace(
+    cli.artifact_manager.save_workspace(
         ActiveWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
@@ -147,10 +147,10 @@ def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
 
 def test_run_clears_pending_patch_candidates_on_start_and_exit(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    assert cli.artifacts is not None
+    assert cli.artifact_manager is not None
     assert cli.agent is not None
 
-    cli.artifacts.save_workspace(
+    cli.artifact_manager.save_workspace(
         ActiveWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
@@ -180,5 +180,5 @@ def test_run_clears_pending_patch_candidates_on_start_and_exit(tmp_path: Path) -
     cli.run()
 
     assert cli._clear_pending_patch_candidates.call_count == 2
-    assert cli.artifacts.load_pending_patch() is None
+    assert cli.artifact_manager.load_pending_patch() is None
     assert cli.agent.messages == []

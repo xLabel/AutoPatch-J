@@ -21,10 +21,10 @@ class ToolContext(Protocol):
     这一设计彻底斩断了 Tool 层与 Agent 层/流程层的双向循环依赖，保障了工具链的独立拓展性与单元测试的可行性。
     """
     repo_root: Path
-    artifacts: Any
+    artifact_manager: Any
     symbol_indexer: Any
     patch_engine: Any
-    fetcher: Any
+    code_fetcher: Any
     patch_verifier: Any
     focus_paths: list[str]
     patch_source_hint: str | None

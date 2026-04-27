@@ -43,9 +43,9 @@ class PatchProposalTool(Tool):
         associated_finding_id: str | None = None,
     ) -> ToolResult:
         assert self.context is not None
-        engine = self.context.patch_engine
-        artifacts = self.context.artifacts
-        verifier = self.context.patch_verifier
+        patch_engine = self.context.patch_engine
+        artifact_manager = self.context.artifact_manager
+        patch_verifier = self.context.patch_verifier
 
         if not self.context.is_path_in_focus(file_path):
             allowed = ", ".join(self.context.focus_paths)
@@ -63,7 +63,7 @@ class PatchProposalTool(Tool):
         target_rule: str | None = None
         target_snippet: str | None = None
         if associated_finding_id:
-            finding = self._fetch_associated_finding(artifacts=artifacts, finding_id=associated_finding_id)
+            finding = self._fetch_associated_finding(artifact_manager=artifact_manager, finding_id=associated_finding_id)
             if finding is not None:
                 target_rule = finding.check_id
                 target_snippet = FindingSnippetService(self.context.repo_root).fetch_resolved_snippet(
@@ -81,7 +81,7 @@ class PatchProposalTool(Tool):
         )
 
         try:
-            new_code, patch_diff = engine.create_draft(
+            new_code, patch_diff = patch_engine.create_draft(
                 file_path=file_path,
                 old_string=old_string,
                 new_string=new_string,
@@ -123,7 +123,7 @@ class PatchProposalTool(Tool):
                 },
             )
 
-        validation_result = verifier.verify_syntax(file_path, new_code)
+        validation_result = patch_verifier.verify_syntax(file_path, new_code)
 
         if validation_result.status == "unavailable":
             status = "unavailable"
@@ -149,7 +149,7 @@ class PatchProposalTool(Tool):
             target_snippet=target_snippet,
         )
 
-        artifacts.save_pending_patch(draft)
+        artifact_manager.save_pending_patch(draft)
         message = f"补丁草案已加入队列。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"
         message += f"差异预览：\n{draft.diff}\n\n"
@@ -167,12 +167,12 @@ class PatchProposalTool(Tool):
             },
         )
 
-    def _fetch_associated_finding(self, artifacts: Any, finding_id: str) -> Any:
+    def _fetch_associated_finding(self, artifact_manager: Any, finding_id: str) -> Any:
         match = re.match(r"[Ff](\d+)", finding_id)
         if match is None:
             return None
         finding_index = int(match.group(1)) - 1
-        scan_files = sorted(artifacts.findings_dir.glob("scan-*.json"), reverse=True)
+        scan_files = sorted(artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
             return None
-        return artifacts.get_finding_by_index(scan_files[0].stem, finding_index)
+        return artifact_manager.get_finding_by_index(scan_files[0].stem, finding_index)

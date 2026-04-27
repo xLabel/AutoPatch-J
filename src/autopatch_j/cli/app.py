@@ -60,10 +60,10 @@ class AutoPatchCLI:
         self.repo_root = discover_repo_root(self.cwd)
         self.renderer = CliRenderer()
 
-        self.artifacts: ArtifactManager | None = None
+        self.artifact_manager: ArtifactManager | None = None
         self.symbol_indexer: SymbolIndexer | None = None
         self.patch_engine: PatchEngine | None = None
-        self.fetcher: CodeFetcher | None = None
+        self.code_fetcher: CodeFetcher | None = None
         self.patch_verifier: PatchVerifier | None = None
         self.intent_detector: IntentDetector | None = None
         self.conversation_router: ConversationRouter | None = None
@@ -89,8 +89,8 @@ class AutoPatchCLI:
         self.request_exit(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
 
     def _clear_pending_patch_candidates(self) -> None:
-        if self.artifacts is not None:
-            self.artifacts.clear_pending_patch()
+        if self.artifact_manager is not None:
+            self.artifact_manager.clear_pending_patch()
         if self.agent is not None:
             self.agent.reset_history()
 
@@ -274,12 +274,12 @@ class AutoPatchCLI:
         return ["褰撳墠鑼冨洿"]
 
     def _collect_latest_scan_paths(self) -> list[str]:
-        if not self.artifacts:
+        if not self.artifact_manager:
             return []
-        scan_files = sorted(self.artifacts.findings_dir.glob("scan-*.json"), reverse=True)
+        scan_files = sorted(self.artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
             return []
-        latest = self.artifacts.load_scan_result(scan_files[0].stem)
+        latest = self.artifact_manager.load_scan_result(scan_files[0].stem)
         if latest is None:
             return []
 
@@ -308,28 +308,28 @@ class AutoPatchCLI:
             return False
 
     def _init_services(self, repo_root: Path) -> None:
-        self.artifacts = ArtifactManager(repo_root)
+        self.artifact_manager = ArtifactManager(repo_root)
         self.symbol_indexer = SymbolIndexer(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
         self.patch_engine = PatchEngine(repo_root)
-        self.fetcher = CodeFetcher(repo_root)
+        self.code_fetcher = CodeFetcher(repo_root)
         self.intent_detector = IntentDetector()
         self.backlog_manager = BacklogManager()
         self.chat_filter = ChatFilter()
         shared_llm = build_default_llm_client()
         self.conversation_router = ConversationRouter(llm=shared_llm)
         self.scope_service = ScopeService(repo_root, self.symbol_indexer, ignored_dirs=GlobalConfig.ignored_dirs)
-        self.scanner_runner = ScannerRunner(repo_root, self.artifacts)
-        self.workspace_manager = WorkspaceManager(self.artifacts)
+        self.scanner_runner = ScannerRunner(repo_root, self.artifact_manager)
+        self.workspace_manager = WorkspaceManager(self.artifact_manager)
 
         scanner = get_scanner(DEFAULT_SCANNER_NAME)
         self.patch_verifier = PatchVerifier(repo_root, scanner) if scanner else None
 
         agent_session = AgentSession(
             repo_root=repo_root,
-            artifacts=self.artifacts,
+            artifact_manager=self.artifact_manager,
             symbol_indexer=self.symbol_indexer,
             patch_engine=self.patch_engine,
-            fetcher=self.fetcher,
+            code_fetcher=self.code_fetcher,
             patch_verifier=self.patch_verifier,
         )
 

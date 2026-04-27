@@ -27,7 +27,7 @@ class FindingRetrieverTool(Tool):
 
     def execute(self, finding_id: str) -> ToolResult:
         assert self.context is not None
-        artifacts = self.context.artifacts
+        artifact_manager = self.context.artifact_manager
 
         match = re.match(r"[Ff](\d+)", finding_id)
         if not match:
@@ -37,12 +37,12 @@ class FindingRetrieverTool(Tool):
             )
 
         finding_index = int(match.group(1)) - 1
-        scan_files = sorted(artifacts.findings_dir.glob("scan-*.json"), reverse=True)
+        scan_files = sorted(artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
             return ToolResult(status="error", message="系统中未找到扫描记录，请先发起一次代码检查。")
 
         active_scan_id = scan_files[0].stem
-        finding = artifacts.get_finding_by_index(active_scan_id, finding_index)
+        finding = artifact_manager.get_finding_by_index(active_scan_id, finding_index)
         if not finding:
             return ToolResult(
                 status="error",
