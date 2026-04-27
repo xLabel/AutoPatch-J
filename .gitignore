@@ -52,8 +52,5 @@ target/
 .pdm-build/
 
 # Local-only workspace artifacts
-.pytest_temp/
-agent_verify/
 GEMINI.md
 AGENTS.md
-run.bat
