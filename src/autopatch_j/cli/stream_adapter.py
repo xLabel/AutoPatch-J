@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from autopatch_j.cli.render import CliRenderer
-from autopatch_j.core.chat_filter_service import ChatFilterService
+from autopatch_j.core.chat_filter import ChatFilter
 from autopatch_j.core.models import IntentType
-from autopatch_j.core.workflow_service import WorkflowService
+from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
 class _StreamExecution:
@@ -60,8 +60,8 @@ class StreamAdapter:
         self,
         *,
         renderer: CliRenderer,
-        workflow_service: WorkflowService | None,
-        chat_filter_service: ChatFilterService | None,
+        workspace_manager: WorkspaceManager | None,
+        chat_filter: ChatFilter | None,
         agent: Any,
         sanitize_output: Callable[[str], str],
         summarize_observation: Callable[[str | None, str], str],
@@ -70,8 +70,8 @@ class StreamAdapter:
         build_local_no_issue_summary: Callable[[], str],
     ) -> None:
         self.renderer = renderer
-        self.workflow_service = workflow_service
-        self.chat_filter_service = chat_filter_service
+        self.workspace_manager = workspace_manager
+        self.chat_filter = chat_filter
         self.agent = agent
         self._sanitize_output = sanitize_output
         self._summarize_observation = summarize_observation
@@ -93,8 +93,8 @@ class StreamAdapter:
         suppress_answer_output: bool = False,
     ) -> list[dict[str, Any]]:
         assert self.agent is not None
-        assert self.workflow_service is not None
-        assert self.chat_filter_service is not None
+        assert self.workspace_manager is not None
+        assert self.chat_filter is not None
 
         self.renderer.print()
         
@@ -111,7 +111,7 @@ class StreamAdapter:
         new_messages = list(self.agent.messages[start_index:])
         execution.finish_reasoning_status_if_visible()
 
-        has_pending_patches = self.workflow_service.has_pending_patch()
+        has_pending_patches = self.workspace_manager.has_pending_patch()
         if has_pending_patches:
             self.renderer.print()
             return new_messages
@@ -133,7 +133,7 @@ class StreamAdapter:
 
         buffered_answer = self._sanitize_output("".join(execution.buffered_answer_parts))
         if buffered_answer:
-            rendered_answer = self.chat_filter_service.build_display_answer(
+            rendered_answer = self.chat_filter.build_display_answer(
                 user_text=raw_user_text or "",
                 answer=buffered_answer,
                 intent=answer_intent,
@@ -149,7 +149,7 @@ class StreamAdapter:
         else:
             sanitized_final_answer = self._sanitize_output(final_answer or "")
             if sanitized_final_answer:
-                rendered_answer = self.chat_filter_service.build_display_answer(
+                rendered_answer = self.chat_filter.build_display_answer(
                     user_text=raw_user_text or "",
                     answer=sanitized_final_answer,
                     intent=answer_intent,

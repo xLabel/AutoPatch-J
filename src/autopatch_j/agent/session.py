@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from autopatch_j.core.artifact_manager import ArtifactManager
     from autopatch_j.core.code_fetcher import CodeFetcher
-    from autopatch_j.core.index_service import IndexService
+    from autopatch_j.core.symbol_indexer import SymbolIndexer
     from autopatch_j.core.patch_engine import PatchEngine
     from autopatch_j.core.patch_verifier import PatchVerifier
     from autopatch_j.tools.base import ToolResult
@@ -20,7 +20,7 @@ class AgentSession:
     """
     repo_root: Path
     artifacts: ArtifactManager
-    indexer: IndexService
+    symbol_indexer: SymbolIndexer
     patch_engine: PatchEngine
     fetcher: CodeFetcher
     patch_verifier: PatchVerifier | None = None

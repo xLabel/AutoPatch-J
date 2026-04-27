@@ -4,7 +4,7 @@ import os
 import re
 from pathlib import Path
 
-from autopatch_j.core.index_service import IndexEntry, IndexService
+from autopatch_j.core.symbol_indexer import IndexEntry, SymbolIndexer
 from autopatch_j.core.models import CodeScope, CodeScopeKind
 
 
@@ -14,9 +14,9 @@ class ScopeService:
     职责：解析 @mention，展开目录，统一产出文件级范围。
     """
 
-    def __init__(self, repo_root: Path, indexer: IndexService, ignored_dirs: set[str] | None = None) -> None:
+    def __init__(self, repo_root: Path, symbol_indexer: SymbolIndexer, ignored_dirs: set[str] | None = None) -> None:
         self.repo_root = repo_root.resolve()
-        self.indexer = indexer
+        self.symbol_indexer = symbol_indexer
         self.ignored_dirs = ignored_dirs or set()
 
     def fetch_scope(self, user_text: str, default_to_project: bool = False) -> CodeScope | None:
@@ -77,7 +77,7 @@ class ScopeService:
         normalized_name = Path(normalized).name
         results = [
             entry
-            for entry in self.indexer.search(normalized_name, limit=20)
+            for entry in self.symbol_indexer.search(normalized_name, limit=20)
             if entry.kind in {"file", "dir"}
         ]
         for entry in results:

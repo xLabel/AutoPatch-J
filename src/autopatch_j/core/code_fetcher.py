@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from autopatch_j.core.index_service import IndexEntry
+from autopatch_j.core.symbol_indexer import IndexEntry
 
 
 class CodeFetcher:

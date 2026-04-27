@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from autopatch_j.core.index_service import IndexService
+from autopatch_j.core.symbol_indexer import SymbolIndexer
 
 
 def test_rebuild_index_and_stats(tmp_path: Path):
@@ -22,8 +22,8 @@ def test_rebuild_index_and_stats(tmp_path: Path):
         encoding="utf-8"
     )
     
-    indexer = IndexService(tmp_path)
-    stats = indexer.rebuild_index()
+    symbol_indexer = SymbolIndexer(tmp_path)
+    stats = symbol_indexer.rebuild_index()
     
     # 核心测试：验证物理文件和目录是否被发现
     assert stats.get("file", 0) >= 1
@@ -36,11 +36,11 @@ def test_search_symbols(tmp_path: Path):
     java_file = tmp_path / "AuthService.java"
     java_file.write_text("public class AuthService { public void login() {} }", encoding="utf-8")
     
-    indexer = IndexService(tmp_path)
-    indexer.rebuild_index()
+    symbol_indexer = SymbolIndexer(tmp_path)
+    symbol_indexer.rebuild_index()
     
     # 基础测试：搜索文件名
-    results = indexer.search("AuthService")
+    results = symbol_indexer.search("AuthService")
     assert any("AuthService" in r.name for r in results)
 
 
@@ -50,14 +50,14 @@ def test_ignored_dirs(tmp_path: Path):
     git_dir.mkdir()
     (git_dir / "config").write_text("...")
     
-    indexer = IndexService(tmp_path, ignored_dirs={".git"})
-    indexer.rebuild_index()
+    symbol_indexer = SymbolIndexer(tmp_path, ignored_dirs={".git"})
+    symbol_indexer.rebuild_index()
     
-    results = indexer.search(".git")
+    results = symbol_indexer.search(".git")
     assert len(results) == 0
 
 
-def test_index_service_marks_symbol_extract_degraded_when_dependency_missing(
+def test_symbol_indexer_marks_symbol_extract_degraded_when_dependency_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -71,9 +71,9 @@ def test_index_service_marks_symbol_extract_degraded_when_dependency_missing(
 
     monkeypatch.setattr("builtins.__import__", fake_import)
 
-    indexer = IndexService(tmp_path)
-    stats = indexer.rebuild_index()
-    status = indexer.fetch_symbol_extract_status()
+    symbol_indexer = SymbolIndexer(tmp_path)
+    stats = symbol_indexer.rebuild_index()
+    status = symbol_indexer.fetch_symbol_extract_status()
 
     assert stats.get("file", 0) >= 1
     assert stats.get("class", 0) == 0
@@ -83,7 +83,7 @@ def test_index_service_marks_symbol_extract_degraded_when_dependency_missing(
     assert "missing dependency" in str(status["last_error"])
 
 
-def test_index_service_extracts_class_and_method_when_tree_sitter_available(
+def test_symbol_indexer_extracts_class_and_method_when_tree_sitter_available(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -117,10 +117,10 @@ def test_index_service_extracts_class_and_method_when_tree_sitter_available(
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser, Query=FakeQuery))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
-    indexer = IndexService(tmp_path)
-    stats = indexer.rebuild_index()
-    results = indexer.search("run")
-    status = indexer.fetch_symbol_extract_status()
+    symbol_indexer = SymbolIndexer(tmp_path)
+    stats = symbol_indexer.rebuild_index()
+    results = symbol_indexer.search("run")
+    status = symbol_indexer.fetch_symbol_extract_status()
 
     assert stats.get("class", 0) == 1
     assert stats.get("method", 0) == 1
@@ -130,7 +130,7 @@ def test_index_service_extracts_class_and_method_when_tree_sitter_available(
     assert status["last_error"] is None
 
 
-def test_index_service_marks_symbol_extract_degraded_when_runtime_fails(
+def test_symbol_indexer_marks_symbol_extract_degraded_when_runtime_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -154,9 +154,9 @@ def test_index_service_marks_symbol_extract_degraded_when_runtime_fails(
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser, Query=FakeQuery))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
-    indexer = IndexService(tmp_path)
-    stats = indexer.rebuild_index()
-    status = indexer.fetch_symbol_extract_status()
+    symbol_indexer = SymbolIndexer(tmp_path)
+    stats = symbol_indexer.rebuild_index()
+    status = symbol_indexer.fetch_symbol_extract_status()
 
     assert stats.get("file", 0) >= 1
     assert stats.get("class", 0) == 0

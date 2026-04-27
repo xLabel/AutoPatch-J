@@ -21,7 +21,7 @@ class SymbolSearchTool(Tool):
 
     def execute(self, query: str) -> ToolResult:
         assert self.context is not None
-        results = self.context.indexer.search(query, limit=10)
+        results = self.context.symbol_indexer.search(query, limit=10)
         if self.context.is_focus_locked():
             results = [entry for entry in results if self.context.is_path_in_focus(entry.path)]
 

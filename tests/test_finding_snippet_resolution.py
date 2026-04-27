@@ -6,7 +6,7 @@ from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import AutoPatchAgent
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.index_service import IndexService
+from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.patch_verifier import PatchVerifier
 from autopatch_j.scanners.base import Finding, ScanResult
@@ -17,12 +17,12 @@ from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
 
 def _build_agent(repo_root: Path) -> AutoPatchAgent:
     artifacts = ArtifactManager(repo_root)
-    indexer = IndexService(repo_root)
+    symbol_indexer = SymbolIndexer(repo_root)
     patch_engine = PatchEngine(repo_root)
     fetcher = CodeFetcher(repo_root)
-    indexer.rebuild_index()
+    symbol_indexer.rebuild_index()
     patch_verifier = PatchVerifier(repo_root, None)
-    session = AgentSession(repo_root, artifacts, indexer, patch_engine, fetcher, patch_verifier)
+    session = AgentSession(repo_root, artifacts, symbol_indexer, patch_engine, fetcher, patch_verifier)
     return AutoPatchAgent(session=session, llm=None)
 
 

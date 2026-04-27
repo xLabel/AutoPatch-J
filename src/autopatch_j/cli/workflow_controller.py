@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol
 
-from autopatch_j.core.audit_backlog_service import AuditBacklogService
-from autopatch_j.core.chat_filter_service import ChatFilterService
+from autopatch_j.core.backlog_manager import BacklogManager
+from autopatch_j.core.chat_filter import ChatFilter
 from autopatch_j.core.conversation_router import ConversationRouter
-from autopatch_j.core.intent_service import IntentService
+from autopatch_j.core.intent_detector import IntentDetector
 from autopatch_j.core.models import (
     AuditAttemptOutcome,
     CodeScope,
@@ -14,21 +14,21 @@ from autopatch_j.core.models import (
     IntentType,
     PatchReviewItem,
 )
-from autopatch_j.core.scan_service import ScanService
+from autopatch_j.core.scanner_runner import ScannerRunner
 from autopatch_j.core.scope_service import ScopeService
-from autopatch_j.core.workflow_service import WorkflowService
+from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
 class WorkflowControllerContext(Protocol):
     renderer: Any
     agent: Any
-    intent_service: IntentService | None
+    intent_detector: IntentDetector | None
     conversation_router: ConversationRouter | None
     scope_service: ScopeService | None
-    scan_service: ScanService | None
-    workflow_service: WorkflowService | None
-    audit_backlog_service: AuditBacklogService | None
-    chat_filter_service: ChatFilterService | None
+    scanner_runner: ScannerRunner | None
+    workspace_manager: WorkspaceManager | None
+    backlog_manager: BacklogManager | None
+    chat_filter: ChatFilter | None
     command_controller: Any
 
     def _run_agent_request(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
@@ -47,19 +47,19 @@ class CliWorkflowController:
 
     def handle_review_input(self, user_input: str, current_item: PatchReviewItem) -> None:
         current_draft = current_item.draft.fetch_patch_draft()
-        assert self.context.workflow_service is not None
+        assert self.context.workspace_manager is not None
 
         if user_input.lower() == "apply":
             self.context.command_controller.handle_apply(current_draft)
-            self.context.workflow_service.mark_current_patch_applied()
-            if not self.context.workflow_service.has_pending_patch():
+            self.context.workspace_manager.mark_current_patch_applied()
+            if not self.context.workspace_manager.has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
 
         if user_input.lower() == "discard":
             self.context.command_controller.handle_discard()
-            self.context.workflow_service.mark_current_patch_discarded()
-            if not self.context.workflow_service.has_pending_patch():
+            self.context.workspace_manager.mark_current_patch_discarded()
+            if not self.context.workspace_manager.has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
 
@@ -69,11 +69,11 @@ class CliWorkflowController:
         if not all(
             [
                 self.context.agent,
-                self.context.intent_service,
+                self.context.intent_detector,
                 self.context.conversation_router,
                 self.context.scope_service,
-                self.context.scan_service,
-                self.context.workflow_service,
+                self.context.scanner_runner,
+                self.context.workspace_manager,
             ]
         ):
             self.context.renderer.print_error("系统未初始化，请先执行 /init")
@@ -84,10 +84,10 @@ class CliWorkflowController:
             self.context.renderer.print_info("请继续输入代码指令")
             return
 
-        has_pending_review = self.context.workflow_service.has_pending_patch()
+        has_pending_review = self.context.workspace_manager.has_pending_patch()
         requested_scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
-        current_item = self.context.workflow_service.get_current_patch() if has_pending_review else None
-        current_workspace = self.context.workflow_service.load_workspace() if has_pending_review else None
+        current_item = self.context.workspace_manager.get_current_patch() if has_pending_review else None
+        current_workspace = self.context.workspace_manager.load_workspace() if has_pending_review else None
         route = self.context.conversation_router.determine_route(
             user_text=text,
             has_pending_review=has_pending_review,
@@ -103,11 +103,11 @@ class CliWorkflowController:
         if route is ConversationRoute.NEW_TASK:
             self.context.agent.reset_history()
             if has_pending_review:
-                self.context.workflow_service.clear_workspace()
+                self.context.workspace_manager.clear_workspace()
                 self.context.renderer.print_info("已切换到新任务")
-            intent = self.context.intent_service.detect_intent(text, has_pending_review=False)
+            intent = self.context.intent_detector.detect_intent(text, has_pending_review=False)
         else:
-            intent = self.context.intent_service.detect_intent(text, has_pending_review=True)
+            intent = self.context.intent_detector.detect_intent(text, has_pending_review=True)
 
         if intent is IntentType.CODE_AUDIT:
             self.handle_code_audit(text)
@@ -128,21 +128,21 @@ class CliWorkflowController:
         if backlog is None:
             return
 
-        while self.context.audit_backlog_service.verify_has_pending_finding(backlog):
-            finding = self.context.audit_backlog_service.fetch_current_finding(backlog)
+        while self.context.backlog_manager.verify_has_pending_finding(backlog):
+            finding = self.context.backlog_manager.fetch_current_finding(backlog)
             if finding is None:
                 break
             self._process_single_finding(finding, text, backlog)
 
-        if not self.context.workflow_service.has_pending_patch():
-            self.context.workflow_service.clear_workspace()
+        if not self.context.workspace_manager.has_pending_patch():
+            self.context.workspace_manager.clear_workspace()
 
     def _prepare_audit_workspace(self, text: str) -> list[AuditFindingItem] | None:
         assert self.context.scope_service is not None
-        assert self.context.scan_service is not None
-        assert self.context.workflow_service is not None
+        assert self.context.scanner_runner is not None
+        assert self.context.workspace_manager is not None
         assert self.context.agent is not None
-        assert self.context.audit_backlog_service is not None
+        assert self.context.backlog_manager is not None
 
         scope = self.context.scope_service.fetch_scope(text, default_to_project=True)
         if scope is None:
@@ -152,17 +152,17 @@ class CliWorkflowController:
         self.context.agent.session.set_focus_paths(scope.focus_files if scope.is_locked else [])
         try:
             self.context.renderer.print_tool_start("scan_project", caller="AGENT")
-            scan_id, scan_result = self.context.scan_service.run_scan_and_save(scope)
+            scan_id, scan_result = self.context.scanner_runner.run_scan_and_save(scope)
         except RuntimeError as exc:
             self.context.renderer.print_error(str(exc))
             return None
 
-        self.context.workflow_service.initialize_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
-        backlog = self.context.audit_backlog_service.fetch_backlog(scan_result)
+        self.context.workspace_manager.initialize_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
+        backlog = self.context.backlog_manager.fetch_backlog(scan_result)
         if not backlog:
             self._handle_zero_finding_review(text=text, scope=scope)
-            if not self.context.workflow_service.has_pending_patch():
-                self.context.workflow_service.clear_workspace()
+            if not self.context.workspace_manager.has_pending_patch():
+                self.context.workspace_manager.clear_workspace()
             return None
 
         return backlog
@@ -183,17 +183,17 @@ class CliWorkflowController:
                 **kwargs
             )
         ) or []
-        decision = self.context.audit_backlog_service.infer_attempt_decision(finding, new_messages)
+        decision = self.context.backlog_manager.infer_attempt_decision(finding, new_messages)
         
         if decision.outcome is AuditAttemptOutcome.PATCH_READY:
-            self.context.audit_backlog_service.mark_patch_ready(backlog, finding.finding_id)
+            self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
             return
 
         if (
             decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
-            and self.context.audit_backlog_service.verify_can_retry(finding)
+            and self.context.backlog_manager.verify_can_retry(finding)
         ):
-            self.context.audit_backlog_service.record_retry(
+            self.context.backlog_manager.record_retry(
                 backlog=backlog,
                 finding_id=finding.finding_id,
                 error_code=decision.error_code,
@@ -202,7 +202,7 @@ class CliWorkflowController:
             self._handle_finding_retry(finding, text, backlog)
             return
 
-        self.context.audit_backlog_service.mark_failed(
+        self.context.backlog_manager.mark_failed(
             backlog=backlog,
             finding_id=finding.finding_id,
             error_code=decision.error_code,
@@ -225,12 +225,12 @@ class CliWorkflowController:
                 **kwargs
             )
         ) or []
-        retry_decision = self.context.audit_backlog_service.infer_attempt_decision(finding, retry_messages)
+        retry_decision = self.context.backlog_manager.infer_attempt_decision(finding, retry_messages)
         
         if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
-            self.context.audit_backlog_service.mark_patch_ready(backlog, finding.finding_id)
+            self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
         else:
-            self.context.audit_backlog_service.mark_failed(
+            self.context.backlog_manager.mark_failed(
                 backlog=backlog,
                 finding_id=finding.finding_id,
                 error_code=retry_decision.error_code,
@@ -240,7 +240,7 @@ class CliWorkflowController:
     def handle_code_explain(self, text: str) -> None:
         assert self.context.scope_service is not None
         assert self.context.agent is not None
-        assert self.context.chat_filter_service is not None
+        assert self.context.chat_filter is not None
 
         scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
         compact_observation = not self.context._should_show_full_tool_output(text)
@@ -282,11 +282,11 @@ class CliWorkflowController:
 
     def handle_general_chat(self, text: str) -> None:
         assert self.context.agent is not None
-        assert self.context.chat_filter_service is not None
+        assert self.context.chat_filter is not None
         self.context.renderer.print_user_anchor(text)
-        if not self.context.chat_filter_service.verify_programming_related(text):
+        if not self.context.chat_filter.verify_programming_related(text):
             self.context.renderer.print_assistant_anchor()
-            self.context.renderer.print_plain(self.context.chat_filter_service.fetch_out_of_scope_reply())
+            self.context.renderer.print_plain(self.context.chat_filter.fetch_out_of_scope_reply())
             return
         self.context.agent.session.set_focus_paths([])
         self.context._run_agent_request(
@@ -303,10 +303,10 @@ class CliWorkflowController:
         )
 
     def handle_patch_explain(self, text: str) -> None:
-        assert self.context.workflow_service is not None
+        assert self.context.workspace_manager is not None
         assert self.context.agent is not None
 
-        current_item = self.context.workflow_service.get_current_patch()
+        current_item = self.context.workspace_manager.get_current_patch()
         if current_item is None:
             self.context.renderer.print_error("当前没有待确认补丁")
             return
@@ -323,17 +323,17 @@ class CliWorkflowController:
         )
 
     def handle_patch_revise(self, text: str) -> None:
-        assert self.context.workflow_service is not None
+        assert self.context.workspace_manager is not None
         assert self.context.agent is not None
 
-        current_item = self.context.workflow_service.get_current_patch()
+        current_item = self.context.workspace_manager.get_current_patch()
         if current_item is None:
             self.context.renderer.print_error("当前没有待确认补丁")
             return
 
-        remaining_items = self.context.workflow_service.get_remaining_patches()
+        remaining_items = self.context.workspace_manager.get_remaining_patches()
         self.context.agent.session.set_focus_paths(self.context._fetch_review_scope_paths(current_item))
-        self.context.workflow_service.replace_remaining_patch_items([])
+        self.context.workspace_manager.replace_remaining_patch_items([])
         self.context._run_agent_request(
             prompt=text,
             agent_call=lambda p, **kwargs: self.context.agent.perform_patch_revise(
@@ -343,12 +343,12 @@ class CliWorkflowController:
                 **kwargs
             ),
         )
-        if not self.context.workflow_service.has_pending_patch():
+        if not self.context.workspace_manager.has_pending_patch():
             self.context.renderer.print_info("补丁队列已清空")
 
     def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
         assert self.context.agent is not None
-        assert self.context.workflow_service is not None
+        assert self.context.workspace_manager is not None
 
         for file_path in scope.focus_files:
             self.context.agent.reset_history()
@@ -368,7 +368,7 @@ class CliWorkflowController:
                 )
             finally:
                 self.context.agent.session.patch_source_hint = None
-            if self.context.workflow_service.has_pending_patch():
+            if self.context.workspace_manager.has_pending_patch():
                 return
 
         self.context.renderer.print_no_issue_panel(

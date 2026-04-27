@@ -3,15 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.index_service import IndexService
-from autopatch_j.core.intent_service import IntentService
+from autopatch_j.core.symbol_indexer import SymbolIndexer
+from autopatch_j.core.intent_detector import IntentDetector
 from autopatch_j.core.models import CodeScopeKind, IntentType
-from autopatch_j.core.scan_service import ScanService
+from autopatch_j.core.scanner_runner import ScannerRunner
 from autopatch_j.core.scope_service import ScopeService
 
 
-def test_intent_service_prefers_local_rules() -> None:
-    service = IntentService()
+def test_intent_detector_prefers_local_rules() -> None:
+    service = IntentDetector()
 
     assert service.detect_intent("@A.java 检查代码", has_pending_review=False) is IntentType.CODE_AUDIT
     assert service.detect_intent("@A.java 解释一下代码的功能", has_pending_review=False) is IntentType.CODE_EXPLAIN
@@ -20,8 +20,8 @@ def test_intent_service_prefers_local_rules() -> None:
     assert service.detect_intent("加一行注释说明原因", has_pending_review=True) is IntentType.PATCH_REVISE
 
 
-def test_intent_service_falls_back_to_llm_classifier() -> None:
-    service = IntentService(
+def test_intent_detector_falls_back_to_llm_classifier() -> None:
+    service = IntentDetector(
         classify_with_llm=lambda text, has_pending_review: (
             IntentType.GENERAL_CHAT if not has_pending_review else IntentType.PATCH_EXPLAIN
         )
@@ -31,8 +31,8 @@ def test_intent_service_falls_back_to_llm_classifier() -> None:
     assert service.detect_intent("@A.java 这个咋样", has_pending_review=True) is IntentType.PATCH_EXPLAIN
 
 
-def test_intent_service_defaults_review_ambiguity_to_patch_revise() -> None:
-    service = IntentService()
+def test_intent_detector_defaults_review_ambiguity_to_patch_revise() -> None:
+    service = IntentDetector()
 
     assert service.detect_intent("这个再看看", has_pending_review=True) is IntentType.PATCH_REVISE
 
@@ -45,9 +45,9 @@ def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> No
     (demo_dir / "UserService.java").write_text("class UserService {}", encoding="utf-8")
     (repo_root / "README.md").write_text("hello", encoding="utf-8")
 
-    indexer = IndexService(repo_root)
-    indexer.rebuild_index()
-    service = ScopeService(repo_root, indexer, ignored_dirs={".git", ".autopatch-j"})
+    symbol_indexer = SymbolIndexer(repo_root)
+    symbol_indexer.rebuild_index()
+    service = ScopeService(repo_root, symbol_indexer, ignored_dirs={".git", ".autopatch-j"})
 
     file_scope = service.fetch_scope("@User.java 检查代码")
     assert file_scope is not None
@@ -83,28 +83,28 @@ def test_scope_service_rejects_class_and_method_mentions(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    indexer = IndexService(repo_root)
-    indexer.rebuild_index()
-    service = ScopeService(repo_root, indexer, ignored_dirs={".git", ".autopatch-j"})
+    symbol_indexer = SymbolIndexer(repo_root)
+    symbol_indexer.rebuild_index()
+    service = ScopeService(repo_root, symbol_indexer, ignored_dirs={".git", ".autopatch-j"})
 
     assert service.fetch_scope("@UserService 检查代码") is None
     assert service.fetch_scope("@isAdmin 检查代码") is None
 
 
-def test_scan_service_persists_scan_result(tmp_path: Path) -> None:
+def test_scanner_runner_persists_scan_result(tmp_path: Path) -> None:
     repo_root = tmp_path
     java_file = repo_root / "Demo.java"
     java_file.write_text("class Demo {}", encoding="utf-8")
 
     artifacts = ArtifactManager(repo_root)
-    indexer = IndexService(repo_root)
-    indexer.rebuild_index()
-    scope_service = ScopeService(repo_root, indexer)
+    symbol_indexer = SymbolIndexer(repo_root)
+    symbol_indexer.rebuild_index()
+    scope_service = ScopeService(repo_root, symbol_indexer)
     scope = scope_service.fetch_scope("@Demo.java 检查代码")
     assert scope is not None
 
-    scan_service = ScanService(repo_root, artifacts)
-    artifact_id, result = scan_service.run_scan_and_save(scope)
+    scanner_runner = ScannerRunner(repo_root, artifacts)
+    artifact_id, result = scanner_runner.run_scan_and_save(scope)
 
     restored = artifacts.load_scan_result(artifact_id)
     assert result.status == "ok"

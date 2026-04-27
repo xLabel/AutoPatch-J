@@ -23,12 +23,12 @@ from autopatch_j.cli.render import (
 )
 from autopatch_j.config import GlobalConfig, discover_repo_root
 from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.audit_backlog_service import AuditBacklogService
-from autopatch_j.core.chat_filter_service import ChatFilterService
+from autopatch_j.core.backlog_manager import BacklogManager
+from autopatch_j.core.chat_filter import ChatFilter
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.conversation_router import ConversationRouter
-from autopatch_j.core.index_service import IndexService
-from autopatch_j.core.intent_service import IntentService
+from autopatch_j.core.symbol_indexer import SymbolIndexer
+from autopatch_j.core.intent_detector import IntentDetector
 from autopatch_j.core.models import (
     AuditFindingItem,
     CodeScope,
@@ -37,9 +37,9 @@ from autopatch_j.core.models import (
     PatchReviewItem,
 )
 from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
-from autopatch_j.core.scan_service import ScanService
+from autopatch_j.core.scanner_runner import ScannerRunner
 from autopatch_j.core.scope_service import ScopeService
-from autopatch_j.core.workflow_service import WorkflowService
+from autopatch_j.core.workspace_manager import WorkspaceManager
 from autopatch_j.core.patch_verifier import PatchVerifier
 from autopatch_j.scanners import get_scanner, DEFAULT_SCANNER_NAME
 
@@ -58,17 +58,17 @@ class AutoPatchCLI:
         self.renderer = CliRenderer()
 
         self.artifacts: ArtifactManager | None = None
-        self.indexer: IndexService | None = None
+        self.symbol_indexer: SymbolIndexer | None = None
         self.patch_engine: PatchEngine | None = None
         self.fetcher: CodeFetcher | None = None
         self.patch_verifier: PatchVerifier | None = None
-        self.intent_service: IntentService | None = None
+        self.intent_detector: IntentDetector | None = None
         self.conversation_router: ConversationRouter | None = None
-        self.audit_backlog_service: AuditBacklogService | None = None
-        self.chat_filter_service: ChatFilterService | None = None
+        self.backlog_manager: BacklogManager | None = None
+        self.chat_filter: ChatFilter | None = None
         self.scope_service: ScopeService | None = None
-        self.scan_service: ScanService | None = None
-        self.workflow_service: WorkflowService | None = None
+        self.scanner_runner: ScannerRunner | None = None
+        self.workspace_manager: WorkspaceManager | None = None
         self.agent: AutoPatchAgent | None = None
 
         self.input_controller: CliInputController | None = None
@@ -119,7 +119,7 @@ class AutoPatchCLI:
 
         while True:
             try:
-                workspace = self.workflow_service.load_workspace() if self.workflow_service else None
+                workspace = self.workspace_manager.load_workspace() if self.workspace_manager else None
                 current_item = workspace.get_current_patch() if workspace else None
                 pending_draft = current_item.draft.fetch_patch_draft() if current_item else None
                 current_idx, total_count = workspace.get_review_progress() if workspace else (0, 0)
@@ -247,8 +247,8 @@ class AutoPatchCLI:
         return "当前范围未发现安全或正确性问题。"
 
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
-        assert self.workflow_service is not None
-        workspace = self.workflow_service.load_workspace()
+        assert self.workspace_manager is not None
+        workspace = self.workspace_manager.load_workspace()
         if workspace.scope is not None and workspace.scope.focus_files:
             return list(workspace.scope.focus_files)
         return [current_item.file_path]
@@ -259,8 +259,8 @@ class AutoPatchCLI:
         return list(scope.focus_files)
 
     def _describe_current_scope_paths(self) -> list[str]:
-        workflow_service = getattr(self, "workflow_service", None)
-        workspace = workflow_service.load_workspace() if workflow_service else None
+        workspace_manager = getattr(self, "workspace_manager", None)
+        workspace = workspace_manager.load_workspace() if workspace_manager else None
         if workspace is not None and workspace.scope is not None and workspace.scope.focus_files:
             return list(workspace.scope.focus_files)
         scan_paths = self._collect_latest_scan_paths()
@@ -306,17 +306,17 @@ class AutoPatchCLI:
 
     def _init_services(self, repo_root: Path) -> None:
         self.artifacts = ArtifactManager(repo_root)
-        self.indexer = IndexService(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
+        self.symbol_indexer = SymbolIndexer(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
         self.patch_engine = PatchEngine(repo_root)
         self.fetcher = CodeFetcher(repo_root)
-        self.intent_service = IntentService()
-        self.audit_backlog_service = AuditBacklogService()
-        self.chat_filter_service = ChatFilterService()
+        self.intent_detector = IntentDetector()
+        self.backlog_manager = BacklogManager()
+        self.chat_filter = ChatFilter()
         shared_llm = build_default_llm_client()
         self.conversation_router = ConversationRouter(llm=shared_llm)
-        self.scope_service = ScopeService(repo_root, self.indexer, ignored_dirs=GlobalConfig.ignored_dirs)
-        self.scan_service = ScanService(repo_root, self.artifacts)
-        self.workflow_service = WorkflowService(self.artifacts)
+        self.scope_service = ScopeService(repo_root, self.symbol_indexer, ignored_dirs=GlobalConfig.ignored_dirs)
+        self.scanner_runner = ScannerRunner(repo_root, self.artifacts)
+        self.workspace_manager = WorkspaceManager(self.artifacts)
 
         scanner = get_scanner(DEFAULT_SCANNER_NAME)
         self.patch_verifier = PatchVerifier(repo_root, scanner) if scanner else None
@@ -324,7 +324,7 @@ class AutoPatchCLI:
         agent_session = AgentSession(
             repo_root=repo_root,
             artifacts=self.artifacts,
-            indexer=self.indexer,
+            symbol_indexer=self.symbol_indexer,
             patch_engine=self.patch_engine,
             fetcher=self.fetcher,
             patch_verifier=self.patch_verifier,
@@ -336,15 +336,15 @@ class AutoPatchCLI:
         )
 
         self.input_controller = CliInputController(
-            index_search=lambda query: self.indexer.search(query) if self.indexer else [],
+            index_search=lambda query: self.symbol_indexer.search(query) if self.symbol_indexer else [],
             repo_root=self.repo_root,
         )
         self.command_controller = CliCommandController(self)
         self.workflow_controller = CliWorkflowController(self)
         self.stream_adapter = StreamAdapter(
             renderer=self.renderer,
-            workflow_service=self.workflow_service,
-            chat_filter_service=self.chat_filter_service,
+            workspace_manager=self.workspace_manager,
+            chat_filter=self.chat_filter,
             agent=self.agent,
             sanitize_output=self._sanitize_assistant_output,
             summarize_observation=self._summarize_observation,

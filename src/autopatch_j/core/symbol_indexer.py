@@ -21,7 +21,7 @@ class IndexEntry:
     mtime: float = 0.0  # 修改时间，用于增量索引
 
 
-class IndexService:
+class SymbolIndexer:
     """
     符号索引服务。
     职责：扫描项目并建立 SQLite 索引，必要时补充 Tree-sitter 符号信息。

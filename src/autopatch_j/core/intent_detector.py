@@ -6,7 +6,7 @@ from collections.abc import Callable
 from autopatch_j.core.models import IntentType
 
 
-class IntentService:
+class IntentDetector:
     """
     意图判定服务 (Core Service)
     职责：优先使用本地规则识别用户意图，必要时调用轻量 LLM 分类兜底。

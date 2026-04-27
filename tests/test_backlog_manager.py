@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.core.audit_backlog_service import AuditBacklogService
+from autopatch_j.core.backlog_manager import BacklogManager
 from autopatch_j.core.models import AuditAttemptOutcome, AuditFindingStatus
 from autopatch_j.scanners.base import Finding, ScanResult
 
@@ -35,8 +35,8 @@ def _scan_result() -> ScanResult:
     )
 
 
-def test_audit_backlog_service_builds_logical_finding_queue() -> None:
-    service = AuditBacklogService()
+def test_backlog_manager_builds_logical_finding_queue() -> None:
+    service = BacklogManager()
 
     backlog = service.fetch_backlog(_scan_result())
 
@@ -45,8 +45,8 @@ def test_audit_backlog_service_builds_logical_finding_queue() -> None:
     assert service.fetch_current_finding(backlog).file_path == "src/main/java/demo/AppConfig.java"
 
 
-def test_audit_backlog_service_detects_retryable_old_string_error() -> None:
-    service = AuditBacklogService()
+def test_backlog_manager_detects_retryable_old_string_error() -> None:
+    service = BacklogManager()
     current_item = service.fetch_backlog(_scan_result())[0]
 
     decision = service.infer_attempt_decision(
@@ -71,8 +71,8 @@ def test_audit_backlog_service_detects_retryable_old_string_error() -> None:
     assert decision.error_code == "OLD_STRING_NOT_FOUND"
 
 
-def test_audit_backlog_service_marks_patch_ready_and_failure() -> None:
-    service = AuditBacklogService()
+def test_backlog_manager_marks_patch_ready_and_failure() -> None:
+    service = BacklogManager()
     backlog = service.fetch_backlog(_scan_result())
 
     service.mark_patch_ready(backlog, "F1")

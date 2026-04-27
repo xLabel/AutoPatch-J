@@ -6,9 +6,9 @@ from rich.table import Table
 
 from autopatch_j.cli.render import DECISION_STYLE, SYSTEM_STYLE
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.index_service import IndexService
+from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
-from autopatch_j.core.workflow_service import WorkflowService
+from autopatch_j.core.workspace_manager import WorkspaceManager
 from autopatch_j.scanners import ALL_SCANNERS, DEFAULT_SCANNER_NAME, get_scanner
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 
@@ -17,10 +17,10 @@ class CommandControllerContext(Protocol):
     cwd: Path
     repo_root: Path | None
     artifacts: Any
-    indexer: IndexService | None
+    symbol_indexer: SymbolIndexer | None
     patch_engine: PatchEngine | None
     patch_verifier: Any | None
-    workflow_service: WorkflowService | None
+    workspace_manager: WorkspaceManager | None
     renderer: Any
 
     def _init_services(self, repo_root: Path) -> None: ...
@@ -103,12 +103,12 @@ class CliCommandController:
         status, _ = install_managed_semgrep_runtime()
         self.context.renderer.print_step(f"扫描器运行时自检: {status}")
 
-        assert self.context.indexer is not None
-        stats = self.context.indexer.rebuild_index()
+        assert self.context.symbol_indexer is not None
+        stats = self.context.symbol_indexer.rebuild_index()
         self.context.renderer.print_success(f"初始化完成，索引 {stats.get('total', 0)} 项")
 
     def handle_status(self) -> None:
-        if not self.context.indexer or not self.context.workflow_service:
+        if not self.context.symbol_indexer or not self.context.workspace_manager:
             self.context.renderer.print_error("系统未初始化，请先执行 /init")
             return
 
@@ -128,7 +128,7 @@ class CliCommandController:
         )
         table.add_row("[bold]静态扫描器[/]", scanner_status)
 
-        pending = self.context.workflow_service.get_current_patch()
+        pending = self.context.workspace_manager.get_current_patch()
         buffer_status = (
             f"[bold yellow]存在待确认补丁 ({pending.file_path})[/]"
             if pending
@@ -136,13 +136,13 @@ class CliCommandController:
         )
         table.add_row("[bold]补丁缓冲区[/]", buffer_status)
 
-        stats = self.context.indexer.get_stats()
+        stats = self.context.symbol_indexer.get_stats()
         stats_str = (
             f"文件:{stats.get('file', 0)} | 类:{stats.get('class', 0)} | "
             f"方法:{stats.get('method', 0)} (总计:{stats.get('total', 0)})"
         )
         table.add_row("[bold]符号索引[/]", stats_str)
-        symbol_status = self.context.indexer.fetch_symbol_extract_status()
+        symbol_status = self.context.symbol_indexer.fetch_symbol_extract_status()
         symbol_mode = str(symbol_status.get("mode", "full"))
         if symbol_mode == "degraded":
             status_text = "[yellow]已降级[/]"
@@ -156,10 +156,10 @@ class CliCommandController:
         self.context.renderer.print_panel(table, title="[bold] 项目状态 [/]", style=SYSTEM_STYLE)
 
     def handle_reindex(self) -> None:
-        if not self.context.indexer:
+        if not self.context.symbol_indexer:
             return
         self.context.renderer.print_step("正在重新构建索引...")
-        stats = self.context.indexer.rebuild_index()
+        stats = self.context.symbol_indexer.rebuild_index()
         self.context.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
 
     def handle_apply(self, pending: PatchDraft) -> None:
