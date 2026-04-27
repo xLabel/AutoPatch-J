@@ -45,6 +45,7 @@ class PatchProposalTool(Tool):
         assert self.context is not None
         patch_engine = self.context.patch_engine
         artifact_manager = self.context.artifact_manager
+        workspace_manager = self.context.workspace_manager
         patch_verifier = self.context.patch_verifier
 
         if not self.context.is_path_in_focus(file_path):
@@ -149,7 +150,7 @@ class PatchProposalTool(Tool):
             target_snippet=target_snippet,
         )
 
-        artifact_manager.save_pending_patch(draft)
+        workspace_manager.add_pending_patch(draft)
         message = f"补丁草案已加入队列。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"
         message += f"差异预览：\n{draft.diff}\n\n"

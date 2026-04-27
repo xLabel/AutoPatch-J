@@ -312,7 +312,7 @@ class Agent:
             return ToolResult(status="error", message=f"执行异常：{exc}")
 
     def _build_task_system_prompt(self, intent: IntentType) -> str:
-        pending = self.session.artifact_manager.load_pending_patch()
+        pending = self.session.workspace_manager.load_pending_patch()
         last_scan_id = self._fetch_latest_scan_artifact_id()
         return build_task_system_prompt(
             intent=intent,

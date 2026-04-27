@@ -89,8 +89,8 @@ class CLI:
         self.request_exit(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
 
     def _clear_pending_patch_candidates(self) -> None:
-        if self.artifact_manager is not None:
-            self.artifact_manager.clear_pending_patch()
+        if self.workspace_manager is not None:
+            self.workspace_manager.clear_workspace()
         if self.agent is not None:
             self.agent.reset_history()
 
@@ -322,6 +322,7 @@ class CLI:
         agent_session = AgentSession(
             repo_root=repo_root,
             artifact_manager=self.artifact_manager,
+            workspace_manager=self.workspace_manager,
             symbol_indexer=self.symbol_indexer,
             patch_engine=self.patch_engine,
             code_fetcher=self.code_fetcher,

@@ -10,13 +10,14 @@ from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchEngine
-from autopatch_j.core.patch_verifier import PatchVerifier
+from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
 def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
     repo_root = tmp_path
     (repo_root / "src" / "main" / "java" / "demo").mkdir(parents=True)
     artifact_manager = ArtifactManager(repo_root)
+    workspace_manager = WorkspaceManager(artifact_manager)
     symbol_indexer = SymbolIndexer(repo_root)
     patch_engine = PatchEngine(repo_root)
     code_fetcher = CodeFetcher(repo_root)
@@ -24,6 +25,7 @@ def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
     session = AgentSession(
         repo_root=repo_root,
         artifact_manager=artifact_manager,
+        workspace_manager=workspace_manager,
         symbol_indexer=symbol_indexer,
         patch_engine=patch_engine,
         code_fetcher=code_fetcher
@@ -168,6 +170,7 @@ def test_model_label_returns_llm_model_name() -> None:
     session = AgentSession(
         repo_root=Path("."),
         artifact_manager=MagicMock(),
+        workspace_manager=MagicMock(),
         symbol_indexer=MagicMock(),
         patch_engine=MagicMock(),
         code_fetcher=MagicMock(),

@@ -9,6 +9,7 @@ from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.patch_verifier import PatchVerifier
+from autopatch_j.core.workspace_manager import WorkspaceManager
 from autopatch_j.scanners.base import Finding, ScanResult
 from autopatch_j.scanners.semgrep import normalize_semgrep_payload
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
@@ -17,6 +18,7 @@ from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
 
 def _build_agent(repo_root: Path) -> Agent:
     artifact_manager = ArtifactManager(repo_root)
+    workspace_manager = WorkspaceManager(artifact_manager)
     symbol_indexer = SymbolIndexer(repo_root)
     patch_engine = PatchEngine(repo_root)
     code_fetcher = CodeFetcher(repo_root)
@@ -25,6 +27,7 @@ def _build_agent(repo_root: Path) -> Agent:
     session = AgentSession(
         repo_root=repo_root,
         artifact_manager=artifact_manager,
+        workspace_manager=workspace_manager,
         symbol_indexer=symbol_indexer,
         patch_engine=patch_engine,
         code_fetcher=code_fetcher,
@@ -160,7 +163,7 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
         associated_finding_id="F1",
     )
 
-    pending = agent.session.artifact_manager.load_pending_patch()
+    pending = agent.session.workspace_manager.load_pending_patch()
     assert result.status in {"ok", "invalid"}
     assert pending is not None
     assert pending.target_snippet == 'return user.getName().equals("admin");'

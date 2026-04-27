@@ -9,6 +9,7 @@ from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.patch_verifier import PatchVerifier
+from autopatch_j.core.workspace_manager import WorkspaceManager
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
 from autopatch_j.tools.source_reader_tool import SourceReaderTool
 from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
@@ -16,6 +17,7 @@ from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 
 def _build_agent(repo_root: Path) -> Agent:
     artifact_manager = ArtifactManager(repo_root)
+    workspace_manager = WorkspaceManager(artifact_manager)
     symbol_indexer = SymbolIndexer(repo_root)
     patch_engine = PatchEngine(repo_root)
     code_fetcher = CodeFetcher(repo_root)
@@ -23,6 +25,7 @@ def _build_agent(repo_root: Path) -> Agent:
     session = AgentSession(
         repo_root=repo_root,
         artifact_manager=artifact_manager,
+        workspace_manager=workspace_manager,
         symbol_indexer=symbol_indexer,
         patch_engine=patch_engine,
         code_fetcher=code_fetcher

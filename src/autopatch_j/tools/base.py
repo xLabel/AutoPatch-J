@@ -22,6 +22,7 @@ class ToolContext(Protocol):
     """
     repo_root: Path
     artifact_manager: Any
+    workspace_manager: Any
     symbol_indexer: Any
     patch_engine: Any
     code_fetcher: Any

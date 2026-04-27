@@ -5,6 +5,7 @@ from pathlib import Path
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.patch_verifier import PatchVerifier
+from autopatch_j.core.workspace_manager import WorkspaceManager
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
 
 
@@ -13,6 +14,7 @@ class _FakeAgentSession:
         self.repo_root = repo_root
         self.patch_engine = PatchEngine(repo_root)
         self.artifact_manager = ArtifactManager(repo_root)
+        self.workspace_manager = WorkspaceManager(self.artifact_manager)
         self.focus_paths = ["src/main/java/demo/UserService.java"]
         self.patch_source_hint = None
         self.patch_verifier = PatchVerifier(repo_root, None)
