@@ -12,6 +12,7 @@ authors = [
   { name = "weijianguan" }
 ]
 dependencies = [
+  "openai",
   "prompt_toolkit",
   "rich",
   "tree-sitter>=0.23.0",
