@@ -26,17 +26,8 @@ class WorkspaceManager:
         workspace = self.artifact_manager.load_workspace()
         return workspace or self._build_idle_workspace()
 
-    def get_current_patch(self) -> PatchReviewItem | None:
-        return self.load_workspace().get_current_patch()
-
-    def get_remaining_patches(self) -> list[PatchReviewItem]:
-        return self.load_workspace().get_remaining_patches()
-
-    def get_review_progress(self) -> tuple[int, int]:
-        return self.load_workspace().get_review_progress()
-
-    def has_pending_patch(self) -> bool:
-        return self.load_workspace().has_pending_patch()
+    def save_workspace(self, workspace: ActiveWorkspace) -> None:
+        self.artifact_manager.save_workspace(workspace)
 
     def initialize_review_workspace(
         self,

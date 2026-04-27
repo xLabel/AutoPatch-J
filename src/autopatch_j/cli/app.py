@@ -256,11 +256,6 @@ class CLI:
             return list(workspace.scope.focus_files)
         return [current_item.file_path]
 
-    def _describe_scope_paths(self, scope: CodeScope) -> list[str]:
-        if scope.kind.value == "project":
-            return list(scope.focus_files)
-        return list(scope.focus_files)
-
     def _describe_current_scope_paths(self) -> list[str]:
         workspace_manager = getattr(self, "workspace_manager", None)
         workspace = workspace_manager.load_workspace() if workspace_manager else None

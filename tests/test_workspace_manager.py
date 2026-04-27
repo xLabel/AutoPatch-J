@@ -83,9 +83,9 @@ def test_workspace_manager_persist_review_workspace_starts_review_mode(tmp_path:
 
     assert workspace.mode is WorkspaceStatus.REVIEWING
     assert workspace.current_patch_index == 0
-    assert service.has_pending_patch() is True
-    assert service.get_current_patch() is not None
-    assert service.get_current_patch().item_id == "item-1"
+    assert service.load_workspace().has_pending_patch() is True
+    assert workspace.get_current_patch() is not None
+    assert workspace.get_current_patch().item_id == "item-1"
 
 
 def test_workspace_manager_persist_applied_current_patch_advances_until_idle(tmp_path: Path) -> None:

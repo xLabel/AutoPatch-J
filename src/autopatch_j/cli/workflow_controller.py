@@ -59,15 +59,15 @@ class CliWorkflowController:
 
         if user_input.lower() == "apply":
             self.context.command_controller.handle_apply(current_draft)
-            self.context.workspace_manager.mark_current_patch_applied()
-            if not self.context.workspace_manager.has_pending_patch():
+            workspace = self.context.workspace_manager.mark_current_patch_applied()
+            if not workspace.has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
 
         if user_input.lower() == "discard":
             self.context.command_controller.handle_discard()
-            self.context.workspace_manager.mark_current_patch_discarded()
-            if not self.context.workspace_manager.has_pending_patch():
+            workspace = self.context.workspace_manager.mark_current_patch_discarded()
+            if not workspace.has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
 
@@ -136,13 +136,10 @@ class CliWorkflowController:
         if backlog is None:
             return
 
-        while self.context.backlog_manager.verify_has_pending_finding(backlog):
-            finding = self.context.backlog_manager.fetch_current_finding(backlog)
-            if finding is None:
-                break
+        while finding := self.context.backlog_manager.fetch_current_finding(backlog):
             self._process_single_finding(finding, text, backlog)
 
-        if not self.context.workspace_manager.has_pending_patch():
+        if not self.context.workspace_manager.load_workspace().has_pending_patch():
             self.context.workspace_manager.clear_workspace()
 
     def _prepare_audit_workspace(self, text: str) -> list[AuditFindingItem] | None:
@@ -199,7 +196,7 @@ class CliWorkflowController:
 
         if (
             decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
-            and self.context.backlog_manager.verify_can_retry(finding)
+            and finding.retry_count < 1
         ):
             self.context.backlog_manager.record_retry(
                 backlog=backlog,

@@ -43,12 +43,6 @@ class BacklogManager:
                 return item
         return None
 
-    def verify_has_pending_finding(self, backlog: list[AuditFindingItem]) -> bool:
-        return self.fetch_current_finding(backlog) is not None
-
-    def verify_can_retry(self, item: AuditFindingItem) -> bool:
-        return item.retry_count < 1
-
     def mark_patch_ready(self, backlog: list[AuditFindingItem], finding_id: str) -> None:
         item = self._fetch_item(backlog, finding_id)
         if item is None:

@@ -82,4 +82,4 @@ def test_backlog_manager_marks_patch_ready_and_failure() -> None:
     assert backlog[0].status is AuditFindingStatus.PATCH_READY
     assert backlog[1].retry_count == 1
     assert backlog[1].status is AuditFindingStatus.FAILED
-    assert service.verify_has_pending_finding(backlog) is False
+    assert service.fetch_current_finding(backlog) is None
