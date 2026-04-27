@@ -111,7 +111,7 @@ class StreamAdapter:
         new_messages = list(self.agent.messages[start_index:])
         execution.finish_reasoning_status_if_visible()
 
-        has_pending_patches = self.workflow_service.verify_has_pending_patch()
+        has_pending_patches = self.workflow_service.has_pending_patch()
         if has_pending_patches:
             self.renderer.print()
             return new_messages

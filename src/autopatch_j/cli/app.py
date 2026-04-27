@@ -120,9 +120,9 @@ class AutoPatchCLI:
         while True:
             try:
                 workspace = self.workflow_service.fetch_workspace() if self.workflow_service else None
-                current_item = workspace.fetch_current_patch_item() if workspace else None
+                current_item = workspace.get_current_patch() if workspace else None
                 pending_draft = current_item.draft.fetch_patch_draft() if current_item else None
-                current_idx, total_count = workspace.fetch_review_progress() if workspace else (0, 0)
+                current_idx, total_count = workspace.get_review_progress() if workspace else (0, 0)
                 prompt_prefix = "autopatch-j"
 
                 if pending_draft:

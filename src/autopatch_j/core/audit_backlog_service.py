@@ -37,7 +37,7 @@ class AuditBacklogService:
 
     def fetch_current_finding(self, backlog: list[AuditFindingItem]) -> AuditFindingItem | None:
         for item in backlog:
-            if item.verify_pending():
+            if item.is_pending():
                 return item
         return None
 

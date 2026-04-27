@@ -57,7 +57,7 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
         "src/main/java/demo/User.java",
         "src/main/java/demo/UserService.java",
     ]
-    current = restored.fetch_current_patch_item()
+    current = restored.get_current_patch()
     assert current is not None
     assert current.status is PatchReviewStatus.PENDING
     assert current.draft.source_hint == "LLM 二次复核（静态扫描未报出问题）"
@@ -73,7 +73,7 @@ def test_fetch_current_patch_item_returns_none_for_out_of_bounds_cursor() -> Non
         current_patch_index=2,
     )
 
-    assert workspace.fetch_current_patch_item() is None
+    assert workspace.get_current_patch() is None
 
 
 def test_fetch_review_progress_uses_absolute_patch_index() -> None:
@@ -131,4 +131,4 @@ def test_fetch_review_progress_uses_absolute_patch_index() -> None:
         current_patch_index=1,
     )
 
-    assert workspace.fetch_review_progress() == (2, 3)
+    assert workspace.get_review_progress() == (2, 3)
