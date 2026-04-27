@@ -1,123 +1,19 @@
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Callable
 import openai
 
-
-@dataclass(slots=True)
-class ToolCall:
-    name: str
-    arguments: dict[str, Any]
-    call_id: str
-    raw_arguments: str = ""
+from .dialect import ToolCall, MessageDialect, StandardDialect, DeepSeekAliyunDialect
 
 
 @dataclass(slots=True)
 class LLMResponse:
+    """大模型响应统一包装模型"""
     content: str
     tool_calls: list[ToolCall] | None = None
     reasoning_content: str | None = None
-
-
-class MessageDialect(Protocol):
-    def consume_visible_text(self, chunk: str) -> str: ...
-    def flush_visible_text(self) -> str: ...
-    def extract_tool_calls(self, full_content: str) -> list[ToolCall]: ...
-    def strip_markup(self, full_content: str) -> str: ...
-
-
-class StandardDialect:
-    def consume_visible_text(self, chunk: str) -> str:
-        return chunk
-
-    def flush_visible_text(self) -> str:
-        return ""
-
-    def extract_tool_calls(self, full_content: str) -> list[ToolCall]:
-        return []
-
-    def strip_markup(self, full_content: str) -> str:
-        return full_content
-
-
-class DeepSeekAliyunDialect:
-    _DSML_MARKER_PATTERN = re.compile(r"<\s*[｜|]\s*DSML\s*[｜|]")
-    _DSML_INVOKE_PATTERN = re.compile(
-        r"<\s*[｜|]\s*DSML\s*[｜|]\s*invoke\s+name=\"(?P<name>[^\"]+)\">\s*(?P<params>.*?)\s*</\s*[｜|]\s*DSML\s*[｜|]\s*invoke>",
-        re.DOTALL,
-    )
-    _DSML_PARAM_PATTERN = re.compile(
-        r"<\s*[｜|]\s*DSML\s*[｜|]\s*parameter\s+name=\"(?P<key>[^\"]+)\"[^>]*>(?P<value>.*?)</\s*[｜|]\s*DSML\s*[｜|]\s*parameter>",
-        re.DOTALL,
-    )
-
-    def __init__(self) -> None:
-        self.suppressed = False
-        self.pending = ""
-
-    def consume_visible_text(self, chunk: str) -> str:
-        if self.suppressed:
-            return ""
-
-        marker = "<｜DSML｜"
-        combined = f"{self.pending}{chunk}"
-        marker_index = combined.find(marker)
-        if marker_index >= 0:
-            self.suppressed = True
-            self.pending = ""
-            return combined[:marker_index]
-
-        keep = min(len(marker) - 1, len(combined))
-        if len(combined) <= keep:
-            self.pending = combined
-            return ""
-
-        emit = combined[:-keep]
-        self.pending = combined[-keep:]
-        return emit
-
-    def flush_visible_text(self) -> str:
-        if self.suppressed:
-            self.pending = ""
-            return ""
-        pending = str(self.pending)
-        self.pending = ""
-        return pending
-
-    def extract_tool_calls(self, full_content: str) -> list[ToolCall]:
-        if not self._DSML_MARKER_PATTERN.search(full_content):
-            return []
-            
-        calls = []
-        for i, match in enumerate(self._DSML_INVOKE_PATTERN.finditer(full_content)):
-            name = match.group("name")
-            params_raw = match.group("params")
-            arguments = {}
-
-            for p_match in self._DSML_PARAM_PATTERN.finditer(params_raw):
-                val = p_match.group("value").strip()
-                if val.lower() == "true":
-                    val = True
-                elif val.lower() == "false":
-                    val = False
-                elif val.isdigit():
-                    val = int(val)
-                arguments[p_match.group("key")] = val
-
-            calls.append(ToolCall(
-                name=name,
-                arguments=arguments,
-                call_id=f"dsml-{i}",
-                raw_arguments=params_raw
-            ))
-        return calls
-
-    def strip_markup(self, full_content: str) -> str:
-        match = self._DSML_MARKER_PATTERN.search(full_content)
-        return full_content[:match.start()].rstrip() if match else full_content
 
 
 class LLMClient:

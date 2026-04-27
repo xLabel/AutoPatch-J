@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from autopatch_j.agent.llm_client import LLMClient, ToolCall, build_default_llm_client
+from autopatch_j.agent.llm_client import LLMClient, build_default_llm_client
+from autopatch_j.agent.dialect import ToolCall
 from autopatch_j.agent.prompts import (
     build_task_system_prompt,
     build_zero_finding_review_system_prompt,
