@@ -18,7 +18,7 @@ class IntentService:
     ) -> None:
         self.classify_with_llm = classify_with_llm
 
-    def fetch_intent(self, user_text: str, has_pending_review: bool) -> IntentType:
+    def detect_intent(self, user_text: str, has_pending_review: bool) -> IntentType:
         normalized = self._normalize_text(user_text)
         if has_pending_review:
             local = self._fetch_review_intent_by_rule(normalized)

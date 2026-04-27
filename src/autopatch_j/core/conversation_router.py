@@ -16,7 +16,7 @@ class ConversationRouter:
 
     llm: LLMClient | None = None
 
-    def fetch_route(
+    def determine_route(
         self,
         user_text: str,
         has_pending_review: bool,
