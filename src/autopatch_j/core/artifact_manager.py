@@ -38,7 +38,7 @@ class ArtifactManager:
     def _ensure_dirs(self) -> None:
         self.findings_dir.mkdir(parents=True, exist_ok=True)
 
-    def persist_scan_result(self, result: ScanResult) -> str:
+    def save_scan_result(self, result: ScanResult) -> str:
         artifact_id = self._generate_id("scan")
         target_path = self.findings_dir / f"{artifact_id}.json"
         target_path.write_text(
@@ -47,7 +47,7 @@ class ArtifactManager:
         )
         return artifact_id
 
-    def fetch_scan_result(self, artifact_id: str) -> ScanResult | None:
+    def load_scan_result(self, artifact_id: str) -> ScanResult | None:
         target_path = self.findings_dir / f"{artifact_id}.json"
         if not target_path.exists():
             return None
@@ -57,19 +57,19 @@ class ArtifactManager:
         except (json.JSONDecodeError, KeyError):
             return None
 
-    def fetch_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:
-        result = self.fetch_scan_result(artifact_id)
+    def get_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:
+        result = self.load_scan_result(artifact_id)
         if result is None or index < 0 or index >= len(result.findings):
             return None
         return result.findings[index]
 
-    def persist_workspace(self, workspace: ActiveWorkspace) -> None:
+    def save_workspace(self, workspace: ActiveWorkspace) -> None:
         self.workspace_file.write_text(
             json.dumps(workspace.to_dict(), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 
-    def fetch_workspace(self) -> ActiveWorkspace | None:
+    def load_workspace(self) -> ActiveWorkspace | None:
         if not self.workspace_file.exists():
             return None
         try:
@@ -84,8 +84,8 @@ class ArtifactManager:
 
     # --- Pending Patch compatibility layer ---
 
-    def persist_pending_patch(self, draft: PatchDraft) -> None:
-        workspace = self.fetch_workspace()
+    def save_pending_patch(self, draft: PatchDraft) -> None:
+        workspace = self.load_workspace()
         if workspace is None:
             self._persist_workspace_pending_drafts([], [draft], None)
             return
@@ -97,8 +97,8 @@ class ArtifactManager:
         ]
         self._persist_workspace_pending_drafts(head_items, pending_drafts, workspace)
 
-    def fetch_pending_patches(self) -> list[PatchDraft]:
-        workspace = self.fetch_workspace()
+    def load_pending_patches(self) -> list[PatchDraft]:
+        workspace = self.load_workspace()
         if workspace is None or not workspace.has_pending_patch():
             return []
         return [
@@ -106,8 +106,8 @@ class ArtifactManager:
             for item in workspace.get_remaining_patches()
         ]
 
-    def fetch_pending_patch(self) -> PatchDraft | None:
-        queue = self.fetch_pending_patches()
+    def load_pending_patch(self) -> PatchDraft | None:
+        queue = self.load_pending_patches()
         return queue[0] if queue else None
 
     def clear_pending_patch(self) -> None:
@@ -137,7 +137,7 @@ class ArtifactManager:
             patch_items=all_items,
             current_patch_index=current_patch_index,
         )
-        self.persist_workspace(workspace)
+        self.save_workspace(workspace)
 
     def _build_patch_review_item_from_draft(self, draft: PatchDraft, item_index: int) -> PatchReviewItem:
         finding_ids: list[str] = [draft.target_check_id] if draft.target_check_id else []

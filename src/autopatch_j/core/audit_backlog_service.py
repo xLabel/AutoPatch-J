@@ -47,7 +47,7 @@ class AuditBacklogService:
     def verify_can_retry(self, item: AuditFindingItem) -> bool:
         return item.retry_count < 1
 
-    def persist_mark_patch_ready(self, backlog: list[AuditFindingItem], finding_id: str) -> None:
+    def mark_patch_ready(self, backlog: list[AuditFindingItem], finding_id: str) -> None:
         item = self._fetch_item(backlog, finding_id)
         if item is None:
             return
@@ -55,7 +55,7 @@ class AuditBacklogService:
         item.last_error_code = None
         item.last_error_message = None
 
-    def persist_mark_retry(
+    def record_retry(
         self,
         backlog: list[AuditFindingItem],
         finding_id: str,
@@ -69,7 +69,7 @@ class AuditBacklogService:
         item.last_error_code = error_code
         item.last_error_message = error_message
 
-    def persist_mark_failed(
+    def mark_failed(
         self,
         backlog: list[AuditFindingItem],
         finding_id: str,

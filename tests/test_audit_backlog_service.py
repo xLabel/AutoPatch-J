@@ -75,9 +75,9 @@ def test_audit_backlog_service_marks_patch_ready_and_failure() -> None:
     service = AuditBacklogService()
     backlog = service.fetch_backlog(_scan_result())
 
-    service.persist_mark_patch_ready(backlog, "F1")
-    service.persist_mark_retry(backlog, "F2", "OLD_STRING_NOT_FOUND", "retry")
-    service.persist_mark_failed(backlog, "F2", "UNKNOWN", "give up")
+    service.mark_patch_ready(backlog, "F1")
+    service.record_retry(backlog, "F2", "OLD_STRING_NOT_FOUND", "retry")
+    service.mark_failed(backlog, "F2", "UNKNOWN", "give up")
 
     assert backlog[0].status is AuditFindingStatus.PATCH_READY
     assert backlog[1].retry_count == 1

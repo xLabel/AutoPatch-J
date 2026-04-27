@@ -149,7 +149,7 @@ class PatchProposalTool(Tool):
             target_snippet=target_snippet,
         )
 
-        artifacts.persist_pending_patch(draft)
+        artifacts.save_pending_patch(draft)
         message = f"补丁草案已加入队列。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"
         message += f"差异预览：\n{draft.diff}\n\n"
@@ -175,4 +175,4 @@ class PatchProposalTool(Tool):
         scan_files = sorted(artifacts.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
             return None
-        return artifacts.fetch_finding_by_index(scan_files[0].stem, finding_index)
+        return artifacts.get_finding_by_index(scan_files[0].stem, finding_index)

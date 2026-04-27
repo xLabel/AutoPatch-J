@@ -51,14 +51,14 @@ class CliWorkflowController:
 
         if user_input.lower() == "apply":
             self.context.command_controller.handle_apply(current_draft)
-            self.context.workflow_service.persist_applied_current_patch()
+            self.context.workflow_service.mark_current_patch_applied()
             if not self.context.workflow_service.has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
 
         if user_input.lower() == "discard":
             self.context.command_controller.handle_discard()
-            self.context.workflow_service.persist_discarded_current_patch()
+            self.context.workflow_service.mark_current_patch_discarded()
             if not self.context.workflow_service.has_pending_patch():
                 self.context.renderer.print_info("补丁队列已清空")
             return
@@ -87,7 +87,7 @@ class CliWorkflowController:
         has_pending_review = self.context.workflow_service.has_pending_patch()
         requested_scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
         current_item = self.context.workflow_service.get_current_patch() if has_pending_review else None
-        current_workspace = self.context.workflow_service.fetch_workspace() if has_pending_review else None
+        current_workspace = self.context.workflow_service.load_workspace() if has_pending_review else None
         route = self.context.conversation_router.determine_route(
             user_text=text,
             has_pending_review=has_pending_review,
@@ -152,12 +152,12 @@ class CliWorkflowController:
         self.context.agent.session.set_focus_paths(scope.focus_files if scope.is_locked else [])
         try:
             self.context.renderer.print_tool_start("scan_project", caller="AGENT")
-            scan_id, scan_result = self.context.scan_service.run_scan_and_persist(scope)
+            scan_id, scan_result = self.context.scan_service.run_scan_and_save(scope)
         except RuntimeError as exc:
             self.context.renderer.print_error(str(exc))
             return None
 
-        self.context.workflow_service.persist_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
+        self.context.workflow_service.initialize_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
         backlog = self.context.audit_backlog_service.fetch_backlog(scan_result)
         if not backlog:
             self._handle_zero_finding_review(text=text, scope=scope)
@@ -186,14 +186,14 @@ class CliWorkflowController:
         decision = self.context.audit_backlog_service.infer_attempt_decision(finding, new_messages)
         
         if decision.outcome is AuditAttemptOutcome.PATCH_READY:
-            self.context.audit_backlog_service.persist_mark_patch_ready(backlog, finding.finding_id)
+            self.context.audit_backlog_service.mark_patch_ready(backlog, finding.finding_id)
             return
 
         if (
             decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
             and self.context.audit_backlog_service.verify_can_retry(finding)
         ):
-            self.context.audit_backlog_service.persist_mark_retry(
+            self.context.audit_backlog_service.record_retry(
                 backlog=backlog,
                 finding_id=finding.finding_id,
                 error_code=decision.error_code,
@@ -202,7 +202,7 @@ class CliWorkflowController:
             self._handle_finding_retry(finding, text, backlog)
             return
 
-        self.context.audit_backlog_service.persist_mark_failed(
+        self.context.audit_backlog_service.mark_failed(
             backlog=backlog,
             finding_id=finding.finding_id,
             error_code=decision.error_code,
@@ -228,9 +228,9 @@ class CliWorkflowController:
         retry_decision = self.context.audit_backlog_service.infer_attempt_decision(finding, retry_messages)
         
         if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
-            self.context.audit_backlog_service.persist_mark_patch_ready(backlog, finding.finding_id)
+            self.context.audit_backlog_service.mark_patch_ready(backlog, finding.finding_id)
         else:
-            self.context.audit_backlog_service.persist_mark_failed(
+            self.context.audit_backlog_service.mark_failed(
                 backlog=backlog,
                 finding_id=finding.finding_id,
                 error_code=retry_decision.error_code,

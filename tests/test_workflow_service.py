@@ -58,8 +58,8 @@ def test_artifact_manager_persists_workspace_round_trip(tmp_path: Path) -> None:
         current_patch_index=0,
     )
 
-    artifacts.persist_workspace(workspace)
-    restored = artifacts.fetch_workspace()
+    artifacts.save_workspace(workspace)
+    restored = artifacts.load_workspace()
 
     assert restored is not None
     assert restored.mode is WorkspaceStatus.REVIEWING
@@ -72,7 +72,7 @@ def test_artifact_manager_persists_workspace_round_trip(tmp_path: Path) -> None:
 def test_workflow_service_persist_review_workspace_starts_review_mode(tmp_path: Path) -> None:
     service = WorkflowService(ArtifactManager(tmp_path))
 
-    workspace = service.persist_review_workspace(
+    workspace = service.initialize_review_workspace(
         scope=_scope(),
         latest_scan_id="scan-2",
         patch_items=[
@@ -90,7 +90,7 @@ def test_workflow_service_persist_review_workspace_starts_review_mode(tmp_path: 
 
 def test_workflow_service_persist_applied_current_patch_advances_until_idle(tmp_path: Path) -> None:
     service = WorkflowService(ArtifactManager(tmp_path))
-    service.persist_review_workspace(
+    service.initialize_review_workspace(
         scope=_scope(),
         latest_scan_id="scan-3",
         patch_items=[
@@ -99,8 +99,8 @@ def test_workflow_service_persist_applied_current_patch_advances_until_idle(tmp_
         ],
     )
 
-    first_pass = service.persist_applied_current_patch()
-    second_pass = service.persist_applied_current_patch()
+    first_pass = service.mark_current_patch_applied()
+    second_pass = service.mark_current_patch_applied()
 
     assert first_pass.patch_items[0].status is PatchReviewStatus.APPLIED
     assert first_pass.current_patch_index == 1
@@ -112,7 +112,7 @@ def test_workflow_service_persist_applied_current_patch_advances_until_idle(tmp_
 
 def test_workflow_service_replace_remaining_patch_items_keeps_applied_head(tmp_path: Path) -> None:
     service = WorkflowService(ArtifactManager(tmp_path))
-    service.persist_review_workspace(
+    service.initialize_review_workspace(
         scope=_scope(),
         latest_scan_id="scan-4",
         patch_items=[
@@ -120,7 +120,7 @@ def test_workflow_service_replace_remaining_patch_items_keeps_applied_head(tmp_p
             _item("item-2", "src/main/java/demo/UserService.java", "F2"),
         ],
     )
-    service.persist_applied_current_patch()
+    service.mark_current_patch_applied()
 
     replaced = service.replace_remaining_patch_items(
         [

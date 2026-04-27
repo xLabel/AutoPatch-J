@@ -24,11 +24,11 @@ def _draft(file_path: str, rationale: str) -> PatchDraft:
 
 def test_pending_patch_compatibility_layer_uses_workspace_storage(tmp_path: Path) -> None:
     artifacts = ArtifactManager(tmp_path)
-    artifacts.persist_pending_patch(_draft("first.java", "first"))
-    artifacts.persist_pending_patch(_draft("second.java", "second"))
+    artifacts.save_pending_patch(_draft("first.java", "first"))
+    artifacts.save_pending_patch(_draft("second.java", "second"))
 
-    pending = artifacts.fetch_pending_patches()
-    workspace = artifacts.fetch_workspace()
+    pending = artifacts.load_pending_patches()
+    workspace = artifacts.load_workspace()
 
     assert workspace is not None
     assert [draft.file_path for draft in pending] == ["second.java", "first.java"]

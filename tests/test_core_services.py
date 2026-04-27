@@ -104,9 +104,9 @@ def test_scan_service_persists_scan_result(tmp_path: Path) -> None:
     assert scope is not None
 
     scan_service = ScanService(repo_root, artifacts)
-    artifact_id, result = scan_service.run_scan_and_persist(scope)
+    artifact_id, result = scan_service.run_scan_and_save(scope)
 
-    restored = artifacts.fetch_scan_result(artifact_id)
+    restored = artifacts.load_scan_result(artifact_id)
     assert result.status == "ok"
     assert restored is not None
     assert restored.targets == ["Demo.java"]
