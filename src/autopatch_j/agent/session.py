@@ -15,8 +15,11 @@ if TYPE_CHECKING:
 @dataclass
 class AgentSession:
     """
-    Agent 会话上下文：存放核心服务引用与当前状态边界 (Domain Model)
-    职责：分离状态与执行逻辑，彻底斩断工具层与执行层的循环依赖。
+    Agent 会话上下文 (Context Carrier)。
+    核心职责：
+    1. 隔离状态与执行逻辑，所有 Tool 均通过挂载此 Session 获取底层服务能力，彻底斩断工具与 Agent 间的循环依赖。
+    2. 维护对话的焦点约束 (focus_paths)。
+    3. 记录动作指纹 (action_history)，用于触发防死循环断路器 (Loop Breaker)。
     """
     repo_root: Path
     artifacts: ArtifactManager

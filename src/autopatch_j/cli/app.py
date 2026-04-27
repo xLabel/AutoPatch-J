@@ -48,8 +48,11 @@ DSML_MARKER_PATTERN = re.compile(r"<[^>\n]*DSML[^>\n]*>", re.IGNORECASE)
 
 class AutoPatchCLI:
     """
-    AutoPatch-J CLI 门面。
-    职责：保留交互、补全与渲染，并把任务编排委托给核心服务。
+    AutoPatch-J CLI 门面与依赖注入容器 (DI Container)。
+    核心职责：
+    1. 启动容器与主事件循环 (Event Loop)，拦截退出信号。
+    2. 负责所有核心服务（Service、Manager、Agent 等）的实例化与组装。
+    3. 驱动 prompt_toolkit 终端渲染和智能补全。
     """
 
     def __init__(self, cwd: Path) -> None:

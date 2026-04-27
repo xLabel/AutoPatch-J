@@ -8,8 +8,12 @@ from autopatch_j.core.symbol_indexer import IndexEntry
 
 class CodeFetcher:
     """
-    代码提取服务。
-    职责：根据索引项或物理坐标，从磁盘提取精确代码片段。
+    代码提取与防爆服务 (Source Code Fetcher & Safeguard)。
+    核心职责：根据索引或坐标从磁盘精准提取代码片段。
+    内置关键的系统防线 (System Safeguards)：
+    1. 拦截超大文件加载（如 >100KB 或 >3000行），防止大模型 Token 爆炸。
+    2. 拒绝对目录进行全量源码提取。
+    3. 结合 Tree-sitter 提供精确到 AST 方法/类级别的代码块提取，避免无关代码污染 LLM 上下文。
     """
 
     def __init__(self, repo_root: Path) -> None:

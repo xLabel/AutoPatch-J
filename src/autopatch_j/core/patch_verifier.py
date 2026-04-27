@@ -26,8 +26,10 @@ class VerificationResult:
 
 class PatchVerifier:
     """
-    补丁质量验证中心 (QA Department)
-    职责：内聚所有补丁级别的检验能力（AST 语法校验、Scanner 漏洞重扫校验等）。
+    补丁质量验证中心 (QA Department & Safeguard)。
+    核心职责：内聚系统所有质量把关能力，形成双重防线：
+    1. 事前防线：生成草案瞬间执行 AST 语法树合法性校验 (Tree-sitter)，防止大模型写出无法编译的代码。
+    2. 事后防线：补丁落盘后执行 Semantic Rescan (扫描器重扫)，确诊目标漏洞 (check_id) 是否真正被消灭。
     """
 
     def __init__(self, repo_root: Path, scanner: JavaScanner | None) -> None:

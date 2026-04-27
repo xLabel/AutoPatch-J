@@ -122,8 +122,11 @@ class DeepSeekAliyunDialect:
 
 class LLMClient:
     """
-    LLM 通信客户端 (Infrastructure Layer)
-    职责：封装 OpenAI 兼容协议，处理流式响应与工具调用解析。
+    大模型网关与方言适配器 (LLM Gateway & Dialect Strategy)。
+    核心职责：
+    1. 封装标准的 OpenAI 兼容协议，处理大模型流式响应、思考链 (Reasoning) 与工具调用 (Tool Calls)。
+    2. 利用策略模式 (Strategy Pattern) 动态挂载方言解析器 (MessageDialect)，
+       将特定厂商的黑盒参数与专属标签（如百炼的 <｜DSML｜>）同核心业务逻辑彻底解耦。
     """
 
     ENABLE_DSML_COMPAT = False

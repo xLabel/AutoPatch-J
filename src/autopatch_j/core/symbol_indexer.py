@@ -23,8 +23,10 @@ class IndexEntry:
 
 class SymbolIndexer:
     """
-    符号索引服务。
-    职责：扫描项目并建立 SQLite 索引，必要时补充 Tree-sitter 符号信息。
+    本地符号索引引擎 (Local Symbol Indexer)。
+    核心职责：扫描 Java 项目并构建基于 SQLite + Tree-sitter 的轻量级本地缓存。
+    避免 LLM 在调用 search_symbols 时盲目全盘扫描，极大节省成本与等待时间。
+    具备降维打击保护能力（当 Tree-sitter 环境不可用时，自动平滑退化为基础文件级索引）。
     """
 
     def __init__(self, repo_root: Path, ignored_dirs: set[str] | None = None) -> None:

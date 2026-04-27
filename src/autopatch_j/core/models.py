@@ -197,13 +197,13 @@ class AuditFindingItem:
     end_line: int
     message: str
     snippet: str
-    status: AuditFindingStatus = AuditFindingStatus.PENDING
+    status: CodeAuditFindingStatus = CodeAuditFindingStatus.PENDING
     retry_count: int = 0
     last_error_code: str | None = None
     last_error_message: str | None = None
 
     def is_pending(self) -> bool:
-        return self.status is AuditFindingStatus.PENDING
+        return self.status is CodeAuditFindingStatus.PENDING
 
 
 @dataclass(slots=True)
@@ -215,6 +215,11 @@ class AuditAttemptDecision:
 
 @dataclass(slots=True)
 class ActiveWorkspace:
+    """
+    人工确认区工作台 (Rich Domain Model)。
+    核心职责：管理系统当前状态（IDLE 还是 REVIEWING），维护待确认补丁队列的游标推进，
+    并直接控制 apply / discard 时的内部状态跳变。
+    """
     mode: WorkspaceStatus
     scope: CodeScope | None
     latest_scan_id: str | None

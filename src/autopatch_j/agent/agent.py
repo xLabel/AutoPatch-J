@@ -27,8 +27,11 @@ ToolCallback = Callable[[str], None]
 
 class AutoPatchAgent:
     """
-    智能决策引擎
-    职责：在明确任务类型下执行 ReAct 循环，并遵守任务级工具白名单。
+    大模型智能决策引擎 (ReAct Execution Engine)。
+    核心职责：
+    1. 在 Workflow 赋予的明确任务类型和范围边界下，执行纯粹的 ReAct 循环。
+    2. 解析 LLM 返回的 Tool Calls 并调度执行。
+    3. 管理会话历史 (History Dehydration) 和上下文防爆。
     """
 
     TASK_TOOL_NAMES: dict[IntentType, tuple[str, ...]] = {

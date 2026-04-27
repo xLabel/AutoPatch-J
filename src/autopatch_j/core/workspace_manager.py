@@ -15,8 +15,9 @@ from autopatch_j.core.models import (
 @dataclass(slots=True)
 class WorkspaceManager:
     """
-    工作流编排服务 (Core Service)
-    职责：统一驱动工作台状态推进，不在 CLI 或 Agent 中分散维护审核状态。
+    工作台状态管理服务 (Workspace Orchestrator)。
+    核心职责：统一驱动 ActiveWorkspace 的状态推进和持久化（写入磁盘）。
+    确保在 CLI 或 Agent 中不分散维护审核状态，保证人工确认流的原子性和连续性。
     """
 
     artifacts: ArtifactManager

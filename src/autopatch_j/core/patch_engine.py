@@ -43,8 +43,11 @@ class PatchDraft:
 
 class PatchEngine:
     """
-    核心补丁引擎 (Core Service)
-    职责：负责 search-replace 草案生成和物理落盘，不包含任何语法分析。
+    核心物理补丁引擎 (Search-Replace Engine)。
+    核心职责：绝对纯粹的文本操作引擎，不理解业务逻辑。
+    1. 基于精确字符串匹配 (old_string -> new_string) 在内存中生成 Unified Diff 差异。
+    2. 处理用户输入 apply 指令时的安全落盘写入。
+    （语法树相关的保护由 PatchVerifier 负责，以保持职责单一）
     """
 
     def __init__(self, repo_root: Path) -> None:

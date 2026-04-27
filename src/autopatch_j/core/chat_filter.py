@@ -7,8 +7,10 @@ from autopatch_j.core.models import IntentType
 
 class ChatFilter:
     """
-    聊天体验治理服务 (Core Service)
-    职责：限制闲聊范围，并为聊天型回答做本地压缩与去 Markdown 化。
+    输出内容治理服务 (Output Governance)。
+    核心职责：限制非编程域的闲聊，并对 LLM 冗长的回答进行物理裁切。
+    设计理念是不鼓励模型输出长篇大论的“教程”或 Markdown 编号大纲，而是追求类似原生 CLI 工具的克制输出。
+    包含“去 Markdown 化”和智能截断逻辑，强制回答控制在几句话以内（除非用户显式给出如“详细”的展开指令）。
     """
 
     _DETAIL_HINTS: tuple[str, ...] = (

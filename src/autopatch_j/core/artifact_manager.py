@@ -20,8 +20,10 @@ from autopatch_j.scanners.base import Finding, ScanResult
 @dataclass(slots=True)
 class ArtifactManager:
     """
-    状态持久化管家 (Core Service)
-    职责：统一管理 .autopatch-j 下的扫描快照、工作台快照与兼容层补丁存储。
+    状态持久化管家 (State Persister)。
+    核心职责：统管 .autopatch-j/ 隐藏目录下所有运行时工件的读写。
+    包括扫描报告快照 (scan-*.json)、交互确认区状态快照 (workspace.json)。
+    这是保障 CLI 在多次启停或意外崩溃后，依然能无缝恢复会话状态 (Crash Recovery) 的绝对底座。
     """
 
     repo_root: Path
