@@ -40,7 +40,15 @@ class WorkflowControllerContext(Protocol):
 
 
 class CliWorkflowController:
-    """Route user text into audit, explain, chat, and patch review flows."""
+    """
+    工作流总控与调度中心 (Workflow Orchestrator)。
+    核心职责：接收原始输入，调用意图识别，并编排复杂的业务流。
+    
+    典型流转过程 (以 code_audit 为例)：
+    1. 解析范围 (Scope) -> 2. 触发静态扫描 (ScannerRunner) -> 
+    3. 压入漏洞待办 (BacklogManager) -> 4. 逐个驱动 Agent 修复 (AutoPatchAgent) -> 
+    5. 失败重试或跳过 -> 6. 最终进入人工确认队列 (WorkspaceManager)。
+    """
 
     def __init__(self, context: WorkflowControllerContext) -> None:
         self.context = context

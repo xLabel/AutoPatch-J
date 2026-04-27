@@ -10,8 +10,10 @@ from autopatch_j.core.models import CodeScope, ConversationRoute
 @dataclass(slots=True)
 class ConversationRouter:
     """
-    会话连续性判定服务 (Core Service)
-    职责：判断当前输入是新任务、当前审核的继续操作，还是命令。
+    会话连续性路由 (Continuity Router)。
+    核心职责：在系统处于人工确认环节（REVIEWING 状态）时，精确判断用户新输入的意图走向。
+    决定用户的下一句话是在“提出修改意见以继续打磨当前补丁”（REVIEW_CONTINUE），
+    还是企图“跳出当前上下文，发起全新的扫描或提问任务”（NEW_TASK），或是纯粹的系统命令（COMMAND）。
     """
 
     llm: LLMClient | None = None

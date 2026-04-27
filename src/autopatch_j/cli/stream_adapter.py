@@ -54,7 +54,12 @@ class _StreamExecution:
 
 
 class StreamAdapter:
-    """Run one agent request and adapt its streamed events to CLI rendering."""
+    """
+    流式事件渲染适配器 (Stream-to-CLI Adapter)。
+    核心职责：桥接大模型的底层吐字流与 Rich 终端 UI。
+    将 LLM 的流式文本 (Tokens)、长思考链 (Reasoning) 以及工具调用流 (Tool Calls)，
+    平滑且美观地转化为终端上的高语义化反馈（如：暗色滚动的思考过程、精简折叠的工具输出总结），有效缓解用户等待焦虑。
+    """
 
     def __init__(
         self,

@@ -10,8 +10,9 @@ from autopatch_j.core.models import CodeScope, CodeScopeKind
 
 class ScopeService:
     """
-    范围解析服务 (Core Service)
-    职责：解析 @mention，展开目录，统一产出文件级范围。
+    范围解析与锁定服务 (Scope Resolver)。
+    核心职责：解析用户的 @mention 语法，结合本地索引将目录/文件名展开并提纯为精确的文件级 CodeScope。
+    这一步是建立“上下文物理隔离墙”的关键，通过锁定焦点范围 (focus_paths)，防止大模型自由发散、漫无目的地读取整个仓库库代码。
     """
 
     def __init__(self, repo_root: Path, symbol_indexer: SymbolIndexer, ignored_dirs: set[str] | None = None) -> None:

@@ -15,8 +15,10 @@ class ToolResult:
 
 class ToolContext(Protocol):
     """
-    工具环境契约 (Duck Typing)
-    通过 Protocol 声明工具所需的环境能力，彻底斩断对 Agent 类的物理依赖。
+    工具环境契约 (Duck Typing Protocol)。
+    核心架构设计：通过 Protocol (鸭子类型) 声明 Tool 执行时所需的底层服务依赖，
+    而不是直接导入 Agent 或 WorkspaceManager 等实体类。
+    这一设计彻底斩断了 Tool 层与 Agent 层/流程层的双向循环依赖，保障了工具链的独立拓展性与单元测试的可行性。
     """
     repo_root: Path
     artifacts: Any

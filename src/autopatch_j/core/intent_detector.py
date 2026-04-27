@@ -8,8 +8,10 @@ from autopatch_j.core.models import IntentType
 
 class IntentDetector:
     """
-    意图判定服务 (Core Service)
-    职责：优先使用本地规则识别用户意图，必要时调用轻量 LLM 分类兜底。
+    意图判定服务 (Intent Gateway)。
+    核心职责：作为拦截幻觉和约束 Agent 行为的“前哨站”。
+    采用混合决策机制：优先使用本地正则/规则匹配用户意图，必要时调用轻量 LLM 分类兜底。
+    精准区分 code_audit（代码审查）、code_explain（代码解释）、patch_revise（补丁修改）等工作流。
     """
 
     def __init__(
