@@ -28,6 +28,7 @@ ENV/
 # Testing & Coverage
 .cache
 .pytest_cache/
+.pytest_tmp/
 .tox/
 .nox/
 .coverage

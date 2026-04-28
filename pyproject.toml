@@ -34,3 +34,6 @@ include = ["autopatch_j*"]
 
 [tool.setuptools.package-data]
 "autopatch_j.scanners.resources.semgrep" = ["rules/*.yml"]
+
+[tool.pytest.ini_options]
+addopts = "--basetemp=.pytest_tmp"
