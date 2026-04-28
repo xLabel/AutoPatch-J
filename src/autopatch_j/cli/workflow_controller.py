@@ -73,6 +73,12 @@ class CliWorkflowController:
                     self.context.renderer.print_info("补丁队列已清空")
             return
 
+        if user_input.lower() == "abort":
+            self.context.workspace_manager.clear_workspace()
+            self.context.agent.reset_history()
+            self.context.renderer.print_info("已中止审核流程，丢弃所有剩余补丁草案。")
+            return
+
         self.handle_chat(user_input)
 
     def handle_chat(self, text: str) -> None:

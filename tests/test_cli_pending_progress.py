@@ -145,7 +145,7 @@ def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
     assert kwargs["source_hint"] == "LLM 二次复核（静态扫描未报出问题）"
 
 
-def test_run_clears_pending_patch_candidates_on_start_and_exit(tmp_path: Path) -> None:
+def test_run_retains_pending_patch_candidates_on_start_and_exit(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
     assert cli.workspace_manager is not None
     assert cli.agent is not None
@@ -180,5 +180,7 @@ def test_run_clears_pending_patch_candidates_on_start_and_exit(tmp_path: Path) -
     cli.run()
 
     assert cli._clear_pending_patch_candidates.call_count == 2
-    assert cli.workspace_manager.load_pending_patch() is None
+    # The workspace should NOT be cleared anymore (Session Persistence)
+    assert cli.workspace_manager.load_pending_patch() is not None
+    # Agent history is still reset
     assert cli.agent.messages == []

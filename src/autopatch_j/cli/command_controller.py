@@ -45,6 +45,8 @@ class CliCommandController:
             self.handle_reindex()
         elif cmd == "/scanner":
             self.handle_scanners()
+        elif cmd == "/reset":
+            self.handle_reset()
         elif cmd == "/help":
             self.handle_help()
         elif cmd == "/quit":
@@ -60,6 +62,7 @@ class CliCommandController:
         sys_table.add_row("/status", "查看当前项目状态与索引统计")
         sys_table.add_row("/scanner", "查看扫描器状态")
         sys_table.add_row("/reindex", "重建代码索引")
+        sys_table.add_row("/reset", "重置工作台状态与对话历史")
         sys_table.add_row("/help", "显示命令帮助")
         sys_table.add_row("/quit", "安全退出程序")
 
@@ -69,11 +72,19 @@ class CliCommandController:
         act_table.add_row("@符号", "补全文件或目录")
         act_table.add_row("apply", "应用当前补丁预览")
         act_table.add_row("discard", "丢弃当前补丁草案")
+        act_table.add_row("abort", "中止审核并丢弃剩余所有补丁")
 
         self.context.renderer.print_panel("命令帮助", style=SYSTEM_STYLE)
         self.context.renderer.console.print(sys_table)
         self.context.renderer.print("\n[bold]交互说明[/bold]")
         self.context.renderer.console.print(act_table)
+
+    def handle_reset(self) -> None:
+        if self.context.workspace_manager is not None:
+            self.context.workspace_manager.clear_workspace()
+        if hasattr(self.context, 'agent') and getattr(self.context, 'agent') is not None:
+            self.context.agent.reset_history()
+        self.context.renderer.print_success("工作台与上下文已重置为初始状态。")
 
     def handle_scanners(self) -> None:
         table = Table(title="扫描器状态", show_header=True, header_style=f"bold {SYSTEM_STYLE}")

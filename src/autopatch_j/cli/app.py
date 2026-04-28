@@ -92,8 +92,6 @@ class CLI:
         self.request_exit(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
 
     def _clear_pending_patch_candidates(self) -> None:
-        if self.workspace_manager is not None:
-            self.workspace_manager.clear_workspace()
         if self.agent is not None:
             self.agent.reset_history()
 
