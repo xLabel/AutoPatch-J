@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/LLM-DeepSeek-111827?style=flat-square" alt="DeepSeek" />
   <img src="https://img.shields.io/badge/Architecture-Workflow%20%2B%20Agent-4F46E5?style=flat-square" alt="Workflow + Agent" />
   <img src="https://img.shields.io/badge/Scanner-Semgrep-22C55E?style=flat-square" alt="Semgrep" />
@@ -151,21 +151,22 @@ autopatch-j> 加一行注释说明原因
 
 以 `code_audit` 为例，一次完整执行会按下面的顺序推进：
 
-1. 用户输入先进入 `IntentService`
+1. 用户输入先进入 `IntentDetector` (意图检测)
 2. `ScopeService` 解析代码范围
 3. 路由命中 `code_audit`
-4. `ScanService` 先做本地静态扫描
-5. `AuditBacklogService` 按 finding 逐项推进
-6. `AutoPatchAgent` 基于当前 finding 调用工具取证和生成补丁
-7. `PatchEngine` 负责 `old_string` 匹配、diff 生成和语法校验
-8. `WorkflowService` 把结果写入 `ActiveWorkspace`
-9. 最后进入人工确认阶段：`apply / discard / revise`
+4. `ScannerRunner` 先做本地静态扫描
+5. `BacklogManager` 按 finding 逐项推进
+6. `Agent` 基于当前 finding 调用工具取证和生成补丁
+7. `PatchEngine` 负责 `old_string` 匹配、diff 生成
+8. `PatchVerifier` 执行语法和语义复核
+9. `CliWorkflowController` 把结果写入 `WorkspaceManager`
+10. 最后进入人工确认阶段：`apply / discard / abort / revise`
 
 其他分流入口：
 
-- `code_explain`：`AutoPatchAgent`
-- `general_chat`：`ChatService -> AutoPatchAgent`
-- `patch_explain / patch_revise`：`WorkflowService + AutoPatchAgent`
+- `code_explain`：`Agent`
+- `general_chat`：`ChatFilter -> Agent`
+- `patch_explain / patch_revise`：`CliWorkflowController + Agent`
 
 ## 架构速览
 
@@ -186,14 +187,16 @@ autopatch-j> 加一行注释说明原因
 
 系统骨架，负责：
 
-- 意图识别：`IntentService`
-- 会话连续性判断：`ContinuityJudgeService`
+- 意图识别：`IntentDetector`
+- 会话连续性判断：`ConversationRouter`
 - 范围解析：`ScopeService`
-- 扫描：`ScanService`
-- finding backlog：`AuditBacklogService`
-- 补丁工作台：`WorkflowService`
+- 扫描驱动：`ScannerRunner`
+- 待办管理：`BacklogManager`
+- 工作台事务：`WorkspaceManager`
 - 状态持久化：`ArtifactManager`
-- 输出治理：`ChatService`
+- 补丁验证：`PatchVerifier`
+- 符号索引：`SymbolIndexer`
+- 输出过滤：`ChatFilter`
 - 补丁引擎：`PatchEngine`
 
 ### `agent/`
@@ -205,6 +208,7 @@ LLM 层，负责：
 - Tool 调用
 - Prompt 编排
 - History 脱水
+- 流式方言解析：`agent/dialect/`
 
 关键文件：
 
@@ -224,13 +228,6 @@ LLM 层，负责：
 ### `scanners/`
 
 静态扫描器适配层。当前真正跑通的是 **Semgrep**。
-
-### `validators/`
-
-负责：
-
-- `Tree-sitter` 语法校验
-- 应用补丁后的语义重扫验证
 
 ## LLM 是如何被使用的
 
@@ -273,7 +270,7 @@ Agent 仍然是 ReAct 风格：
 
 - Tool 白名单
 - Focus Scope
-- Workspace 状态
+- Workspace 事务状态
 - 历史消息脱水
 
 这正是 AutoPatch-J 的关键设计取舍：  
@@ -283,7 +280,7 @@ Agent 仍然是 ReAct 风格：
 
 ### 1. 逐 finding 推进
 
-`code_audit` 不是“扫描一次后把所有问题扔给 LLM 自由发挥”，而是由 `AuditBacklogService` 建立一个 finding backlog，逐项推进。
+`code_audit` 不是“扫描一次后把所有问题扔给 LLM 自由发挥”，而是由 `BacklogManager` 建立一个 finding backlog，逐项推进。
 
 收益：
 
@@ -299,9 +296,9 @@ Agent 仍然是 ReAct 风格：
 - `old_string` 是否匹配
 - 匹配是否唯一
 - diff 是否可生成
-- `Tree-sitter` 语法校验是否通过
 
-真正 `apply` 后，`SemanticValidator` 会对目标文件重新扫描，验证对应 finding 是否真的消失。
+真正 `apply` 时，`PatchVerifier` 会执行 `Tree-sitter` 语法校验。
+真正 `apply` 后，`PatchVerifier` 会对目标文件重新扫描，验证对应 finding 是否真的消失。
 
 ### 3. 上下文控制
 
@@ -316,16 +313,16 @@ Agent 仍然是 ReAct 风格：
 
 ### 4. SQLite + Tree-sitter 索引
 
-`IndexService` 使用：
+`SymbolIndexer` 使用：
 
-- `SQLite` 做本地索引
-- `Tree-sitter` 提取 `class / method`
+- `SQLite` 做本地全量文件索引
+- `Tree-sitter` 提取 Java 源码的 `class / method`
 
-同时保留了显式降级状态，避免被兜底逻辑“看起来还能跑”所欺骗。
+它提供了向后兼容的降级保护，且对主流 IDE 的临时构建目录（如 `target/`, `node_modules/`）进行了智能隔离。
 
 ### 5. Finding 证据纠偏
 
-`FindingSnippetService` 会优先按 `path + line range` 回源文件提取真实代码片段，而不是盲信扫描器返回的原始 snippet。
+优先按 `path + line range` 回源文件提取真实代码片段，而不是盲信扫描器返回的原始 snippet。
 
 这让 finding 证据更稳定，也减少了 LLM 因脏片段而误判的概率。
 
@@ -333,7 +330,7 @@ Agent 仍然是 ReAct 风格：
 
 ### 环境要求
 
-- Python `3.11+`
+- Python `3.10+`
 - OpenAI-Compatible LLM 接口
 
 安装依赖：
@@ -344,6 +341,8 @@ pip install -e .[test]
 
 ### 环境变量
 
+可以通过系统的环境变量进行配置，或者在根目录创建 `.env`（但推荐使用系统全局配置，以保持项目工作区纯净）：
+
 ```bash
 set LLM_API_KEY=your_api_key
 set LLM_BASE_URL=https://api.deepseek.com
@@ -352,19 +351,23 @@ set LLM_MODEL=deepseek-v4-flash
 
 ### 启动
 
-#### Demo 模式
+#### Windows 自动环境构建与启动（推荐）
+
+直接双击或执行内置脚本。脚本会自动检查 Python 环境、创建 `.venv` 虚拟环境，并同步所有的依赖项，真正实现“即拉即用”：
 
 ```bash
-run.bat
+run_on_windows.bat
 ```
 
-默认会进入：
+默认会进入内置的演示工程：
 
 ```text
 examples/demo-repo
 ```
 
 #### 手动运行
+
+如果您的环境已配置完毕：
 
 ```bash
 python -m autopatch_j
@@ -374,23 +377,22 @@ python -m autopatch_j
 
 ```text
 src/autopatch_j/
-├─ agent/         # LLM Client、Prompt、ReAct Loop、Task Profile
-├─ cli/           # prompt-toolkit + Rich 交互层
-├─ core/          # Workflow、Scope、Scan、Workspace、Patch Lifecycle
+├─ agent/         # LLM Client、Prompt、ReAct Loop、Task Profile、Dialect 策略
+├─ cli/           # prompt-toolkit + Rich 交互层、Workflow 调度
+├─ core/          # 域模型、扫描、索引、事务工作台、补丁验证与生命周期
 ├─ scanners/      # Semgrep 与扩展扫描器适配位
-├─ tools/         # Agent 可调用工具
-└─ validators/    # 语法与语义校验
+└─ tools/         # 暴露给 Agent 可调用的工具集
 
-examples/demo-repo/   # 内置演示仓库
-tests/                # 回归测试
+examples/demo-repo/   # 内置漏洞演示仓库
+tests/                # 回归测试套件
 ```
 
 ---
 
-如果你想最快进入代码，建议从这里开始：
+如果你想最快进入代码，建议从这里开始阅读核心控制流：
 
 1. `src/autopatch_j/cli/app.py`
-2. `src/autopatch_j/core/workflow_service.py`
+2. `src/autopatch_j/cli/workflow_controller.py`
 3. `src/autopatch_j/agent/agent.py`
 4. `src/autopatch_j/core/patch_engine.py`
-5. `src/autopatch_j/core/scan_service.py`
+5. `src/autopatch_j/core/scanner_runner.py`
