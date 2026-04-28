@@ -79,8 +79,11 @@ class CLI:
         self.workflow_controller: CliWorkflowController | None = None
         self.stream_adapter: StreamAdapter | None = None
         self.prompt_session: PromptSession[str] | None = None
+        self.is_first_run: bool = False
 
         if self.repo_root:
+            index_db_path = self.repo_root / ".autopatch-j" / "index.db"
+            self.is_first_run = not index_db_path.exists()
             self._init_services(self.repo_root)
 
         signal.signal(signal.SIGINT, self._handle_interrupt)
@@ -116,8 +119,7 @@ class CLI:
             )
             self.renderer.print_info("未检测到有效目录，请进入项目目录后执行 /init")
         else:
-            index_db_path = self.repo_root / ".autopatch-j" / "index.db"
-            if not index_db_path.exists():
+            if self.is_first_run:
                 self.renderer.print_panel(
                     f"当前项目: {self.repo_root}\n"
                     "[bold yellow]检测到首次在本项目运行。[/]\n"
@@ -126,7 +128,8 @@ class CLI:
                     style=SYSTEM_STYLE,
                 )
             else:
-                self._init_services(self.repo_root)
+                # _init_services is already called in __init__, but it's safe to call it or just use the services
+                # Wait, we already called _init_services in __init__. So we don't need to call it again.
                 stats = self.symbol_indexer.get_stats() if self.symbol_indexer else {}
                 file_count = stats.get("file", 0)
                 self.renderer.print_panel(
