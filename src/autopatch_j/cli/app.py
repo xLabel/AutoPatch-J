@@ -108,17 +108,35 @@ class CLI:
             return 1
         self._clear_pending_patch_candidates()
 
-        self.renderer.print_panel(
-            "AutoPatch-J: Java 安全与正确性修复智能体\n输入 /help 查看命令，使用 @ 符号绑定上下文。",
-            title="AutoPatch-J",
-            style=SYSTEM_STYLE,
-        )
         if not self.repo_root:
-            self.renderer.print_info("未检测到 Java 项目，请进入项目目录后执行 /init")
-        else:
-            self.renderer.print(
-                f"[{MUTED_STYLE}]当前项目:[/] [bold {SYSTEM_STYLE}]{self.repo_root}[/]"
+            self.renderer.print_panel(
+                "AutoPatch-J: Java 安全与正确性修复智能体\n输入 /help 查看命令，使用 @ 符号绑定上下文。",
+                title="AutoPatch-J",
+                style=SYSTEM_STYLE,
             )
+            self.renderer.print_info("未检测到有效目录，请进入项目目录后执行 /init")
+        else:
+            index_db_path = self.repo_root / ".autopatch-j" / "index.db"
+            if not index_db_path.exists():
+                self.renderer.print_panel(
+                    f"当前项目: {self.repo_root}\n"
+                    "[bold yellow]检测到首次在本项目运行。[/]\n"
+                    "👉 请在下方输入 [bold green]/init[/] 执行初始化，系统将下载扫描器规则并构建本地代码索引。",
+                    title="欢迎使用 AutoPatch-J",
+                    style=SYSTEM_STYLE,
+                )
+            else:
+                self._init_services(self.repo_root)
+                stats = self.symbol_indexer.get_stats() if self.symbol_indexer else {}
+                file_count = stats.get("file", 0)
+                self.renderer.print_panel(
+                    f"当前项目: {self.repo_root}\n"
+                    f"[bold green][就绪] 已静默加载现有工作台与本地索引 (共包含 {file_count} 个 Java 文件)。[/]\n"
+                    f"💡 提示：若代码发生大规模变更，请使用 [bold]/reindex[/] 手动刷新 AST 缓存。\n"
+                    f"输入 /help 查看命令，使用 @ 符号绑定上下文。",
+                    title="AutoPatch-J",
+                    style=SYSTEM_STYLE,
+                )
 
         while True:
             try:

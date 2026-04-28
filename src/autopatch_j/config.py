@@ -8,13 +8,13 @@ from pathlib import Path
 SEMGREP_RULE_RELATIVE_PATH = "scanners/resources/semgrep/rules/java.yml"
 
 
-def discover_repo_root(start_path: Path) -> Path | None:
-    """向上查找包含 .git 或 .autopatch-j 的目录"""
-    current = start_path.resolve()
-    for parent in [current] + list(current.parents):
-        if (parent / ".git").exists() or (parent / ".autopatch-j").exists():
-            return parent
-    return None
+def discover_repo_root(start_path: Path) -> Path:
+    """
+    返回项目边界。
+    遵循极简主义设计：用户启动 CLI 时所在的目录，即为绝对的根目录。
+    不再向上级盲目探测特征文件，将作用域的控制权完全交还给用户。
+    """
+    return start_path.resolve()
 
 
 def get_project_state_dir(repo_root: Path) -> Path:

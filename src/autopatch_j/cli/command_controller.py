@@ -95,10 +95,10 @@ class CliCommandController:
 
     def handle_init(self) -> None:
         self.context.renderer.print_step("正在初始化 AutoPatch-J 环境...")
-        self.context.repo_root = self.context.cwd
+        # self.context.repo_root has already been resolved by discover_repo_root
         self.context._init_services(self.context.repo_root)
-        if getattr(self.context, "artifacts", None) is not None:
-            self.context.artifacts.clear_pending_patch()
+        if getattr(self.context, "artifact_manager", None) is not None:
+            self.context.workspace_manager.clear_workspace() # Use workspace_manager.clear_workspace instead of artifacts.clear_pending_patch
 
         status, _ = install_managed_semgrep_runtime()
         self.context.renderer.print_step(f"扫描器运行时自检: {status}")
@@ -106,6 +106,14 @@ class CliCommandController:
         assert self.context.symbol_indexer is not None
         stats = self.context.symbol_indexer.rebuild_index()
         self.context.renderer.print_success(f"初始化完成，索引 {stats.get('total', 0)} 项")
+        
+        if stats.get("file", 0) == 0:
+            self.context.renderer.print_panel(
+                "[bold yellow]索引构建完成，但未扫描到任何 .java 文件！[/]\n"
+                "这似乎不是一个包含 Java 源码的项目，AutoPatch-J 的上下文感知能力将严重受限。",
+                title="警告",
+                style="bold yellow",
+            )
 
     def handle_status(self) -> None:
         if not self.context.symbol_indexer or not self.context.workspace_manager:
