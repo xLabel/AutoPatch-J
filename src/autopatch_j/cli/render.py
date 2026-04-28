@@ -151,6 +151,7 @@ class CliRenderer:
         guide.add_column()
         guide.add_row("apply", "  > 应用此补丁并执行三级验证")
         guide.add_row("discard", "  > 丢弃此草案并进入下一个")
+        guide.add_row("abort", "  > 中止审核流程并清空队列")
         guide.add_row("<文本>", "  > 直接输入反馈让 Agent 重新生成")
 
         # 使用 Group 组合
