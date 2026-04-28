@@ -43,8 +43,6 @@ from autopatch_j.core.workspace_manager import WorkspaceManager
 from autopatch_j.core.patch_verifier import PatchVerifier
 from autopatch_j.scanners import get_scanner, DEFAULT_SCANNER_NAME
 
-DSML_MARKER_PATTERN = re.compile(r"<[^>\n]*DSML[^>\n]*>", re.IGNORECASE)
-
 
 class CLI:
     """
@@ -347,7 +345,6 @@ class CLI:
             workspace_manager=self.workspace_manager,
             chat_filter=self.chat_filter,
             agent=self.agent,
-            sanitize_output=self._sanitize_assistant_output,
             summarize_observation=self._summarize_observation,
             describe_current_scope_paths=self._describe_current_scope_paths,
             build_static_scan_summary=self._build_static_scan_summary,

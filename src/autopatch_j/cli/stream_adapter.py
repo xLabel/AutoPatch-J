@@ -64,12 +64,10 @@ class StreamAdapter:
 
     def __init__(
         self,
-        *,
         renderer: CliRenderer,
         workspace_manager: WorkspaceManager | None,
         chat_filter: ChatFilter | None,
-        agent: Any,
-        sanitize_output: Callable[[str], str],
+        agent: Agent | None,
         summarize_observation: Callable[[str | None, str], str],
         describe_current_scope_paths: Callable[[], list[str]],
         build_static_scan_summary: Callable[[], str],
@@ -79,7 +77,6 @@ class StreamAdapter:
         self.workspace_manager = workspace_manager
         self.chat_filter = chat_filter
         self.agent = agent
-        self._sanitize_output = sanitize_output
         self._summarize_observation = summarize_observation
         self._describe_current_scope_paths = describe_current_scope_paths
         self._build_static_scan_summary = build_static_scan_summary
@@ -137,7 +134,7 @@ class StreamAdapter:
             self.renderer.print()
             return new_messages
 
-        buffered_answer = self._sanitize_output("".join(execution.buffered_answer_parts))
+        buffered_answer = "".join(execution.buffered_answer_parts)
         if buffered_answer:
             rendered_answer = self.chat_filter.build_display_answer(
                 user_text=raw_user_text or "",
@@ -153,7 +150,7 @@ class StreamAdapter:
             else:
                 self.renderer.print(rendered_answer, end="")
         else:
-            sanitized_final_answer = self._sanitize_output(final_answer or "")
+            sanitized_final_answer = final_answer or ""
             if sanitized_final_answer:
                 rendered_answer = self.chat_filter.build_display_answer(
                     user_text=raw_user_text or "",
