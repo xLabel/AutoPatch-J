@@ -27,6 +27,7 @@ class AutoPatchCompleter(Completer):
             "/status": "查看系统状态",
             "/scanner": "查看扫描器状态",
             "/reindex": "刷新代码符号索引",
+            "/reset": "重置工作台状态与对话历史",
             "/help": "显示命令帮助",
             "/quit": "退出程序"
         }
