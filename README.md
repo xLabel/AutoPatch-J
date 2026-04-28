@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11+" />
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
   <img src="https://img.shields.io/badge/LLM-DeepSeek-111827?style=flat-square" alt="DeepSeek" />
   <img src="https://img.shields.io/badge/Architecture-Workflow%20%2B%20Agent-4F46E5?style=flat-square" alt="Workflow + Agent" />
   <img src="https://img.shields.io/badge/Scanner-Semgrep-22C55E?style=flat-square" alt="Semgrep" />
@@ -151,21 +151,22 @@ It is not intended to be a general lifestyle chatbot.
 
 Using `code_audit` as an example, a full execution goes through the following steps:
 
-1. user input enters `IntentService`
+1. user input enters `IntentDetector`
 2. `ScopeService` resolves the code scope
 3. routing selects `code_audit`
-4. `ScanService` performs the local static scan first
-5. `AuditBacklogService` advances the findings one by one
-6. `AutoPatchAgent` uses tools to gather evidence and generate a patch for the current finding
-7. `PatchEngine` handles `old_string` matching, diff generation, and syntax validation
-8. `WorkflowService` writes the result into `ActiveWorkspace`
-9. the flow enters human confirmation: `apply / discard / revise`
+4. `ScannerRunner` performs the local static scan first
+5. `BacklogManager` advances the findings one by one
+6. `Agent` uses tools to gather evidence and generate a patch for the current finding
+7. `PatchEngine` handles `old_string` matching and diff generation
+8. `PatchVerifier` handles syntax and semantic validation
+9. `CliWorkflowController` writes the result into `WorkspaceManager`
+10. Finally, human confirmation: `apply / discard / abort / revise`
 
-Other routes:
+Other entry points:
 
-- `code_explain`: `AutoPatchAgent`
-- `general_chat`: `ChatService -> AutoPatchAgent`
-- `patch_explain / patch_revise`: `WorkflowService + AutoPatchAgent`
+- `code_explain`: `Agent`
+- `general_chat`: `ChatFilter -> Agent`
+- `patch_explain / patch_revise`: `CliWorkflowController + Agent`
 
 ## Architecture at a Glance
 
@@ -186,14 +187,16 @@ Primary entry point:
 
 The system backbone, responsible for:
 
-- intent detection: `IntentService`
-- session continuity decisions: `ContinuityJudgeService`
+- intent detection: `IntentDetector`
+- session continuity decisions: `ConversationRouter`
 - scope resolution: `ScopeService`
-- scanning: `ScanService`
-- finding backlog management: `AuditBacklogService`
-- patch workspace management: `WorkflowService`
+- scanning: `ScannerRunner`
+- finding backlog management: `BacklogManager`
+- patch workspace management: `WorkspaceManager`
 - state persistence: `ArtifactManager`
-- output shaping: `ChatService`
+- patch validation: `PatchVerifier`
+- symbol indexing: `SymbolIndexer`
+- output shaping: `ChatFilter`
 - patch application rules: `PatchEngine`
 
 ### `agent/`
@@ -205,6 +208,7 @@ The LLM layer, responsible for:
 - tool calls
 - prompt composition
 - history dehydration
+- streaming dialect strategies: `agent/dialect/`
 
 Key files:
 
@@ -224,13 +228,6 @@ Tool adapters exposed to the Agent:
 ### `scanners/`
 
 The static scanner adapter layer. The only scanner fully wired into the main path right now is **Semgrep**.
-
-### `validators/`
-
-Responsible for:
-
-- `Tree-sitter` syntax validation
-- semantic rescans after patch application
 
 ## How the LLM Is Used
 
@@ -273,7 +270,7 @@ But the loop always runs under these constraints:
 
 - tool whitelist
 - focus scope
-- workspace state
+- workspace transactional state
 - dehydrated history
 
 That is the key design tradeoff in AutoPatch-J:  
@@ -284,7 +281,7 @@ That is the key design tradeoff in AutoPatch-J:
 ### 1. Finding-by-finding progression
 
 `code_audit` is not "scan once and let the LLM freestyle over the whole result set".  
-Instead, `AuditBacklogService` builds a finding backlog and advances it item by item.
+Instead, `BacklogManager` builds a finding backlog and advances it item by item.
 
 Benefits:
 
@@ -300,9 +297,9 @@ At the draft stage, `PatchEngine` checks:
 - whether `old_string` matches
 - whether the match is unique
 - whether a diff can be generated
-- whether `Tree-sitter` syntax validation passes
 
-After a real `apply`, `SemanticValidator` rescans the target file and verifies that the corresponding finding actually disappeared.
+Upon real `apply`, `PatchVerifier` runs `Tree-sitter` syntax validation.
+After a real `apply`, `PatchVerifier` rescans the target file and verifies that the corresponding finding actually disappeared.
 
 ### 3. Context control
 
@@ -317,16 +314,16 @@ The goal is not "show the model more". It is "show the model only what is truly 
 
 ### 4. SQLite + Tree-sitter indexing
 
-`IndexService` uses:
+`SymbolIndexer` uses:
 
-- `SQLite` for local indexing
-- `Tree-sitter` to extract `class / method`
+- `SQLite` for local full-file indexing
+- `Tree-sitter` to extract `class / method` from Java sources
 
-It also keeps explicit degradation state so the system is not fooled by fallback logic that merely "looks like it still works".
+It provides backward-compatible degradation protection and smartly isolates IDE temporary build directories (like `target/`, `node_modules/`).
 
 ### 5. Correcting finding evidence
 
-`FindingSnippetService` prefers reconstructing real code snippets from `path + line range`, instead of blindly trusting the raw snippet returned by the scanner.
+The system prefers reconstructing real code snippets from `path + line range`, instead of blindly trusting the raw snippet returned by the scanner.
 
 This makes finding evidence more stable and reduces the chance that the LLM is misled by dirty or unrelated fragments.
 
@@ -334,7 +331,7 @@ This makes finding evidence more stable and reduces the chance that the LLM is m
 
 ### Requirements
 
-- Python `3.11+`
+- Python `3.10+`
 - an OpenAI-Compatible LLM endpoint
 
 Install dependencies:
@@ -345,6 +342,8 @@ pip install -e .[test]
 
 ### Environment Variables
 
+You can configure these via system environment variables, or create a `.env` file in the root directory (though using global system variables is recommended to keep the project workspace clean):
+
 ```bash
 set LLM_API_KEY=your_api_key
 set LLM_BASE_URL=https://api.deepseek.com
@@ -353,19 +352,23 @@ set LLM_MODEL=deepseek-v4-flash
 
 ### Launch
 
-#### Demo Mode
+#### Windows Automated Environment Setup & Launch (Recommended)
+
+Simply double-click or execute the built-in script. The script will automatically check your Python environment, create a `.venv` virtual environment, and sync all dependencies, achieving a true "pull-and-play" experience:
 
 ```bash
-run.bat
+run_on_windows.bat
 ```
 
-The default target is:
+By default, it enters the built-in demo repository:
 
 ```text
 examples/demo-repo
 ```
 
 #### Manual Run
+
+If your environment is already configured:
 
 ```bash
 python -m autopatch_j
@@ -375,23 +378,22 @@ python -m autopatch_j
 
 ```text
 src/autopatch_j/
-├─ agent/         # LLM client, prompts, ReAct loop, task profiles
-├─ cli/           # prompt-toolkit + Rich interaction layer
-├─ core/          # workflow, scope, scan, workspace, patch lifecycle
+├─ agent/         # LLM client, prompts, ReAct loop, task profiles, dialect strategies
+├─ cli/           # prompt-toolkit + Rich interaction layer, workflow orchestration
+├─ core/          # domain models, scan, index, transactional workspace, patch validation
 ├─ scanners/      # Semgrep and future scanner adapters
-├─ tools/         # tools exposed to the Agent
-└─ validators/    # syntax and semantic validation
+└─ tools/         # toolset exposed to the Agent
 
-examples/demo-repo/   # built-in demo repository
-tests/                # regression tests
+examples/demo-repo/   # built-in demo repository for vulnerabilities
+tests/                # regression test suite
 ```
 
 ---
 
-If you want to enter the codebase quickly, start here:
+If you want to enter the codebase quickly, start reading the core control flow here:
 
 1. `src/autopatch_j/cli/app.py`
-2. `src/autopatch_j/core/workflow_service.py`
+2. `src/autopatch_j/cli/workflow_controller.py`
 3. `src/autopatch_j/agent/agent.py`
 4. `src/autopatch_j/core/patch_engine.py`
-5. `src/autopatch_j/core/scan_service.py`
+5. `src/autopatch_j/core/scanner_runner.py`
