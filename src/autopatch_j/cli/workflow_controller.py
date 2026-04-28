@@ -19,6 +19,8 @@ from autopatch_j.core.scope_service import ScopeService
 from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
+from autopatch_j.config import GlobalConfig
+
 class WorkflowControllerContext(Protocol):
     renderer: Any
     agent: Any
@@ -32,7 +34,6 @@ class WorkflowControllerContext(Protocol):
     command_controller: Any
 
     def _run_agent_request(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
-    def _should_show_full_tool_output(self, text: str) -> bool: ...
     def _describe_scope_paths(self, scope: CodeScope) -> list[str]: ...
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]: ...
     def _build_static_scan_summary(self) -> str: ...
@@ -257,7 +258,7 @@ class CliWorkflowController:
         assert self.context.chat_filter is not None
 
         scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
-        compact_observation = not self.context._should_show_full_tool_output(text)
+        compact_observation = not GlobalConfig.debug_mode
         self.context.renderer.print_user_anchor(text)
         if scope is not None and scope.is_locked:
             self.context.agent.session.set_focus_paths(scope.focus_files)
@@ -309,7 +310,7 @@ class CliWorkflowController:
                 raw_user_text=text,
                 **kwargs
             ),
-            compact_observation=not self.context._should_show_full_tool_output(text),
+            compact_observation=not GlobalConfig.debug_mode,
             answer_intent=IntentType.GENERAL_CHAT,
             raw_user_text=text,
             show_chat_anchors=True,

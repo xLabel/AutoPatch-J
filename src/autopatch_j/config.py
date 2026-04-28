@@ -53,6 +53,9 @@ class AppConfig:
     # 标准 API 请保持 standard；若使用阿里云百炼的旧版 DeepSeek 接口(包含 <｜DSML｜> 标签)，请配置为 "bailian-dsml"
     llm_stream_dialect: str = field(default_factory=lambda: os.getenv("LLM_STREAM_DIALECT", "standard"))
 
+    # 全局调试模式 (默认: False)。开启后控制台将完整打印大模型调用工具时的底层日志 (如源码截取等)。
+    debug_mode: bool = field(default_factory=lambda: os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true")
+
     # 2. 扫描器运行时配置
     semgrep_version: str = "1.160.0"
     semgrep_install_lock_timeout: int = 600

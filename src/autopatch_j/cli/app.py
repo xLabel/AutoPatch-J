@@ -219,23 +219,6 @@ class CLI:
         match = DSML_MARKER_PATTERN.search(text)
         return text[:match.start()].rstrip() if match else text
 
-    def _should_show_full_tool_output(self, text: str) -> bool:
-        hints = (
-            "展示代码",
-            "显示代码",
-            "贴出代码",
-            "展示源码",
-            "显示源码",
-            "详细过程",
-            "完整过程",
-            "工具结果",
-            "原始输出",
-            "完整输出",
-            "逐步过程",
-        )
-        compact = re.sub(r"\s+", "", text)
-        return any(hint in compact for hint in hints)
-
     def _summarize_observation(self, tool_name: str | None, message: str) -> str:
         if tool_name == "read_source_code":
             match = re.search(r"\[[^:\]]+:\s*([^\]]+)\]", message)
