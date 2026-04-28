@@ -134,7 +134,7 @@ class CLI:
                 file_count = stats.get("file", 0)
                 self.renderer.print_panel(
                     f"当前项目: {self.repo_root}\n"
-                    f"[bold green][就绪] 已静默加载现有工作台与本地索引 (共包含 {file_count} 个 Java 文件)。[/]\n"
+                    f"[bold green][就绪] 已静默加载现有工作台与本地索引 (共包含 {file_count} 个项目文件)。[/]\n"
                     f"💡 提示：若代码发生大规模变更，请使用 [bold]/reindex[/] 手动刷新 AST 缓存。\n"
                     f"输入 /help 查看命令，使用 @ 符号绑定上下文。",
                     title="AutoPatch-J",

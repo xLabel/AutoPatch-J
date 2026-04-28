@@ -107,10 +107,10 @@ class CliCommandController:
         stats = self.context.symbol_indexer.rebuild_index()
         self.context.renderer.print_success(f"初始化完成，索引 {stats.get('total', 0)} 项")
         
-        if stats.get("file", 0) == 0:
+        if stats.get("class", 0) == 0 and stats.get("method", 0) == 0:
             self.context.renderer.print_panel(
-                "[bold yellow]索引构建完成，但未扫描到任何 .java 文件！[/]\n"
-                "这似乎不是一个包含 Java 源码的项目，AutoPatch-J 的上下文感知能力将严重受限。",
+                "[bold yellow]索引构建完成，但未提取到任何 Java 类或方法！[/]\n"
+                "这似乎不是一个标准的 Java 源码项目，AutoPatch-J 的大模型上下文感知能力将严重受限。",
                 title="警告",
                 style="bold yellow",
             )
