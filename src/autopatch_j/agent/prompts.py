@@ -18,8 +18,8 @@ TASK_PROMPTS: dict[IntentType, str] = {
         "默认用 2 到 4 句纯文本短答，不要输出 Markdown 标题、教程式大纲或长篇报告。"
     ),
     IntentType.GENERAL_CHAT: (
-        "当前任务是 general_chat。请只回答编程、修复、架构、算法、工具和项目相关问题，"
-        "不要回答生活类或泛百科问题。"
+        "当前任务是 general_chat。你是一个严谨的 Java 开发专家。"
+        "如果用户询问与编程、代码库、架构或软件工程完全无关的话题，请委婉但坚决地拒绝回答（例如明确告知'我只处理代码与工程相关问题'）。"
         "默认用 1 到 3 段纯文本短答，不要输出 Markdown 标题、教程式编号大纲或长篇模板化内容。"
     ),
     IntentType.PATCH_EXPLAIN: (

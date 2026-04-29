@@ -10,17 +10,7 @@ from autopatch_j.core.scanner_runner import ScannerRunner
 from autopatch_j.core.scope_service import ScopeService
 
 
-def test_intent_detector_prefers_local_rules() -> None:
-    service = IntentDetector()
-
-    assert service.detect_intent("@A.java 检查代码", has_pending_review=False) is IntentType.CODE_AUDIT
-    assert service.detect_intent("@A.java 解释一下代码的功能", has_pending_review=False) is IntentType.CODE_EXPLAIN
-    assert service.detect_intent("为什么这么改？", has_pending_review=True) is IntentType.PATCH_EXPLAIN
-    assert service.detect_intent("加一句注释", has_pending_review=True) is IntentType.PATCH_REVISE
-    assert service.detect_intent("加一行注释说明原因", has_pending_review=True) is IntentType.PATCH_REVISE
-
-
-def test_intent_detector_falls_back_to_llm_classifier() -> None:
+def test_intent_detector_relies_entirely_on_llm_classifier() -> None:
     service = IntentDetector(
         classify_with_llm=lambda text, has_pending_review: (
             IntentType.GENERAL_CHAT if not has_pending_review else IntentType.PATCH_EXPLAIN
@@ -30,11 +20,9 @@ def test_intent_detector_falls_back_to_llm_classifier() -> None:
     assert service.detect_intent("@A.java 看看这个", has_pending_review=False) is IntentType.GENERAL_CHAT
     assert service.detect_intent("@A.java 这个咋样", has_pending_review=True) is IntentType.PATCH_EXPLAIN
 
-
-def test_intent_detector_defaults_review_ambiguity_to_patch_revise() -> None:
-    service = IntentDetector()
-
-    assert service.detect_intent("这个再看看", has_pending_review=True) is IntentType.PATCH_REVISE
+    service_fallback = IntentDetector()
+    assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=False) is IntentType.GENERAL_CHAT
+    assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=True) is IntentType.PATCH_REVISE
 
 
 def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> None:

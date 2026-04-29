@@ -299,10 +299,7 @@ class CliWorkflowController:
         assert self.context.agent is not None
         assert self.context.chat_filter is not None
         self.context.renderer.print_user_anchor(text)
-        if not self.context.chat_filter.verify_programming_related(text):
-            self.context.renderer.print_assistant_anchor()
-            self.context.renderer.print_plain(self.context.chat_filter.fetch_out_of_scope_reply())
-            return
+        
         self.context.agent.session.set_focus_paths([])
         self.context._run_agent_request(
             prompt=text,
