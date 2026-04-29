@@ -53,6 +53,7 @@ class PatchProposalTool(Tool):
             return ToolResult(
                 status="error",
                 message=f"焦点约束阻止越界修复：{file_path} 不在当前允许范围内。允许路径：{allowed}",
+                summary=f"修复越界: {file_path}",
                 payload={
                     "file_path": file_path,
                     "associated_finding_id": associated_finding_id,
@@ -91,6 +92,7 @@ class PatchProposalTool(Tool):
             return ToolResult(
                 status="error",
                 message=f"补丁提案生成失败：{str(e)}",
+                summary=f"补丁生成失败 (找不到文件): {file_path}",
                 payload={
                     "file_path": file_path,
                     "associated_finding_id": associated_finding_id,
@@ -103,6 +105,7 @@ class PatchProposalTool(Tool):
             return ToolResult(
                 status="error",
                 message=f"补丁提案生成失败：{str(e)}",
+                summary=f"补丁生成失败 (old_string 失配): {file_path}",
                 payload={
                     "file_path": file_path,
                     "associated_finding_id": associated_finding_id,
@@ -115,6 +118,7 @@ class PatchProposalTool(Tool):
             return ToolResult(
                 status="error",
                 message=f"补丁提案生成失败：old_string 匹配了 {e.occurrences} 处，匹配不唯一。",
+                summary=f"补丁生成失败 (old_string 不唯一): {file_path}",
                 payload={
                     "file_path": file_path,
                     "associated_finding_id": associated_finding_id,
@@ -161,6 +165,7 @@ class PatchProposalTool(Tool):
         return ToolResult(
             status=draft.status,
             message=message,
+            summary=f"已起草补丁草案: {file_path}",
             payload={
                 "file_path": file_path,
                 "associated_finding_id": associated_finding_id,

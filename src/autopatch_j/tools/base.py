@@ -10,6 +10,7 @@ class ToolResult:
     """工具执行结果的通用契约"""
     status: str
     message: str
+    summary: str | None = None
     payload: Any = None
 
 

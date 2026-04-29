@@ -34,12 +34,17 @@ class FindingRetrieverTool(Tool):
             return ToolResult(
                 status="error",
                 message=f"无效的漏洞句柄格式：{finding_id}。请使用 F1、F2 这种格式。",
+                summary=f"获取失败: {finding_id}",
             )
 
         finding_index = int(match.group(1)) - 1
         scan_files = sorted(artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
-            return ToolResult(status="error", message="系统中未找到扫描记录，请先发起一次代码检查。")
+            return ToolResult(
+                status="error", 
+                message="系统中未找到扫描记录，请先发起一次代码检查。",
+                summary="获取失败: 未找到扫描记录",
+            )
 
         active_scan_id = scan_files[0].stem
         finding = artifact_manager.get_finding_by_index(active_scan_id, finding_index)
@@ -47,6 +52,7 @@ class FindingRetrieverTool(Tool):
             return ToolResult(
                 status="error",
                 message=f"无法从快照 {active_scan_id} 中取回句柄为 {finding_id} 的详情。",
+                summary=f"获取失败: 未找到漏洞 {finding_id}",
             )
 
         if not self.context.is_path_in_focus(finding.path):
@@ -54,6 +60,7 @@ class FindingRetrieverTool(Tool):
             return ToolResult(
                 status="error",
                 message=f"焦点约束阻止越界取证：{finding.path} 不在当前允许范围内。允许路径：{allowed}",
+                summary=f"取证越界: {finding.path}",
             )
 
         finding.snippet = FindingSnippetService(self.context.repo_root).fetch_resolved_snippet(
@@ -68,4 +75,10 @@ class FindingRetrieverTool(Tool):
         message += f"- **文件位置**: {finding.path}:{finding.start_line}\n"
         message += f"- **漏洞描述**: {finding.message}\n"
         message += f"- **代码证据**:\n```java\n{finding.snippet}\n```"
-        return ToolResult(status="ok", message=message, payload=finding.to_dict())
+
+        return ToolResult(
+            status="ok", 
+            message=message, 
+            summary=f"已获取 finding 详情: {finding_id}",
+            payload=finding.to_dict()
+        )

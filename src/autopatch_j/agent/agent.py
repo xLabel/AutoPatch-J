@@ -24,6 +24,7 @@ from autopatch_j.tools.source_reader_tool import SourceReaderTool
 from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 
 ToolCallback = Callable[[str], None]
+ObservationCallback = Callable[[str, str | None], None]
 
 
 class Agent:
@@ -275,7 +276,7 @@ class Agent:
             if self.session.is_stuck_in_loop():
                 stuck_message = "检测到大模型陷入死循环（连续 3 次执行相同的不合法操作），已主动阻断以节省成本。请人工介入审查。"
                 if on_observation:
-                    on_observation(stuck_message)
+                    on_observation(stuck_message, "陷入死循环被阻断")
                 return stuck_message
 
             for call in response.tool_calls:
@@ -283,7 +284,7 @@ class Agent:
                     on_tool_start(call.name)
                 observation = self._execute_tool_call(call, set(allowed_tool_names))
                 if on_observation:
-                    on_observation(observation.message)
+                    on_observation(observation.message, observation.summary)
                 self.messages.append(
                     {
                         "role": "tool",

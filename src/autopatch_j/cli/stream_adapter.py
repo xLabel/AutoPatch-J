@@ -39,12 +39,11 @@ class _StreamExecution:
         self.current_tool_name = tool_name
         self.renderer.print_tool_start(tool_name, caller="LLM")
 
-    def on_observation(self, message: str) -> None:
+    def on_observation(self, message: str, summary: str | None = None) -> None:
         self.finish_reasoning_status_if_visible()
         if self.compact_observation:
-            self.renderer.print_info(
-                self.stream._summarize_observation(self.current_tool_name, message)
-            )
+            fallback = summary if summary else f"已执行工具: {self.current_tool_name}"
+            self.renderer.print_info(fallback)
             return
         self.renderer.print_observation(message)
 
@@ -68,7 +67,6 @@ class StreamAdapter:
         workspace_manager: WorkspaceManager | None,
         chat_filter: ChatFilter | None,
         agent: Agent | None,
-        summarize_observation: Callable[[str | None, str], str],
         describe_current_scope_paths: Callable[[], list[str]],
         build_static_scan_summary: Callable[[], str],
         build_local_no_issue_summary: Callable[[], str],
@@ -77,7 +75,6 @@ class StreamAdapter:
         self.workspace_manager = workspace_manager
         self.chat_filter = chat_filter
         self.agent = agent
-        self._summarize_observation = summarize_observation
         self._describe_current_scope_paths = describe_current_scope_paths
         self._build_static_scan_summary = build_static_scan_summary
         self._build_local_no_issue_summary = build_local_no_issue_summary

@@ -345,7 +345,6 @@ class CLI:
             workspace_manager=self.workspace_manager,
             chat_filter=self.chat_filter,
             agent=self.agent,
-            summarize_observation=self._summarize_observation,
             describe_current_scope_paths=self._describe_current_scope_paths,
             build_static_scan_summary=self._build_static_scan_summary,
             build_local_no_issue_summary=self._build_local_no_issue_summary,

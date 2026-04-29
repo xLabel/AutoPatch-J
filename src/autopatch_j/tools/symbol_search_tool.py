@@ -27,10 +27,19 @@ class SymbolSearchTool(Tool):
             results = [entry for entry in results if self.context.is_path_in_focus(entry.path)]
 
         if not results:
-            return ToolResult(status="ok", message=f"未找到与 '{query}' 相关的符号。")
+            return ToolResult(
+                status="ok", 
+                message=f"未找到与 '{query}' 相关的符号。",
+                summary=f"未找到符号: {query}"
+            )
 
         msg = f"为您找到以下与 '{query}' 相关的匹配项：\n"
         for i, entry in enumerate(results, 1):
             msg += f"{i}. [{entry.kind}] {entry.name} -> {entry.path}:{entry.line}\n"
 
-        return ToolResult(status="ok", message=msg, payload=[e.path for e in results])
+        return ToolResult(
+            status="ok", 
+            message=msg, 
+            summary=f"已定位符号: {query}",
+            payload=[e.path for e in results]
+        )

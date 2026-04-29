@@ -50,6 +50,7 @@ class SourceReaderTool(Tool):
             return ToolResult(
                 status="error",
                 message=f"焦点约束阻止越界读取：{path}\n不在当前允许范围内。允许路径：{allowed}",
+                summary=f"读取越界: {path}",
             )
 
         cached_result = self.context.fetch_cached_source_read(path=path, symbol=symbol, line=line)
@@ -68,11 +69,12 @@ class SourceReaderTool(Tool):
         code = code_fetcher.fetch_entry_source(entry)
 
         if code.startswith("错误"):
-            return ToolResult(status="error", message=code)
+            return ToolResult(status="error", message=code, summary=f"读取失败: {path}")
 
         result = ToolResult(
             status="ok",
             message=f"已成功加载源代码 [路径: {path}]：\n\n```java\n{code}\n```",
+            summary=f"已读取源代码: {path}",
         )
         self.context.persist_cached_source_read(path=path, symbol=symbol, line=line, result=result)
         return result
