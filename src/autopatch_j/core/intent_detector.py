@@ -2,8 +2,87 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from typing import Any
 
 from autopatch_j.core.models import IntentType
+
+
+INTENT_CLASSIFIER_PROMPT = (
+    "你是 AutoPatch-J 的严格意图分类器。"
+    "你只能返回以下英文标签之一，不要解释，不要加标点，不要输出其它内容："
+    "code_audit, code_explain, general_chat, patch_explain, patch_revise。"
+)
+
+PATCH_ONLY_INTENTS = {IntentType.PATCH_EXPLAIN, IntentType.PATCH_REVISE}
+
+
+def parse_llm_intent(raw_text: str) -> IntentType | None:
+    normalized = raw_text.strip().lower()
+    if not normalized:
+        return None
+
+    normalized = re.sub(r"```[a-zA-Z0-9_-]*", "", normalized).replace("```", "")
+    labels: dict[str, IntentType] = {}
+    for intent in IntentType:
+        labels[intent.value] = intent
+        labels[intent.name.lower()] = intent
+        labels[intent.value.replace("_", "")] = intent
+
+    labels.update(
+        {
+            "代码审查": IntentType.CODE_AUDIT,
+            "代码检查": IntentType.CODE_AUDIT,
+            "代码解释": IntentType.CODE_EXPLAIN,
+            "普通聊天": IntentType.GENERAL_CHAT,
+            "补丁解释": IntentType.PATCH_EXPLAIN,
+            "补丁修改": IntentType.PATCH_REVISE,
+            "修改补丁": IntentType.PATCH_REVISE,
+        }
+    )
+
+    found: set[IntentType] = set()
+    for label, intent in labels.items():
+        if re.search(rf"(?<![a-z0-9_]){re.escape(label)}(?![a-z0-9_])", normalized):
+            found.add(intent)
+
+    compact = re.sub(r"[^a-z0-9_\u4e00-\u9fff]", "", normalized)
+    if compact in labels:
+        found.add(labels[compact])
+
+    if len(found) == 1:
+        return next(iter(found))
+    return None
+
+
+def build_llm_intent_classifier(llm: Any | None) -> Callable[[str, bool], IntentType | None] | None:
+    if llm is None:
+        return None
+
+    def classify(user_text: str, has_pending_review: bool) -> IntentType | None:
+        messages = [
+            {
+                "role": "system",
+                "content": INTENT_CLASSIFIER_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"user_text: {user_text}\n"
+                    f"has_pending_review: {str(has_pending_review).lower()}\n"
+                    "分类规则：\n"
+                    "- 用户要求检查、审查、扫描、发现代码问题：返回 code_audit。\n"
+                    "- 用户要求解释代码、说明实现、讲清楚逻辑：返回 code_explain。\n"
+                    "- 普通闲聊，或与代码任务无关：返回 general_chat。\n"
+                    "- 当前存在待确认补丁，并且用户询问补丁原因、影响、风险：返回 patch_explain。\n"
+                    "- 当前存在待确认补丁，并且用户要求修改、重做、调整补丁：返回 patch_revise。\n"
+                    "如果 has_pending_review=false，不允许返回 patch_explain 或 patch_revise。"
+                ),
+            },
+        ]
+        response = llm.chat(messages=messages, tools=None)
+        return parse_llm_intent(str(response.content))
+
+    return classify
 
 
 class IntentDetector:
@@ -21,18 +100,20 @@ class IntentDetector:
         self.classify_with_llm = classify_with_llm
 
     def detect_intent(self, user_text: str, has_pending_review: bool) -> IntentType:
-        normalized = self._normalize_text(user_text)
-        llm_intent = self._fetch_llm_intent(normalized, has_pending_review)
-        
+        llm_intent = self._fetch_llm_intent(user_text, has_pending_review)
+
+        # 也可以在 has_pending_review=False 时动态裁掉 patch_explain/patch_revise，
+        # 只把 code_audit/code_explain/general_chat 暴露给 LLM；但那会让分类协议
+        # 随状态分叉，降低 prompt cache 命中和排查一致性。这里保持固定提示词，
+        # 让 LLM 做语义分类，状态合法性由程序硬约束。
+        if not has_pending_review and llm_intent in PATCH_ONLY_INTENTS:
+            llm_intent = None
+
         if has_pending_review:
             return llm_intent or IntentType.PATCH_REVISE
         return llm_intent or IntentType.GENERAL_CHAT
 
-    def _fetch_llm_intent(self, normalized_text: str, has_pending_review: bool) -> IntentType | None:
+    def _fetch_llm_intent(self, user_text: str, has_pending_review: bool) -> IntentType | None:
         if self.classify_with_llm is None:
             return None
-        return self.classify_with_llm(normalized_text, has_pending_review)
-
-    def _normalize_text(self, user_text: str) -> str:
-        compact = re.sub(r"\s+", "", user_text)
-        return compact.lower()
+        return self.classify_with_llm(user_text, has_pending_review)

@@ -28,7 +28,7 @@ from autopatch_j.core.chat_filter import ChatFilter
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.conversation_router import ConversationRouter
 from autopatch_j.core.symbol_indexer import SymbolIndexer
-from autopatch_j.core.intent_detector import IntentDetector
+from autopatch_j.core.intent_detector import IntentDetector, build_llm_intent_classifier
 from autopatch_j.core.models import (
     AuditFindingItem,
     CodeScope,
@@ -303,14 +303,14 @@ class CLI:
             return False
 
     def _init_services(self, repo_root: Path) -> None:
+        shared_llm = build_default_llm_client()
         self.artifact_manager = ArtifactManager(repo_root)
         self.symbol_indexer = SymbolIndexer(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
         self.patch_engine = PatchEngine(repo_root)
         self.code_fetcher = CodeFetcher(repo_root)
-        self.intent_detector = IntentDetector()
+        self.intent_detector = IntentDetector(classify_with_llm=build_llm_intent_classifier(shared_llm))
         self.backlog_manager = BacklogManager()
         self.chat_filter = ChatFilter()
-        shared_llm = build_default_llm_client()
         self.conversation_router = ConversationRouter(llm=shared_llm)
         self.scope_service = ScopeService(repo_root, self.symbol_indexer, ignored_dirs=GlobalConfig.ignored_dirs)
         self.scanner_runner = ScannerRunner(repo_root, self.artifact_manager)

@@ -10,6 +10,7 @@ from autopatch_j.core.models import (
     ActiveWorkspace,
     CodeScope,
     CodeScopeKind,
+    IntentType,
     PatchDraftData,
     PatchReviewItem,
     PatchReviewStatus,
@@ -87,3 +88,66 @@ def test_handle_patch_explain_does_not_crash(cli: CLI) -> None:
     cli.workflow_controller.handle_patch_explain("explain this")
 
     cli.agent.perform_patch_explain.assert_called_once()
+
+
+def test_cli_wires_llm_intent_classifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        content = "code_audit"
+
+    class FakeLLM:
+        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+            return FakeResponse()
+
+    monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())
+    (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
+
+    cli_obj = CLI(tmp_path)
+
+    assert cli_obj.intent_detector is not None
+    assert cli_obj.intent_detector.classify_with_llm is not None
+    assert cli_obj.intent_detector.detect_intent("@Foo.java check code", False) is IntentType.CODE_AUDIT
+
+
+def test_handle_chat_routes_llm_code_audit_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeResponse:
+        content = "code_audit"
+
+    class FakeLLM:
+        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+            return FakeResponse()
+
+    monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())
+    (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
+    cli_obj = CLI(tmp_path)
+    cli_obj.workflow_controller.handle_code_audit = MagicMock()
+    cli_obj.workflow_controller.handle_general_chat = MagicMock()
+
+    cli_obj.workflow_controller.handle_chat("@Foo.java check code")
+
+    cli_obj.workflow_controller.handle_code_audit.assert_called_once_with("@Foo.java check code")
+    cli_obj.workflow_controller.handle_general_chat.assert_not_called()
+
+
+def test_handle_chat_filters_patch_intent_without_pending_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        content = "patch_revise"
+
+    class FakeLLM:
+        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+            return FakeResponse()
+
+    monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())
+    (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
+    cli_obj = CLI(tmp_path)
+    cli_obj.workflow_controller.handle_general_chat = MagicMock()
+    cli_obj.workflow_controller.handle_patch_revise = MagicMock()
+    cli_obj.workflow_controller.handle_patch_explain = MagicMock()
+
+    cli_obj.workflow_controller.handle_chat("revise this patch")
+
+    cli_obj.workflow_controller.handle_general_chat.assert_called_once_with("revise this patch")
+    cli_obj.workflow_controller.handle_patch_revise.assert_not_called()
+    cli_obj.workflow_controller.handle_patch_explain.assert_not_called()

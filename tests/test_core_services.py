@@ -4,7 +4,7 @@ from pathlib import Path
 
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.symbol_indexer import SymbolIndexer
-from autopatch_j.core.intent_detector import IntentDetector
+from autopatch_j.core.intent_detector import IntentDetector, build_llm_intent_classifier, parse_llm_intent
 from autopatch_j.core.models import CodeScopeKind, IntentType
 from autopatch_j.core.scanner_runner import ScannerRunner
 from autopatch_j.core.scope_service import ScopeService
@@ -23,6 +23,58 @@ def test_intent_detector_relies_entirely_on_llm_classifier() -> None:
     service_fallback = IntentDetector()
     assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=False) is IntentType.GENERAL_CHAT
     assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=True) is IntentType.PATCH_REVISE
+
+
+def test_intent_detector_passes_raw_text_to_llm_classifier() -> None:
+    seen: dict[str, str] = {}
+
+    def classify(text: str, has_pending_review: bool) -> IntentType | None:
+        seen["text"] = text
+        return IntentType.CODE_AUDIT
+
+    service = IntentDetector(classify_with_llm=classify)
+
+    assert service.detect_intent("@Foo.java check code", has_pending_review=False) is IntentType.CODE_AUDIT
+    assert seen["text"] == "@Foo.java check code"
+
+
+def test_intent_detector_rejects_patch_only_intents_without_pending_review() -> None:
+    service = IntentDetector(classify_with_llm=lambda text, has_pending_review: IntentType.PATCH_REVISE)
+
+    assert service.detect_intent("revise this patch", has_pending_review=False) is IntentType.GENERAL_CHAT
+    assert service.detect_intent("revise this patch", has_pending_review=True) is IntentType.PATCH_REVISE
+
+
+def test_parse_llm_intent_accepts_single_valid_label() -> None:
+    assert parse_llm_intent("code_audit") is IntentType.CODE_AUDIT
+    assert parse_llm_intent("intent: code_explain") is IntentType.CODE_EXPLAIN
+    assert parse_llm_intent("```text\npatch_explain\n```") is IntentType.PATCH_EXPLAIN
+
+
+def test_parse_llm_intent_rejects_invalid_or_ambiguous_output() -> None:
+    assert parse_llm_intent("not sure") is None
+    assert parse_llm_intent("code_audit or code_explain") is None
+
+
+def test_llm_intent_classifier_maps_response_to_intent() -> None:
+    class FakeResponse:
+        content = "patch_revise"
+
+    class FakeLLM:
+        def __init__(self) -> None:
+            self.messages = None
+
+        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+            self.messages = messages
+            return FakeResponse()
+
+    llm = FakeLLM()
+    classifier = build_llm_intent_classifier(llm)
+
+    assert classifier is not None
+    assert classifier("change this patch", True) is IntentType.PATCH_REVISE
+    assert llm.messages is not None
+    assert "has_pending_review: true" in llm.messages[1]["content"]
 
 
 def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> None:
