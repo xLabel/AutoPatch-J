@@ -3,17 +3,36 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Final
 
-# 内部资源路径
-SEMGREP_RULE_RELATIVE_PATH = "scanners/resources/semgrep/rules/java.yml"
+SEMGREP_RULE_RELATIVE_PATH: Final = "scanners/resources/semgrep/rules/java.yml"
+
+DEFAULT_LLM_MODEL: Final = "deepseek-v4-flash"
+DEFAULT_LLM_EXTRA_BODY: Final = "{}"
+DEFAULT_LLM_STREAM_DIALECT: Final = "standard"
+DEFAULT_SEMGREP_VERSION: Final = "1.160.0"
+DEFAULT_SEMGREP_INSTALL_LOCK_TIMEOUT: Final = 600
+DEFAULT_SCANNER_TIMEOUT: Final = 300
+DEFAULT_IGNORED_DIRS: Final = frozenset(
+    {
+        ".autopatch-j",
+        ".git",
+        ".hg",
+        ".svn",
+        "build",
+        "node_modules",
+        "out",
+        "target",
+        "venv",
+        ".venv",
+        "bin",
+        "obj",
+    }
+)
 
 
 def discover_repo_root(start_path: Path) -> Path:
-    """
-    返回项目边界。
-    遵循极简主义设计：用户启动 CLI 时所在的目录，即为绝对的根目录。
-    不再向上级盲目探测特征文件，将作用域的控制权完全交还给用户。
-    """
+    """返回项目边界：用户启动 CLI 时所在的目录即为根目录。"""
     return start_path.resolve()
 
 
@@ -26,47 +45,39 @@ def get_project_state_dir(repo_root: Path) -> Path:
 
 @dataclass(slots=True)
 class AppConfig:
-    """
-    全局配置中心 (Global Configuration)
-    职责：统一管理 LLM、扫描器和路径逻辑。
-    """
-    
-    # 1. LLM 核心配置 (通过环境变量注入)
+    """全局配置中心：统一管理 LLM、扫描器和路径相关配置。"""
 
-    # API 密钥 (必填)
+    # LLM 配置
+    # LLM_API_KEY 和 LLM_BASE_URL 必填；LLM_BASE_URL 使用 OpenAI 兼容地址。
     llm_api_key: str | None = field(default_factory=lambda: os.getenv("LLM_API_KEY"))
-
-    # 兼容 OpenAI 协议的 API 基础地址 (必填，如 https://api.deepseek.com/v1)
     llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "").rstrip("/"))
 
-    # 调用的模型名称 (默认: deepseek-v4-flash, 也支持 qwen-max 等)
-    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "deepseek-v4-flash"))
+    # 默认使用 deepseek-v4-flash；如供应商支持，也可切换为 qwen-max 等 OpenAI 兼容模型名。
+    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", DEFAULT_LLM_MODEL))
 
-    # 推理思考力度 (可选)。适用于 OpenAI o1/o3 规范或 DeepSeek V4。可选值: "low", "medium", "high", "max"
+    # 可选值取决于模型供应商，常见为 low、medium、high、max；不需要时留空。
     llm_reasoning_effort: str | None = field(default_factory=lambda: os.getenv("LLM_REASONING_EFFORT"))
 
-    # 扩展请求体 (可选，JSON格式字符串)。黑盒参数逃生舱，用于注入特定厂商的私有参数。
-    # 例如原生 DeepSeek V4 开启思考: '{"thinking": {"type": "enabled"}}'
-    llm_extra_body: str = field(default_factory=lambda: os.getenv("LLM_EXTRA_BODY", "{}"))
+    # 供应商私有扩展参数，必须是 JSON 字符串；例如 '{"thinking": {"type": "enabled"}}'。
+    llm_extra_body: str = field(default_factory=lambda: os.getenv("LLM_EXTRA_BODY", DEFAULT_LLM_EXTRA_BODY))
 
-    # 流式响应解析方言 (默认: "standard")。
-    # 标准 API 请保持 standard；若使用阿里云百炼的旧版 DeepSeek 接口(包含 <｜DSML｜> 标签)，请配置为 "bailian-dsml"
-    llm_stream_dialect: str = field(default_factory=lambda: os.getenv("LLM_STREAM_DIALECT", "standard"))
+    # 可选值：standard、bailian-dsml；阿里云百炼旧版 DeepSeek DSML 流式输出使用 bailian-dsml。
+    llm_stream_dialect: str = field(
+        default_factory=lambda: os.getenv("LLM_STREAM_DIALECT", DEFAULT_LLM_STREAM_DIALECT)
+    )
 
-    # 全局调试模式 (默认: False)。开启后控制台将完整打印大模型调用工具时的底层日志 (如源码截取等)。
-    debug_mode: bool = field(default_factory=lambda: os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true")
+    # 仅 "true" 开启调试输出。
+    debug_mode: bool = field(
+        default_factory=lambda: os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true"
+    )
 
-    # 2. 扫描器运行时配置
-    semgrep_version: str = "1.160.0"
-    semgrep_install_lock_timeout: int = 600
-    scanner_timeout: int = 300
-    
-    # 3. 索引器过滤配置
-    ignored_dirs: set[str] = field(default_factory=lambda: {
-        ".autopatch-j", ".git", ".hg", ".svn",
-        "build", "node_modules", "out", "target", "venv", ".venv",
-        "bin", "obj"
-    })
+    # 扫描器配置
+    semgrep_version: str = DEFAULT_SEMGREP_VERSION
+    semgrep_install_lock_timeout: int = DEFAULT_SEMGREP_INSTALL_LOCK_TIMEOUT
+    scanner_timeout: int = DEFAULT_SCANNER_TIMEOUT
+
+    # 索引器配置
+    ignored_dirs: set[str] = field(default_factory=lambda: set(DEFAULT_IGNORED_DIRS))
 
     def is_llm_ready(self) -> bool:
         """检查 LLM 必要配置是否就绪"""
@@ -78,8 +89,8 @@ class AppConfig:
             "LLM 核心配置缺失。请确保已设置以下环境变量：\n"
             "1. LLM_API_KEY\n"
             "2. LLM_BASE_URL\n"
-            "3. LLM_MODEL (可选，默认 deepseek-v4-flash)"
+            f"3. LLM_MODEL (可选，默认 {DEFAULT_LLM_MODEL})"
         )
 
-# 单例模式
+
 GlobalConfig = AppConfig()
