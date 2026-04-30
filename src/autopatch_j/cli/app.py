@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import signal
 import sys
 from pathlib import Path
@@ -10,38 +9,33 @@ from prompt_toolkit import HTML, PromptSession
 
 from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.llm_client import build_default_llm_client
-from autopatch_j.agent.session import AgentSession
-from autopatch_j.cli.stream_adapter import StreamAdapter
 from autopatch_j.cli.command_controller import CliCommandController
-from autopatch_j.cli.workflow_controller import CliWorkflowController
 from autopatch_j.cli.input_controller import CliInputController
 from autopatch_j.cli.render import (
     DECISION_STYLE,
-    MUTED_STYLE,
     SYSTEM_STYLE,
     CliRenderer,
 )
+from autopatch_j.cli.services import CliContextSummary, CliServices, build_cli_services
+from autopatch_j.cli.stream_adapter import StreamAdapter
+from autopatch_j.cli.workflow_controller import CliWorkflowController
 from autopatch_j.config import GlobalConfig, discover_repo_root
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.backlog_manager import BacklogManager
 from autopatch_j.core.chat_filter import ChatFilter
 from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.conversation_router import ConversationRouter
+from autopatch_j.core.input_classifier import ConversationRouter, IntentDetector
 from autopatch_j.core.symbol_indexer import SymbolIndexer
-from autopatch_j.core.intent_detector import IntentDetector, build_llm_intent_classifier
 from autopatch_j.core.models import (
-    AuditFindingItem,
     CodeScope,
-    CodeScopeKind,
     IntentType,
     PatchReviewItem,
 )
-from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
+from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.scanner_runner import ScannerRunner
 from autopatch_j.core.scope_service import ScopeService
 from autopatch_j.core.workspace_manager import WorkspaceManager
 from autopatch_j.core.patch_verifier import PatchVerifier
-from autopatch_j.scanners import get_scanner, DEFAULT_SCANNER_NAME
 
 
 class CLI:
@@ -71,6 +65,8 @@ class CLI:
         self.scanner_runner: ScannerRunner | None = None
         self.workspace_manager: WorkspaceManager | None = None
         self.agent: Agent | None = None
+        self.services: CliServices | None = None
+        self.context_summary: CliContextSummary | None = None
 
         self.input_controller: CliInputController | None = None
         self.command_controller: CliCommandController | None = None
@@ -127,8 +123,6 @@ class CLI:
                     style=SYSTEM_STYLE,
                 )
             else:
-                # _init_services is already called in __init__, but it's safe to call it or just use the services
-                # Wait, we already called _init_services in __init__. So we don't need to call it again.
                 stats = self.symbol_indexer.get_stats() if self.symbol_indexer else {}
                 file_count = stats.get("file", 0)
                 self.renderer.print_panel(
@@ -222,84 +216,25 @@ class CLI:
             suppress_answer_output=suppress_answer_output,
         )
 
-    def _sanitize_assistant_output(self, text: str) -> str:
-        match = DSML_MARKER_PATTERN.search(text)
-        return text[:match.start()].rstrip() if match else text
-
-    def _summarize_observation(self, tool_name: str | None, message: str) -> str:
-        if tool_name == "read_source_code":
-            match = re.search(r"\[[^:\]]+:\s*([^\]]+)\]", message)
-            if match:
-                return f"已读取: {match.group(1)}"
-            return "已读取源代码"
-
-        if tool_name == "search_symbols":
-            match = re.search(r"['‘]?([^'’]+)['’]?\s*相关", message)
-            if match:
-                return f"已定位符号: {match.group(1)}"
-            return "已定位相关符号"
-
-        if tool_name == "get_finding_detail":
-            match = re.search(r"\((F\d+)\)", message)
-            if match:
-                return f"已获取 finding 详情: {match.group(1)}"
-            return "已获取 finding 详情"
-
-        first_line = message.strip().splitlines()[0] if message.strip() else ""
-        if first_line:
-            return first_line
-        if tool_name:
-            return f"已完成工具: {tool_name}"
-        return "已更新工具结果"
-
     def _build_local_no_issue_summary(self) -> str:
-        return "模型复核未发现需要修复的问题。"
+        assert self.context_summary is not None
+        return self.context_summary.build_local_no_issue_summary()
 
     def _build_static_scan_summary(self) -> str:
-        return "当前范围未发现安全或正确性问题。"
+        assert self.context_summary is not None
+        return self.context_summary.build_static_scan_summary()
 
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
-        assert self.workspace_manager is not None
-        workspace = self.workspace_manager.load_workspace()
-        if workspace.scope is not None and workspace.scope.focus_files:
-            return list(workspace.scope.focus_files)
-        return [current_item.file_path]
+        assert self.context_summary is not None
+        return self.context_summary.fetch_review_scope_paths(current_item)
+
+    def _describe_scope_paths(self, scope: CodeScope) -> list[str]:
+        assert self.context_summary is not None
+        return self.context_summary.describe_scope_paths(scope)
 
     def _describe_current_scope_paths(self) -> list[str]:
-        workspace_manager = getattr(self, "workspace_manager", None)
-        workspace = workspace_manager.load_workspace() if workspace_manager else None
-        if workspace is not None and workspace.scope is not None and workspace.scope.focus_files:
-            return list(workspace.scope.focus_files)
-        scan_paths = self._collect_latest_scan_paths()
-        if scan_paths:
-            return scan_paths
-        if self.agent and self.agent.session.focus_paths:
-            return list(self.agent.session.focus_paths)
-        return ["褰撳墠鑼冨洿"]
-
-    def _collect_latest_scan_paths(self) -> list[str]:
-        if not self.artifact_manager:
-            return []
-        scan_files = sorted(self.artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
-        if not scan_files:
-            return []
-        latest = self.artifact_manager.load_scan_result(scan_files[0].stem)
-        if latest is None:
-            return []
-
-        resolved: list[str] = []
-        for target in latest.targets:
-            normalized = str(target).replace("\\", "/")
-            candidate = (self.repo_root / normalized).resolve()
-            if candidate.is_dir():
-                for java_file in sorted(candidate.rglob("*.java")):
-                    rel_path = java_file.relative_to(self.repo_root).as_posix()
-                    if rel_path not in resolved:
-                        resolved.append(rel_path)
-            else:
-                if normalized not in resolved:
-                    resolved.append(normalized)
-        return resolved
+        assert self.context_summary is not None
+        return self.context_summary.describe_current_scope_paths()
 
     def _ensure_prompt_session(self) -> bool:
         if self.prompt_session is not None:
@@ -312,36 +247,22 @@ class CLI:
             return False
 
     def _init_services(self, repo_root: Path) -> None:
-        shared_llm = build_default_llm_client()
-        self.artifact_manager = ArtifactManager(repo_root)
-        self.symbol_indexer = SymbolIndexer(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
-        self.patch_engine = PatchEngine(repo_root)
-        self.code_fetcher = CodeFetcher(repo_root)
-        self.intent_detector = IntentDetector(classify_with_llm=build_llm_intent_classifier(shared_llm))
-        self.backlog_manager = BacklogManager()
-        self.chat_filter = ChatFilter()
-        self.conversation_router = ConversationRouter(llm=shared_llm)
-        self.scope_service = ScopeService(repo_root, self.symbol_indexer, ignored_dirs=GlobalConfig.ignored_dirs)
-        self.scanner_runner = ScannerRunner(repo_root, self.artifact_manager)
-        self.workspace_manager = WorkspaceManager(self.artifact_manager)
-
-        scanner = get_scanner(DEFAULT_SCANNER_NAME)
-        self.patch_verifier = PatchVerifier(repo_root, scanner) if scanner else None
-
-        agent_session = AgentSession(
-            repo_root=repo_root,
-            artifact_manager=self.artifact_manager,
-            workspace_manager=self.workspace_manager,
-            symbol_indexer=self.symbol_indexer,
-            patch_engine=self.patch_engine,
-            code_fetcher=self.code_fetcher,
-            patch_verifier=self.patch_verifier,
-        )
-
-        self.agent = Agent(
-            session=agent_session,
-            llm=shared_llm,
-        )
+        services = build_cli_services(repo_root, llm_factory=build_default_llm_client)
+        self.services = services
+        self.context_summary = services.summary
+        self.artifact_manager = services.artifact_manager
+        self.symbol_indexer = services.symbol_indexer
+        self.patch_engine = services.patch_engine
+        self.code_fetcher = services.code_fetcher
+        self.patch_verifier = services.patch_verifier
+        self.intent_detector = services.intent_detector
+        self.backlog_manager = services.backlog_manager
+        self.chat_filter = services.chat_filter
+        self.conversation_router = services.conversation_router
+        self.scope_service = services.scope_service
+        self.scanner_runner = services.scanner_runner
+        self.workspace_manager = services.workspace_manager
+        self.agent = services.agent
 
         self.input_controller = CliInputController(
             index_search=lambda query: self.symbol_indexer.search(query) if self.symbol_indexer else [],

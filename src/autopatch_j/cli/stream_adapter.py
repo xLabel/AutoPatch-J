@@ -138,10 +138,6 @@ class StreamAdapter:
         new_messages = list(self.agent.messages[start_index:])
         execution.finish_reasoning_status_if_visible()
 
-        has_pending_patches = self.workspace_manager.load_workspace().has_pending_patch()
-        if has_pending_patches:
-            return new_messages
-
         if render_no_issue_panel:
             self.renderer.print_no_issue_panel(
                 scope_paths=scope_paths or self._describe_current_scope_paths(),
@@ -151,6 +147,15 @@ class StreamAdapter:
             return new_messages
 
         if suppress_answer_output:
+            return new_messages
+
+        has_pending_patches = self.workspace_manager.load_workspace().has_pending_patch()
+        answer_allowed_with_pending_patch = {
+            IntentType.PATCH_EXPLAIN,
+            IntentType.CODE_EXPLAIN,
+            IntentType.GENERAL_CHAT,
+        }
+        if has_pending_patches and answer_intent not in answer_allowed_with_pending_patch:
             return new_messages
 
         buffered_answer = "".join(execution.buffered_answer_parts)

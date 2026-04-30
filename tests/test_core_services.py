@@ -4,7 +4,11 @@ from pathlib import Path
 
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.symbol_indexer import SymbolIndexer
-from autopatch_j.core.intent_detector import IntentDetector, build_llm_intent_classifier, parse_llm_intent
+from autopatch_j.core.input_classifier import (
+    IntentDetector,
+    build_llm_intent_classifier,
+    parse_llm_intent,
+)
 from autopatch_j.core.models import CodeScopeKind, IntentType
 from autopatch_j.core.scanner_runner import ScannerRunner
 from autopatch_j.core.scope_service import ScopeService
@@ -22,7 +26,7 @@ def test_intent_detector_relies_entirely_on_llm_classifier() -> None:
 
     service_fallback = IntentDetector()
     assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=False) is IntentType.GENERAL_CHAT
-    assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=True) is IntentType.PATCH_REVISE
+    assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=True) is IntentType.PATCH_EXPLAIN
 
 
 def test_intent_detector_passes_raw_text_to_llm_classifier() -> None:
@@ -43,6 +47,16 @@ def test_intent_detector_rejects_patch_only_intents_without_pending_review() -> 
 
     assert service.detect_intent("revise this patch", has_pending_review=False) is IntentType.GENERAL_CHAT
     assert service.detect_intent("revise this patch", has_pending_review=True) is IntentType.PATCH_REVISE
+
+
+def test_intent_detector_falls_back_when_llm_classifier_fails() -> None:
+    def fail(text: str, has_pending_review: bool) -> IntentType | None:
+        raise RuntimeError("classifier unavailable")
+
+    service = IntentDetector(classify_with_llm=fail)
+
+    assert service.detect_intent("扫描代码", has_pending_review=False) is IntentType.GENERAL_CHAT
+    assert service.detect_intent("解释一下", has_pending_review=True) is IntentType.PATCH_EXPLAIN
 
 
 def test_parse_llm_intent_accepts_single_valid_label() -> None:

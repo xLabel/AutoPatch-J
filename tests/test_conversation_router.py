@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.core.conversation_router import ConversationRouter
+from autopatch_j.core.input_classifier import ConversationRouter
 from autopatch_j.core.models import CodeScope, CodeScopeKind, ConversationRoute
 
 
@@ -62,3 +62,21 @@ def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> No
     )
 
     assert route is ConversationRoute.NEW_TASK
+
+
+def test_continuity_judge_falls_back_when_llm_classifier_fails() -> None:
+    class FailingLLM:
+        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+            raise RuntimeError("router unavailable")
+
+    service = ConversationRouter(llm=FailingLLM())  # type: ignore[arg-type]
+
+    route = service.determine_route(
+        user_text="解释一下",
+        has_pending_review=True,
+        requested_scope=None,
+        current_patch_file="src/main/java/demo/UserService.java",
+        current_scope=_scope(),
+    )
+
+    assert route is ConversationRoute.REVIEW_CONTINUE

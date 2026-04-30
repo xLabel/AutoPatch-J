@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Any, Protocol
 
-from autopatch_j.core.backlog_manager import BacklogManager
-from autopatch_j.core.chat_filter import ChatFilter
-from autopatch_j.core.conversation_router import ConversationRouter
-from autopatch_j.core.intent_detector import IntentDetector
 from autopatch_j.core.models import (
     AuditAttemptOutcome,
     CodeScope,
@@ -14,12 +11,16 @@ from autopatch_j.core.models import (
     IntentType,
     PatchReviewItem,
 )
-from autopatch_j.core.scanner_runner import ScannerRunner
-from autopatch_j.core.scope_service import ScopeService
-from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
 from autopatch_j.config import GlobalConfig
+
+
+@dataclass(slots=True)
+class ChatInputDecision:
+    route: ConversationRoute
+    intent: IntentType | None
+
 
 class WorkflowControllerContext(Protocol):
     renderer: Any
@@ -101,32 +102,47 @@ class CliWorkflowController:
             self.context.renderer.print_info("请继续输入代码指令")
             return
 
-        has_pending_review = self.context.workspace_manager.load_workspace().has_pending_patch()
+        decision = self.classify_chat_input(text)
+        if decision.route is ConversationRoute.COMMAND:
+            self.context.command_controller.handle_command(text)
+            return
+        if decision.intent is None:
+            self.handle_general_chat(text)
+            return
+        self.dispatch_chat_intent(text, decision.intent)
+
+    def classify_chat_input(self, text: str) -> ChatInputDecision:
+        workspace = self.context.workspace_manager.load_workspace()
+        has_pending_review = workspace.has_pending_patch()
         requested_scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
-        current_item = self.context.workspace_manager.load_workspace().get_current_patch() if has_pending_review else None
-        current_workspace = self.context.workspace_manager.load_workspace() if has_pending_review else None
+        current_item = workspace.get_current_patch() if has_pending_review else None
         route = self.context.conversation_router.determine_route(
             user_text=text,
             has_pending_review=has_pending_review,
             requested_scope=requested_scope,
             current_patch_file=current_item.file_path if current_item else None,
-            current_scope=current_workspace.scope if current_workspace else None,
+            current_scope=workspace.scope if has_pending_review else None,
         )
 
         if route is ConversationRoute.COMMAND:
-            self.context.command_controller.handle_command(text)
-            return
+            return ChatInputDecision(route=route, intent=None)
 
         if route is ConversationRoute.NEW_TASK:
-            self.context.agent.reset_history()
-            if has_pending_review:
-                with self.context.workspace_manager.edit() as workspace:
-                    workspace.clear_workspace() # Oops, wait, WorkspaceManager.clear_workspace was kept but it is also proxy? No, it delegates to artifact_manager.
-                self.context.renderer.print_info("已切换到新任务")
+            self.switch_to_new_task_if_needed(has_pending_review)
             intent = self.context.intent_detector.detect_intent(text, has_pending_review=False)
         else:
             intent = self.context.intent_detector.detect_intent(text, has_pending_review=True)
+            if intent is IntentType.CODE_EXPLAIN and has_pending_review and "@" not in text:
+                intent = IntentType.PATCH_EXPLAIN
+        return ChatInputDecision(route=route, intent=intent)
 
+    def switch_to_new_task_if_needed(self, has_pending_review: bool) -> None:
+        self.context.agent.reset_history()
+        if has_pending_review:
+            self.context.workspace_manager.clear_workspace()
+            self.context.renderer.print_info("已切换到新任务")
+
+    def dispatch_chat_intent(self, text: str, intent: IntentType) -> None:
         if intent is IntentType.CODE_AUDIT:
             self.handle_code_audit(text)
             return
@@ -188,39 +204,45 @@ class CliWorkflowController:
         text: str,
         backlog: list[AuditFindingItem],
     ) -> None:
-        self.context.agent.reset_history()
-        self.context.agent.session.clear_proposed_patch_draft()
-        try:
-            new_messages = self.context._run_agent_request(
-                prompt=text,
-                agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
-                    raw_user_text=text,
-                    current_finding=finding,
-                    force_reread=False,
-                    **kwargs
-                )
-            ) or []
-        except Exception:
-            self.context.agent.session.clear_proposed_patch_draft()
-            raise
-        decision = self.context.backlog_manager.infer_attempt_decision(finding, new_messages)
-        
+        self._handle_finding_attempt(
+            finding=finding,
+            text=text,
+            backlog=backlog,
+            force_reread=False,
+            allow_retry=True,
+        )
+
+    def _handle_finding_retry(
+        self,
+        finding: AuditFindingItem,
+        text: str,
+        backlog: list[AuditFindingItem],
+    ) -> None:
+        self._handle_finding_attempt(
+            finding=finding,
+            text=text,
+            backlog=backlog,
+            force_reread=True,
+            allow_retry=False,
+        )
+
+    def _handle_finding_attempt(
+        self,
+        finding: AuditFindingItem,
+        text: str,
+        backlog: list[AuditFindingItem],
+        *,
+        force_reread: bool,
+        allow_retry: bool,
+    ) -> None:
+        messages = self._run_finding_agent_attempt(finding, text, force_reread=force_reread)
+        decision = self.context.backlog_manager.infer_attempt_decision(finding, messages)
+
         if decision.outcome is AuditAttemptOutcome.PATCH_READY:
-            if self._commit_proposed_patch():
-                self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
-            else:
-                self.context.backlog_manager.mark_failed(
-                    backlog=backlog,
-                    finding_id=finding.finding_id,
-                    error_code="NO_PROPOSED_PATCH_DRAFT",
-                    error_message="propose_patch did not leave a patch draft for workflow commit.",
-                )
+            self._commit_or_mark_failed(backlog, finding)
             return
 
-        if (
-            decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
-            and finding.retry_count < 1
-        ):
+        if allow_retry and decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR and finding.retry_count < 1:
             self.context.backlog_manager.record_retry(
                 backlog=backlog,
                 finding_id=finding.finding_id,
@@ -230,55 +252,62 @@ class CliWorkflowController:
             self._handle_finding_retry(finding, text, backlog)
             return
 
-        self.context.agent.session.clear_proposed_patch_draft()
-        self.context.backlog_manager.mark_failed(
+        self._mark_finding_failed(
             backlog=backlog,
-            finding_id=finding.finding_id,
+            finding=finding,
             error_code=decision.error_code,
             error_message=decision.error_message,
         )
 
-    def _handle_finding_retry(
+    def _run_finding_agent_attempt(
         self,
         finding: AuditFindingItem,
         text: str,
-        backlog: list[AuditFindingItem],
-    ) -> None:
+        *,
+        force_reread: bool,
+    ) -> list[dict[str, Any]]:
         self.context.agent.reset_history()
         self.context.agent.session.clear_proposed_patch_draft()
         try:
-            retry_messages = self.context._run_agent_request(
+            return self.context._run_agent_request(
                 prompt=text,
                 agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
                     raw_user_text=text,
                     current_finding=finding,
-                    force_reread=True,
+                    force_reread=force_reread,
                     **kwargs
                 )
             ) or []
         except Exception:
             self.context.agent.session.clear_proposed_patch_draft()
             raise
-        retry_decision = self.context.backlog_manager.infer_attempt_decision(finding, retry_messages)
-        
-        if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
-            if self._commit_proposed_patch():
-                self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
-            else:
-                self.context.backlog_manager.mark_failed(
-                    backlog=backlog,
-                    finding_id=finding.finding_id,
-                    error_code="NO_PROPOSED_PATCH_DRAFT",
-                    error_message="propose_patch did not leave a patch draft for workflow commit.",
-                )
+
+    def _commit_or_mark_failed(self, backlog: list[AuditFindingItem], finding: AuditFindingItem) -> None:
+        if self._commit_proposed_patch():
+            self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
         else:
-            self.context.agent.session.clear_proposed_patch_draft()
-            self.context.backlog_manager.mark_failed(
+            self._mark_finding_failed(
                 backlog=backlog,
-                finding_id=finding.finding_id,
-                error_code=retry_decision.error_code,
-                error_message=retry_decision.error_message,
+                finding=finding,
+                error_code="NO_PROPOSED_PATCH_DRAFT",
+                error_message="propose_patch did not leave a patch draft for workflow commit.",
             )
+
+    def _mark_finding_failed(
+        self,
+        *,
+        backlog: list[AuditFindingItem],
+        finding: AuditFindingItem,
+        error_code: str | None,
+        error_message: str | None,
+    ) -> None:
+        self.context.agent.session.clear_proposed_patch_draft()
+        self.context.backlog_manager.mark_failed(
+            backlog=backlog,
+            finding_id=finding.finding_id,
+            error_code=error_code,
+            error_message=error_message,
+        )
 
     def _commit_proposed_patch(self) -> bool:
         draft = self.context.agent.session.pop_proposed_patch_draft()
@@ -367,6 +396,8 @@ class CliWorkflowController:
                 current_item=current_item,
                 **kwargs
             ),
+            answer_intent=IntentType.PATCH_EXPLAIN,
+            raw_user_text=text,
         )
 
     def handle_patch_revise(self, text: str) -> None:

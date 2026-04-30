@@ -13,6 +13,7 @@ from autopatch_j.core.models import (
     AuditFindingItem,
     CodeScope,
     CodeScopeKind,
+    ConversationRoute,
     IntentType,
     PatchDraftData,
     PatchReviewItem,
@@ -379,3 +380,82 @@ def test_handle_chat_filters_patch_intent_without_pending_review(
     cli_obj.workflow_controller.handle_general_chat.assert_called_once_with("revise this patch")
     cli_obj.workflow_controller.handle_patch_revise.assert_not_called()
     cli_obj.workflow_controller.handle_patch_explain.assert_not_called()
+
+
+def test_handle_chat_switches_new_task_with_pending_review(cli: CLI) -> None:
+    workspace = ActiveWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=CodeScope(
+            kind=CodeScopeKind.PROJECT,
+            source_roots=[],
+            focus_files=[],
+            is_locked=False,
+        ),
+        latest_scan_id="scan-1",
+        patch_items=[_item("item-1")],
+        current_patch_index=0,
+    )
+    cli.workspace_manager.save_workspace(workspace)
+    cli.conversation_router = MagicMock()
+    cli.conversation_router.determine_route.return_value = ConversationRoute.NEW_TASK
+    cli.intent_detector = MagicMock()
+    cli.intent_detector.detect_intent.return_value = IntentType.GENERAL_CHAT
+    cli.workflow_controller.handle_general_chat = MagicMock()
+
+    cli.workflow_controller.handle_chat("@Foo.java explain code")
+
+    assert cli.workspace_manager.load_workspace().has_pending_patch() is False
+    cli.renderer.print_info.assert_any_call("已切换到新任务")
+    cli.workflow_controller.handle_general_chat.assert_called_once_with("@Foo.java explain code")
+
+
+def test_handle_chat_maps_pending_code_explain_without_scope_to_patch_explain(cli: CLI) -> None:
+    workspace = ActiveWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=CodeScope(
+            kind=CodeScopeKind.PROJECT,
+            source_roots=[],
+            focus_files=[],
+            is_locked=False,
+        ),
+        latest_scan_id="scan-1",
+        patch_items=[_item("item-1")],
+        current_patch_index=0,
+    )
+    cli.workspace_manager.save_workspace(workspace)
+    cli.conversation_router = MagicMock()
+    cli.conversation_router.determine_route.return_value = ConversationRoute.REVIEW_CONTINUE
+    cli.intent_detector = MagicMock()
+    cli.intent_detector.detect_intent.return_value = IntentType.CODE_EXPLAIN
+    cli.workflow_controller.handle_patch_explain = MagicMock()
+    cli.workflow_controller.handle_code_explain = MagicMock()
+
+    cli.workflow_controller.handle_chat("解释一下")
+
+    cli.workflow_controller.handle_patch_explain.assert_called_once_with("解释一下")
+    cli.workflow_controller.handle_code_explain.assert_not_called()
+
+
+def test_handle_chat_keeps_pending_patch_revise_route(cli: CLI) -> None:
+    workspace = ActiveWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=CodeScope(
+            kind=CodeScopeKind.PROJECT,
+            source_roots=[],
+            focus_files=[],
+            is_locked=False,
+        ),
+        latest_scan_id="scan-1",
+        patch_items=[_item("item-1")],
+        current_patch_index=0,
+    )
+    cli.workspace_manager.save_workspace(workspace)
+    cli.conversation_router = MagicMock()
+    cli.conversation_router.determine_route.return_value = ConversationRoute.REVIEW_CONTINUE
+    cli.intent_detector = MagicMock()
+    cli.intent_detector.detect_intent.return_value = IntentType.PATCH_REVISE
+    cli.workflow_controller.handle_patch_revise = MagicMock()
+
+    cli.workflow_controller.handle_chat("重新写这个补丁")
+
+    cli.workflow_controller.handle_patch_revise.assert_called_once_with("重新写这个补丁")
