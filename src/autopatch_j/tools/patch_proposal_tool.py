@@ -41,8 +41,6 @@ class PatchProposalTool(Tool):
         associated_finding_id: str | None = None,
     ) -> ToolResult:
         assert self.context is not None
-        workspace_manager = self.context.workspace_manager
-
         draft_result = build_patch_draft(
             context=self.context,
             file_path=file_path,
@@ -54,17 +52,18 @@ class PatchProposalTool(Tool):
             focus_verb="修复",
         )
         if isinstance(draft_result, ToolResult):
+            self.context.clear_proposed_patch_draft()
             return draft_result
 
         draft: PatchDraft = draft_result
-        workspace_manager.add_pending_patch(draft)
-        message = f"补丁草案已加入队列。目标文件：{file_path}。\n"
+        self.context.set_proposed_patch_draft(draft)
+        message = f"补丁草案已生成，等待流程确认入队。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"
         message += f"差异预览：\n{draft.diff}\n\n"
         if draft.status == "invalid":
             message += f"警告：补丁导致语法错误（{draft.validation.message}），请及时修正方案。"
         else:
-            message += "此补丁正在等待人工确认。"
+            message += "此补丁将在本轮任务成功后进入人工确认队列。"
         return ToolResult(
             status=draft.status,
             message=message,

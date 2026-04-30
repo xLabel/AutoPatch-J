@@ -89,12 +89,12 @@ class CLI:
     def _handle_interrupt(self, signum: int, frame: Any) -> None:
         self.request_exit(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
 
-    def _clear_pending_patch_candidates(self) -> None:
+    def _reset_agent_session(self) -> None:
         if self.agent is not None:
             self.agent.reset_history()
 
     def _finalize_cli_exit(self, message: str | None = None) -> None:
-        self._clear_pending_patch_candidates()
+        self._reset_agent_session()
         if message:
             self.renderer.print(message)
 
@@ -105,7 +105,7 @@ class CLI:
     def run(self) -> int:
         if not self._ensure_prompt_session():
             return 1
-        self._clear_pending_patch_candidates()
+        self._reset_agent_session()
 
         if not self.repo_root:
             self.renderer.print_panel(

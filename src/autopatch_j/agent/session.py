@@ -35,6 +35,7 @@ class AgentSession:
     focus_paths: list[str] = field(default_factory=list)
     source_read_cache: dict[tuple[str, str | None, int | None], ToolResult] = field(default_factory=dict)
     patch_source_hint: str | None = None
+    proposed_patch_draft: PatchDraft | None = None
     revised_patch_draft: PatchDraft | None = None
     code_explain_allow_symbol_search: bool = True
     action_history: list[str] = field(default_factory=list)
@@ -69,6 +70,17 @@ class AgentSession:
         key = (self.normalize_repo_path(path), symbol, line)
         self.source_read_cache[key] = result
 
+    def set_proposed_patch_draft(self, draft: PatchDraft) -> None:
+        self.proposed_patch_draft = draft
+
+    def clear_proposed_patch_draft(self) -> None:
+        self.proposed_patch_draft = None
+
+    def pop_proposed_patch_draft(self) -> PatchDraft | None:
+        draft = self.proposed_patch_draft
+        self.proposed_patch_draft = None
+        return draft
+
     def set_revised_patch_draft(self, draft: PatchDraft) -> None:
         self.revised_patch_draft = draft
 
@@ -90,6 +102,7 @@ class AgentSession:
     def clear_cache(self) -> None:
         self.source_read_cache.clear()
         self.patch_source_hint = None
+        self.proposed_patch_draft = None
         self.revised_patch_draft = None
         self.code_explain_allow_symbol_search = True
         self.action_history.clear()

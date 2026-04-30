@@ -10,6 +10,7 @@ from autopatch_j.core.patch_engine import PatchDraft
 from autopatch_j.core.patch_verifier import SyntaxCheckResult
 from autopatch_j.core.models import (
     ActiveWorkspace,
+    AuditFindingItem,
     CodeScope,
     CodeScopeKind,
     IntentType,
@@ -50,6 +51,44 @@ def _item(
             target_check_id=finding_id,
         ),
     )
+
+
+def _patch_draft(new_string: str, finding_id: str = "F1") -> PatchDraft:
+    return PatchDraft(
+        file_path="src/main/java/demo/User.java",
+        old_string="old",
+        new_string=new_string,
+        diff=f"diff {new_string}",
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+        rationale=f"fix {finding_id}",
+        target_check_id=finding_id,
+    )
+
+
+def _finding(finding_id: str = "F1") -> AuditFindingItem:
+    return AuditFindingItem(
+        finding_id=finding_id,
+        file_path="src/main/java/demo/User.java",
+        check_id="demo.rule",
+        start_line=1,
+        end_line=1,
+        message="demo finding",
+        snippet="old",
+    )
+
+
+def _tool_message(status: str = "ok", finding_id: str = "F1") -> dict:
+    return {
+        "role": "tool",
+        "name": "propose_patch",
+        "tool_status": status,
+        "tool_payload": {
+            "associated_finding_id": finding_id,
+            "file_path": "src/main/java/demo/User.java",
+        },
+    }
 
 
 def test_handle_status_does_not_crash_with_pending_patch(cli: CLI) -> None:
@@ -185,6 +224,98 @@ def test_handle_patch_revise_keeps_queue_when_no_revision_created(cli: CLI) -> N
     assert updated.patch_items[0].draft.rationale == "fix F1"
     assert updated.patch_items[1].draft.rationale == "fix F2"
     cli.renderer.print_info.assert_any_call("未生成修订补丁，当前补丁保持不变。")
+
+
+def test_process_single_finding_commits_staged_patch_after_success(cli: CLI) -> None:
+    finding = _finding("F1")
+    backlog = [finding]
+
+    def run_agent(*args, **kwargs):
+        cli.agent.session.set_proposed_patch_draft(_patch_draft("better", "F1"))
+        return [_tool_message("ok", "F1")]
+
+    cli._run_agent_request = MagicMock(side_effect=run_agent)
+
+    cli.workflow_controller._process_single_finding(finding, "audit", backlog)
+
+    workspace = cli.workspace_manager.load_workspace()
+    assert len(workspace.patch_items) == 1
+    assert workspace.patch_items[0].draft.new_string == "better"
+    assert finding.status.value == "patch_ready"
+    assert cli.agent.session.proposed_patch_draft is None
+
+
+def test_process_single_finding_does_not_commit_without_staged_patch(cli: CLI) -> None:
+    finding = _finding("F1")
+    backlog = [finding]
+    cli._run_agent_request = MagicMock(return_value=[_tool_message("ok", "F1")])
+
+    cli.workflow_controller._process_single_finding(finding, "audit", backlog)
+
+    workspace = cli.workspace_manager.load_workspace()
+    assert workspace.patch_items == []
+    assert finding.status.value == "failed"
+    assert finding.last_error_code == "NO_PROPOSED_PATCH_DRAFT"
+
+
+def test_finding_retry_commits_only_retry_patch(cli: CLI) -> None:
+    finding = _finding("F1")
+    backlog = [finding]
+    old_draft = _patch_draft("stale", "F1")
+    cli.agent.session.set_proposed_patch_draft(old_draft)
+
+    def run_retry(*args, **kwargs):
+        cli.agent.session.set_proposed_patch_draft(_patch_draft("retry-fix", "F1"))
+        return [_tool_message("ok", "F1")]
+
+    cli._run_agent_request = MagicMock(side_effect=run_retry)
+
+    cli.workflow_controller._handle_finding_retry(finding, "audit", backlog)
+
+    workspace = cli.workspace_manager.load_workspace()
+    assert len(workspace.patch_items) == 1
+    assert workspace.patch_items[0].draft.new_string == "retry-fix"
+    assert finding.status.value == "patch_ready"
+
+
+def test_finding_retry_failure_does_not_commit_patch(cli: CLI) -> None:
+    finding = _finding("F1")
+    backlog = [finding]
+
+    def run_retry(*args, **kwargs):
+        cli.agent.session.set_proposed_patch_draft(_patch_draft("stale", "F1"))
+        cli.agent.session.clear_proposed_patch_draft()
+        return [_tool_message("error", "F1")]
+
+    cli._run_agent_request = MagicMock(side_effect=run_retry)
+
+    cli.workflow_controller._handle_finding_retry(finding, "audit", backlog)
+
+    workspace = cli.workspace_manager.load_workspace()
+    assert workspace.patch_items == []
+    assert finding.status.value == "failed"
+
+
+def test_zero_finding_review_commits_staged_patch(cli: CLI) -> None:
+    scope = CodeScope(
+        kind=CodeScopeKind.SINGLE_FILE,
+        source_roots=[],
+        focus_files=["src/main/java/demo/User.java"],
+        is_locked=True,
+    )
+
+    def run_agent(*args, **kwargs):
+        cli.agent.session.set_proposed_patch_draft(_patch_draft("zero-fix", "F1"))
+        return [_tool_message("ok", "F1")]
+
+    cli._run_agent_request = MagicMock(side_effect=run_agent)
+
+    cli.workflow_controller._handle_zero_finding_review("audit", scope)
+
+    workspace = cli.workspace_manager.load_workspace()
+    assert len(workspace.patch_items) == 1
+    assert workspace.patch_items[0].draft.new_string == "zero-fix"
+    cli.renderer.print_no_issue_panel.assert_not_called()
 
 
 def test_cli_wires_llm_intent_classifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

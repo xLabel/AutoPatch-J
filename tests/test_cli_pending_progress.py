@@ -94,7 +94,7 @@ def test_run_renders_pending_patch_with_absolute_progress(tmp_path: Path) -> Non
 
     cli.prompt_session = MagicMock()
     cli.prompt_session.prompt.side_effect = EOFError
-    cli._clear_pending_patch_candidates = MagicMock()
+    cli._reset_agent_session = MagicMock()
     cli.renderer.print_panel = MagicMock()
     cli.renderer.print = MagicMock()
     cli.renderer.print_diff = MagicMock()
@@ -132,7 +132,7 @@ def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
 
     cli.prompt_session = MagicMock()
     cli.prompt_session.prompt.side_effect = EOFError
-    cli._clear_pending_patch_candidates = MagicMock()
+    cli._reset_agent_session = MagicMock()
     cli.renderer.print_panel = MagicMock()
     cli.renderer.print = MagicMock()
     cli.renderer.print_diff = MagicMock()
@@ -145,7 +145,7 @@ def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
     assert kwargs["source_hint"] == "LLM 二次复核（静态扫描未报出问题）"
 
 
-def test_run_retains_pending_patch_candidates_on_start_and_exit(tmp_path: Path) -> None:
+def test_run_retains_pending_patch_on_session_reset(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
     assert cli.workspace_manager is not None
     assert cli.agent is not None
@@ -174,12 +174,12 @@ def test_run_retains_pending_patch_candidates_on_start_and_exit(tmp_path: Path) 
     cli.renderer.print = MagicMock()
     cli.renderer.print_diff = MagicMock()
     cli.renderer.print_action_panel = MagicMock()
-    real_clear = cli._clear_pending_patch_candidates
-    cli._clear_pending_patch_candidates = MagicMock(wraps=real_clear)
+    real_reset = cli._reset_agent_session
+    cli._reset_agent_session = MagicMock(wraps=real_reset)
 
     cli.run()
 
-    assert cli._clear_pending_patch_candidates.call_count == 2
+    assert cli._reset_agent_session.call_count == 2
     # The workspace should NOT be cleared anymore (Session Persistence)
     assert cli.workspace_manager.load_pending_patch() is not None
     # Agent history is still reset

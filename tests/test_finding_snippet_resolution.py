@@ -163,7 +163,7 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
         associated_finding_id="F1",
     )
 
-    pending = agent.session.workspace_manager.load_pending_patch()
+    pending = agent.session.proposed_patch_draft
     assert result.status in {"ok", "invalid"}
     assert pending is not None
     assert pending.target_snippet == 'return user.getName().equals("admin");'

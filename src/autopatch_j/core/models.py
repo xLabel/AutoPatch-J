@@ -254,11 +254,6 @@ class ActiveWorkspace:
             return None
         return self.patch_items[self.current_patch_index]
 
-    def get_remaining_patches(self) -> list[PatchReviewItem]:
-        if self.current_patch_index < 0:
-            return list(self.patch_items)
-        return list(self.patch_items[self.current_patch_index :])
-
     def get_review_progress(self) -> tuple[int, int]:
         total_count = len(self.patch_items)
         if self.get_current_patch() is None or total_count == 0:
@@ -279,15 +274,6 @@ class ActiveWorkspace:
         if item:
             item.status = PatchReviewStatus.DISCARDED
             self._advance_after_terminal_patch()
-
-    def replace_tail(self, replacement_items: list[PatchReviewItem]) -> None:
-        head_items = list(self.patch_items[: self.current_patch_index])
-        self.patch_items = head_items + list(replacement_items)
-        self.current_patch_index = len(head_items)
-        if replacement_items:
-            self.mode = WorkspaceStatus.REVIEWING
-        else:
-            self.mode = WorkspaceStatus.IDLE
 
     def replace_current_patch(self, replacement_item: PatchReviewItem) -> None:
         if self.get_current_patch() is None:

@@ -189,19 +189,32 @@ class CliWorkflowController:
         backlog: list[AuditFindingItem],
     ) -> None:
         self.context.agent.reset_history()
-        new_messages = self.context._run_agent_request(
-            prompt=text,
-            agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
-                raw_user_text=text,
-                current_finding=finding,
-                force_reread=False,
-                **kwargs
-            )
-        ) or []
+        self.context.agent.session.clear_proposed_patch_draft()
+        try:
+            new_messages = self.context._run_agent_request(
+                prompt=text,
+                agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
+                    raw_user_text=text,
+                    current_finding=finding,
+                    force_reread=False,
+                    **kwargs
+                )
+            ) or []
+        except Exception:
+            self.context.agent.session.clear_proposed_patch_draft()
+            raise
         decision = self.context.backlog_manager.infer_attempt_decision(finding, new_messages)
         
         if decision.outcome is AuditAttemptOutcome.PATCH_READY:
-            self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
+            if self._commit_proposed_patch():
+                self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
+            else:
+                self.context.backlog_manager.mark_failed(
+                    backlog=backlog,
+                    finding_id=finding.finding_id,
+                    error_code="NO_PROPOSED_PATCH_DRAFT",
+                    error_message="propose_patch did not leave a patch draft for workflow commit.",
+                )
             return
 
         if (
@@ -217,6 +230,7 @@ class CliWorkflowController:
             self._handle_finding_retry(finding, text, backlog)
             return
 
+        self.context.agent.session.clear_proposed_patch_draft()
         self.context.backlog_manager.mark_failed(
             backlog=backlog,
             finding_id=finding.finding_id,
@@ -231,26 +245,47 @@ class CliWorkflowController:
         backlog: list[AuditFindingItem],
     ) -> None:
         self.context.agent.reset_history()
-        retry_messages = self.context._run_agent_request(
-            prompt=text,
-            agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
-                raw_user_text=text,
-                current_finding=finding,
-                force_reread=True,
-                **kwargs
-            )
-        ) or []
+        self.context.agent.session.clear_proposed_patch_draft()
+        try:
+            retry_messages = self.context._run_agent_request(
+                prompt=text,
+                agent_call=lambda p, **kwargs: self.context.agent.perform_code_audit(
+                    raw_user_text=text,
+                    current_finding=finding,
+                    force_reread=True,
+                    **kwargs
+                )
+            ) or []
+        except Exception:
+            self.context.agent.session.clear_proposed_patch_draft()
+            raise
         retry_decision = self.context.backlog_manager.infer_attempt_decision(finding, retry_messages)
         
         if retry_decision.outcome is AuditAttemptOutcome.PATCH_READY:
-            self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
+            if self._commit_proposed_patch():
+                self.context.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
+            else:
+                self.context.backlog_manager.mark_failed(
+                    backlog=backlog,
+                    finding_id=finding.finding_id,
+                    error_code="NO_PROPOSED_PATCH_DRAFT",
+                    error_message="propose_patch did not leave a patch draft for workflow commit.",
+                )
         else:
+            self.context.agent.session.clear_proposed_patch_draft()
             self.context.backlog_manager.mark_failed(
                 backlog=backlog,
                 finding_id=finding.finding_id,
                 error_code=retry_decision.error_code,
                 error_message=retry_decision.error_message,
             )
+
+    def _commit_proposed_patch(self) -> bool:
+        draft = self.context.agent.session.pop_proposed_patch_draft()
+        if draft is None:
+            return False
+        self.context.workspace_manager.add_pending_patch(draft)
+        return True
 
     def handle_code_explain(self, text: str) -> None:
         assert self.context.scope_service is not None
@@ -368,6 +403,7 @@ class CliWorkflowController:
         for file_path in scope.focus_files:
             self.context.agent.reset_history()
             self.context.agent.session.set_focus_paths([file_path])
+            self.context.agent.session.clear_proposed_patch_draft()
             self.context.agent.session.patch_source_hint = "LLM 二次复核（静态扫描未报出问题）"
             try:
                 self.context._run_agent_request(
@@ -381,9 +417,12 @@ class CliWorkflowController:
                     compact_observation=True,
                     suppress_answer_output=True,
                 )
+            except Exception:
+                self.context.agent.session.clear_proposed_patch_draft()
+                raise
             finally:
                 self.context.agent.session.patch_source_hint = None
-            if self.context.workspace_manager.load_workspace().has_pending_patch():
+            if self._commit_proposed_patch():
                 return
 
         self.context.renderer.print_no_issue_panel(
