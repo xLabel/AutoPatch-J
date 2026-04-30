@@ -288,7 +288,8 @@ class CliWorkflowController:
                     current_finding=finding,
                     force_reread=force_reread,
                     **kwargs
-                )
+                ),
+                suppress_answer_output=True,
             ) or []
         except Exception:
             self.context.agent.session.clear_proposed_patch_draft()

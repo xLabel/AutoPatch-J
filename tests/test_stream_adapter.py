@@ -92,7 +92,8 @@ def test_stream_adapter_renders_patch_explain_answer_with_pending_patch() -> Non
         answer_intent=IntentType.PATCH_EXPLAIN,
     )
 
-    stream.renderer.print.assert_called_once_with("patch explanation")
+    stream.renderer.print_agent_text.assert_called_once_with("patch explanation")
+    stream.renderer.print.assert_not_called()
 
 
 def test_stream_adapter_suppresses_audit_answer_with_pending_patch() -> None:
@@ -107,6 +108,7 @@ def test_stream_adapter_suppresses_audit_answer_with_pending_patch() -> None:
         answer_intent=IntentType.CODE_AUDIT,
     )
 
+    stream.renderer.print_agent_text.assert_not_called()
     stream.renderer.print.assert_not_called()
 
 
@@ -123,4 +125,53 @@ def test_stream_adapter_respects_explicit_suppress_answer_output() -> None:
         suppress_answer_output=True,
     )
 
+    stream.renderer.print_agent_text.assert_not_called()
+    stream.renderer.print.assert_not_called()
+
+
+def test_stream_adapter_renders_buffered_answer_as_plain_agent_text() -> None:
+    stream = _build_stream_adapter(debug_mode=True)
+
+    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+        on_token('**补丁已提交** `MessageDigest.getInstance("SHA-256")`')
+        return ""
+
+    stream.run(prompt="audit", agent_call=agent_call)
+
+    stream.renderer.print_agent_text.assert_called_once_with(
+        '**补丁已提交** `MessageDigest.getInstance("SHA-256")`',
+    )
+    stream.renderer.print.assert_not_called()
+
+
+def test_stream_adapter_renders_buffered_plain_answer_with_newline() -> None:
+    stream = _build_stream_adapter(debug_mode=True)
+
+    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+        on_token("补丁解释完成")
+        return ""
+
+    stream.run(
+        prompt="explain patch",
+        agent_call=agent_call,
+        answer_intent=IntentType.PATCH_EXPLAIN,
+        plain_answer=True,
+    )
+
+    stream.renderer.print_plain.assert_called_once_with("补丁解释完成")
+    stream.renderer.print.assert_not_called()
+
+
+def test_stream_adapter_drops_intermediate_answer_when_tool_call_starts() -> None:
+    stream = _build_stream_adapter(debug_mode=False)
+
+    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+        on_token("**F1 处理完成。**")
+        on_tool_start("get_finding_detail")
+        on_observation("full finding detail", "已获取 finding 详情: F2")
+        return ""
+
+    stream.run(prompt="audit", agent_call=agent_call)
+
+    stream.renderer.print_agent_text.assert_called_once_with("已获取 finding 详情: F2")
     stream.renderer.print.assert_not_called()

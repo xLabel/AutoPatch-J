@@ -71,6 +71,7 @@ class _StreamExecution:
     def on_tool_start(self, tool_name: str) -> None:
         self.finish_reasoning_status_if_visible()
         self.current_tool_name = tool_name
+        self.buffered_answer_parts.clear()
         self.renderer.print_tool_start(tool_name, caller="LLM")
 
     def on_observation(self, message: str, summary: str | None = None) -> None:
@@ -182,9 +183,9 @@ class StreamAdapter:
             if show_chat_anchors:
                 self.renderer.print_assistant_anchor()
             if plain_answer:
-                self.renderer.print_plain(rendered_answer, end="")
+                self.renderer.print_plain(rendered_answer)
             else:
-                self.renderer.print(rendered_answer, end="")
+                self.renderer.print_agent_text(rendered_answer)
         else:
             sanitized_final_answer = final_answer or ""
             if sanitized_final_answer:
@@ -198,6 +199,6 @@ class StreamAdapter:
                 if plain_answer:
                     self.renderer.print_plain(rendered_answer)
                 else:
-                    self.renderer.print(rendered_answer)
+                    self.renderer.print_agent_text(rendered_answer)
 
         return new_messages

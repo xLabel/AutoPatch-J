@@ -244,6 +244,7 @@ def test_process_single_finding_commits_staged_patch_after_success(cli: CLI) -> 
     assert workspace.patch_items[0].draft.new_string == "better"
     assert finding.status.value == "patch_ready"
     assert cli.agent.session.proposed_patch_draft is None
+    assert cli._run_agent_request.call_args.kwargs["suppress_answer_output"] is True
 
 
 def test_process_single_finding_does_not_commit_without_staged_patch(cli: CLI) -> None:
@@ -257,6 +258,7 @@ def test_process_single_finding_does_not_commit_without_staged_patch(cli: CLI) -
     assert workspace.patch_items == []
     assert finding.status.value == "failed"
     assert finding.last_error_code == "NO_PROPOSED_PATCH_DRAFT"
+    assert cli._run_agent_request.call_args.kwargs["suppress_answer_output"] is True
 
 
 def test_finding_retry_commits_only_retry_patch(cli: CLI) -> None:
