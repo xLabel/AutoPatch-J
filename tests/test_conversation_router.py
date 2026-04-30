@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from autopatch_j.agent.llm_client import LLMCallPurpose
 from autopatch_j.core.input_classifier import ConversationRouter
 from autopatch_j.core.models import CodeScope, CodeScopeKind, ConversationRoute
 
@@ -70,11 +71,43 @@ def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> No
     assert route is ConversationRoute.NEW_TASK
     assert llm.kwargs == {
         "tools": None,
-        "stream": False,
-        "reasoning_effort": None,
-        "max_tokens": 32,
-        "temperature": 0,
+        "purpose": LLMCallPurpose.CLASSIFIER,
     }
+
+
+def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
+    class FakeLLM:
+        def __init__(self) -> None:
+            self.purposes: list[LLMCallPurpose] = []
+
+        def chat(self, messages, **kwargs):
+            purpose = kwargs["purpose"]
+            self.purposes.append(purpose)
+
+            class Response:
+                tool_calls = None
+                reasoning_content = None
+
+                def __init__(self, content: str) -> None:
+                    self.content = content
+
+            if purpose is LLMCallPurpose.CLASSIFIER:
+                return Response("")
+            return Response("NEW_TASK")
+
+    llm = FakeLLM()
+    service = ConversationRouter(llm=llm)  # type: ignore[arg-type]
+
+    route = service.determine_route(
+        user_text="重新检查一下",
+        has_pending_review=True,
+        requested_scope=None,
+        current_patch_file="src/main/java/demo/UserService.java",
+        current_scope=_scope(),
+    )
+
+    assert route is ConversationRoute.NEW_TASK
+    assert llm.purposes == [LLMCallPurpose.CLASSIFIER, LLMCallPurpose.REACT]
 
 
 def test_continuity_judge_falls_back_when_llm_classifier_fails() -> None:

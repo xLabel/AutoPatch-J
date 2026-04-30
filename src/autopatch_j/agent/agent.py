@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from autopatch_j.agent.llm_client import LLMClient, build_default_llm_client
+from autopatch_j.agent.llm_client import LLMCallPurpose, LLMClient, build_default_llm_client
 from autopatch_j.agent.dialect import ToolCall
 from autopatch_j.agent.message_adapter import AgentMessageAdapter
 from autopatch_j.agent.prompts import (
@@ -16,7 +16,6 @@ from autopatch_j.agent.prompts import (
     build_zero_finding_review_user_prompt,
 )
 from autopatch_j.agent.session import AgentSession
-from autopatch_j.config import GlobalConfig
 from autopatch_j.core.models import IntentType, AuditFindingItem, CodeScope, PatchReviewItem
 from autopatch_j.tools.base import Tool, ToolResult
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
@@ -307,16 +306,15 @@ class Agent:
             return "LLM 配置缺失。请设置 AUTOPATCH_LLM_API_KEY 后重启。"
 
         self.messages.append({"role": "user", "content": user_text})
-        extra_body = self._build_llm_extra_body()
 
         for _ in range(10):
             processed_messages = self.message_adapter.dehydrate_history(self.messages, system_prompt)
             response = self.llm.chat(
                 messages=processed_messages,
                 tools=self.message_adapter.tool_schemas(allowed_tool_names),
-                extra_body=extra_body,
-                on_token=on_token,
-                on_reasoning_token=on_reasoning,
+                purpose=LLMCallPurpose.REACT,
+                on_content_delta=on_token,
+                on_reasoning_delta=on_reasoning,
             )
 
             assistant_content = response.content or "..."
@@ -396,13 +394,6 @@ class Agent:
     def _fetch_latest_scan_artifact_id(self) -> str | None:
         scan_files = sorted(self.session.artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
         return scan_files[0].stem if scan_files else None
-
-    def _build_llm_extra_body(self) -> dict[str, Any]:
-        import json
-        try:
-            return json.loads(GlobalConfig.llm_extra_body)
-        except json.JSONDecodeError:
-            return {}
 
     def _dehydrate_history(self, current_system_prompt: str) -> list[dict[str, Any]]:
         return self.message_adapter.dehydrate_history(self.messages, current_system_prompt)

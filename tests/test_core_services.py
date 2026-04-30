@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from autopatch_j.agent.llm_client import LLMCallPurpose
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.input_classifier import (
@@ -93,11 +94,32 @@ def test_llm_intent_classifier_maps_response_to_intent() -> None:
     assert "has_pending_review: true" in llm.messages[1]["content"]
     assert llm.kwargs == {
         "tools": None,
-        "stream": False,
-        "reasoning_effort": None,
-        "max_tokens": 32,
-        "temperature": 0,
+        "purpose": LLMCallPurpose.CLASSIFIER,
     }
+
+
+def test_llm_intent_classifier_falls_back_to_react_when_fast_path_is_empty() -> None:
+    class FakeResponse:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class FakeLLM:
+        def __init__(self) -> None:
+            self.purposes: list[LLMCallPurpose] = []
+
+        def chat(self, messages, **kwargs):
+            purpose = kwargs["purpose"]
+            self.purposes.append(purpose)
+            if purpose is LLMCallPurpose.CLASSIFIER:
+                return FakeResponse("")
+            return FakeResponse("code_audit")
+
+    llm = FakeLLM()
+    classifier = build_llm_intent_classifier(llm)
+
+    assert classifier is not None
+    assert classifier("@LegacyConfig.java 检查代码", False) is IntentType.CODE_AUDIT
+    assert llm.purposes == [LLMCallPurpose.CLASSIFIER, LLMCallPurpose.REACT]
 
 
 def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> None:

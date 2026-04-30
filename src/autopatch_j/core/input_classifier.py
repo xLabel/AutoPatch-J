@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from autopatch_j.agent.llm_client import LLMClient
+from autopatch_j.agent.llm_client import LLMCallPurpose, LLMClient
 from autopatch_j.core.models import CodeScope, ConversationRoute, IntentType
 
 
@@ -81,17 +81,28 @@ def build_llm_intent_classifier(llm: Any | None) -> Callable[[str, bool], Intent
                 ),
             },
         ]
+        intent = _classify_intent_with_purpose(llm, messages, LLMCallPurpose.CLASSIFIER)
+        if intent is not None:
+            return intent
+        return _classify_intent_with_purpose(llm, messages, LLMCallPurpose.REACT)
+
+    return classify
+
+
+def _classify_intent_with_purpose(
+    llm: Any,
+    messages: list[dict[str, str]],
+    purpose: LLMCallPurpose,
+) -> IntentType | None:
+    try:
         response = llm.chat(
             messages=messages,
             tools=None,
-            stream=False,
-            reasoning_effort=None,
-            max_tokens=32,
-            temperature=0,
+            purpose=purpose,
         )
-        return parse_llm_intent(str(response.content))
-
-    return classify
+    except Exception:
+        return None
+    return parse_llm_intent(str(response.content))
 
 
 class IntentDetector:
@@ -205,14 +216,22 @@ class ConversationRouter:
                 ),
             },
         ]
+        route = self._fetch_route_with_purpose(messages, LLMCallPurpose.CLASSIFIER)
+        if route is not None:
+            return route
+        return self._fetch_route_with_purpose(messages, LLMCallPurpose.REACT)
+
+    def _fetch_route_with_purpose(
+        self,
+        messages: list[dict[str, str]],
+        purpose: LLMCallPurpose,
+    ) -> ConversationRoute | None:
+        assert self.llm is not None
         try:
             response = self.llm.chat(
                 messages=messages,
                 tools=None,
-                stream=False,
-                reasoning_effort=None,
-                max_tokens=32,
-                temperature=0,
+                purpose=purpose,
             )
         except Exception:
             return None

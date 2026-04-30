@@ -2,13 +2,49 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any, Callable
 import openai
 
 from .dialect import ToolCall, MessageDialect, StandardDialect, DeepSeekAliyunDialect
 
 
-_USE_CLIENT_REASONING = object()
+class LLMCallPurpose(Enum):
+    """LLM 调用意图，业务层只声明用途，不传供应商参数。"""
+
+    REACT = auto()
+    CLASSIFIER = auto()
+
+
+class LLMReasoningMode(Enum):
+    """LLMClient 内部使用的 reasoning 策略。"""
+
+    INHERIT = auto()
+    DISABLED = auto()
+
+
+@dataclass(frozen=True, slots=True)
+class LLMRequestOptions:
+    """由调用意图解析出的底层请求选项。"""
+
+    stream: bool
+    reasoning: LLMReasoningMode
+    max_tokens: int | None = None
+    temperature: float | None = None
+
+
+_PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
+    LLMCallPurpose.REACT: LLMRequestOptions(
+        stream=True,
+        reasoning=LLMReasoningMode.INHERIT,
+    ),
+    LLMCallPurpose.CLASSIFIER: LLMRequestOptions(
+        stream=False,
+        reasoning=LLMReasoningMode.DISABLED,
+        max_tokens=128,
+        temperature=0,
+    ),
+}
 
 
 @dataclass(slots=True)
@@ -33,7 +69,14 @@ class LLMClient:
     3. 不理解 AutoPatch-J 的业务意图；它只提供协议层输入输出。
     """
 
-    def __init__(self, api_key: str, base_url: str, model: str, reasoning_effort: str | None = None, stream_dialect: str = "standard") -> None:
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        reasoning_effort: str | None = None,
+        stream_dialect: str = "standard",
+    ) -> None:
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
         self.reasoning_effort = reasoning_effort
@@ -48,43 +91,112 @@ class LLMClient:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-        extra_body: dict[str, Any] | None = None,
-        stream: bool = True,
-        reasoning_effort: str | None | object = _USE_CLIENT_REASONING,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        on_token: Callable[[str], None] | None = None,
-        on_reasoning_token: Callable[[str], None] | None = None,
+        purpose: LLMCallPurpose = LLMCallPurpose.REACT,
+        on_content_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
-        stream_options = None
-        if stream and extra_body and (extra_body.get("enable_thinking") or "thinking" in extra_body):
-            stream_options = {"include_usage": True}
+        options = self._resolve_options(purpose)
+        kwargs = self._build_request_kwargs(
+            messages=messages,
+            tools=tools,
+            options=options,
+        )
+        response = self._create_completion(kwargs=kwargs, options=options)
+        if not options.stream:
+            return self._parse_non_stream_response(response, on_content_delta=on_content_delta)
 
+        return self._parse_stream_response(
+            response,
+            on_content_delta=on_content_delta,
+            on_reasoning_delta=on_reasoning_delta,
+        )
+
+    def _resolve_options(self, purpose: LLMCallPurpose) -> LLMRequestOptions:
+        return _PURPOSE_OPTIONS[purpose]
+
+    def _build_request_kwargs(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        options: LLMRequestOptions,
+    ) -> dict[str, Any]:
+        extra_body = self._build_extra_body(options)
         kwargs = {
             "model": self.model,
             "messages": messages,
             "tools": tools,
-            "stream": stream,
+            "stream": options.stream,
             "extra_body": extra_body,
         }
-        if stream_options is not None:
-            kwargs["stream_options"] = stream_options
-        effective_reasoning_effort = (
-            self.reasoning_effort
-            if reasoning_effort is _USE_CLIENT_REASONING
-            else reasoning_effort
+        if options.stream and extra_body and (extra_body.get("enable_thinking") or "thinking" in extra_body):
+            kwargs["stream_options"] = {"include_usage": True}
+        if options.reasoning is LLMReasoningMode.INHERIT and self.reasoning_effort:
+            kwargs["reasoning_effort"] = self.reasoning_effort
+        if options.max_tokens is not None:
+            kwargs["max_tokens"] = options.max_tokens
+        if options.temperature is not None:
+            kwargs["temperature"] = options.temperature
+        return kwargs
+
+    def _build_extra_body(self, options: LLMRequestOptions) -> dict[str, Any] | None:
+        if options.reasoning is LLMReasoningMode.DISABLED:
+            return {
+                "thinking": {"type": "disabled"},
+                "enable_thinking": False,
+            }
+
+        extra_body = self._load_global_extra_body()
+        return extra_body or None
+
+    def _load_global_extra_body(self) -> dict[str, Any]:
+        from autopatch_j.config import GlobalConfig
+
+        try:
+            parsed = json.loads(GlobalConfig.llm_extra_body)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _create_completion(self, kwargs: dict[str, Any], options: LLMRequestOptions) -> Any:
+        try:
+            return self.client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            if not self._should_retry_without_disabled_reasoning(exc, kwargs, options):
+                raise
+            retry_kwargs = dict(kwargs)
+            retry_kwargs["extra_body"] = None
+            retry_kwargs.pop("stream_options", None)
+            return self.client.chat.completions.create(**retry_kwargs)
+
+    def _should_retry_without_disabled_reasoning(
+        self,
+        exc: Exception,
+        kwargs: dict[str, Any],
+        options: LLMRequestOptions,
+    ) -> bool:
+        if options.reasoning is not LLMReasoningMode.DISABLED:
+            return False
+        if not kwargs.get("extra_body"):
+            return False
+        message = str(exc).lower()
+        retry_markers = (
+            "thinking",
+            "enable_thinking",
+            "extra_body",
+            "unsupported",
+            "not supported",
+            "unknown parameter",
+            "unrecognized",
+            "invalid parameter",
         )
-        if effective_reasoning_effort:
-            kwargs["reasoning_effort"] = effective_reasoning_effort
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        if temperature is not None:
-            kwargs["temperature"] = temperature
+        return any(marker in message for marker in retry_markers)
 
-        response = self.client.chat.completions.create(**kwargs)
-        if not stream:
-            return self._parse_non_stream_response(response, on_token=on_token)
-
+    def _parse_stream_response(
+        self,
+        response: Any,
+        on_content_delta: Callable[[str], None] | None = None,
+        on_reasoning_delta: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
         full_content = ""
         visible_content = ""
         full_reasoning = ""
@@ -94,33 +206,33 @@ class LLMClient:
         for chunk in response:
             if not chunk.choices:
                 continue
-            
+
             delta = chunk.choices[0].delta
-            
+
             # 兼容不同厂商的思考链字段名 (reasoning_content 或 reasoning)
             reasoning = getattr(delta, "reasoning_content", None)
             if reasoning is None:
                 reasoning = getattr(delta, "reasoning", None)
-            
+
             if reasoning is not None:
                 full_reasoning += reasoning
-                if on_reasoning_token and reasoning:
-                    on_reasoning_token(reasoning)
+                if on_reasoning_delta and reasoning:
+                    on_reasoning_delta(reasoning)
 
             if delta.content:
                 full_content += delta.content
                 visible_piece = dialect.consume_visible_text(delta.content)
                 if visible_piece:
                     visible_content += visible_piece
-                    if on_token:
-                        on_token(visible_piece)
+                    if on_content_delta:
+                        on_content_delta(visible_piece)
 
             if delta.tool_calls:
                 for tc in delta.tool_calls:
                     index = tc.index
                     if index not in tool_calls_map:
                         tool_calls_map[index] = {"id": tc.id, "name": "", "args": ""}
-                    
+
                     if tc.function.name:
                         tool_calls_map[index]["name"] = tc.function.name
                     if tc.function.arguments:
@@ -129,20 +241,22 @@ class LLMClient:
         tail_piece = dialect.flush_visible_text()
         if tail_piece:
             visible_content += tail_piece
-            if on_token:
-                on_token(tail_piece)
+            if on_content_delta:
+                on_content_delta(tail_piece)
 
         final_tool_calls: list[ToolCall] = []
 
         for tc_data in tool_calls_map.values():
             try:
                 args = json.loads(tc_data["args"]) if tc_data["args"] else {}
-                final_tool_calls.append(ToolCall(
-                    name=tc_data["name"],
-                    arguments=args,
-                    call_id=tc_data["id"],
-                    raw_arguments=tc_data["args"]
-                ))
+                final_tool_calls.append(
+                    ToolCall(
+                        name=tc_data["name"],
+                        arguments=args,
+                        call_id=tc_data["id"],
+                        raw_arguments=tc_data["args"],
+                    )
+                )
             except json.JSONDecodeError:
                 continue
 
@@ -154,13 +268,13 @@ class LLMClient:
         return LLMResponse(
             content=final_content,
             tool_calls=final_tool_calls if final_tool_calls else None,
-            reasoning_content=full_reasoning if full_reasoning else None
+            reasoning_content=full_reasoning if full_reasoning else None,
         )
 
     def _parse_non_stream_response(
         self,
         response: Any,
-        on_token: Callable[[str], None] | None = None,
+        on_content_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         if not response.choices:
             return LLMResponse(content="")
@@ -169,8 +283,8 @@ class LLMClient:
         content = message.content or ""
         dialect = self._create_dialect()
         visible_content = dialect.strip_markup(content)
-        if on_token and visible_content:
-            on_token(visible_content)
+        if on_content_delta and visible_content:
+            on_content_delta(visible_content)
 
         reasoning = getattr(message, "reasoning_content", None)
         if reasoning is None:
@@ -212,5 +326,5 @@ def build_default_llm_client() -> LLMClient | None:
         base_url=GlobalConfig.llm_base_url,
         model=GlobalConfig.llm_model,
         reasoning_effort=GlobalConfig.llm_reasoning_effort,
-        stream_dialect=GlobalConfig.llm_stream_dialect
+        stream_dialect=GlobalConfig.llm_stream_dialect,
     )
