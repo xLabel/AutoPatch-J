@@ -24,7 +24,10 @@ TASK_PROMPTS: dict[IntentType, str] = {
         "默认用 1 到 3 段纯文本短答，不要输出 Markdown 标题、教程式编号大纲或长篇模板化内容。"
     ),
     IntentType.PATCH_EXPLAIN: (
-        "当前任务是 patch_explain。请解释当前待确认补丁的意图、风险和影响，只读回答。"
+        "当前任务是 patch_explain。你只解释当前待确认补丁，不修改补丁，不调用修订工具。"
+        "默认用简短中文回答，优先直接回答用户问题。不要复述完整 diff，不要输出 Markdown 标题、表格或长篇报告。"
+        "除非用户明确要求详细分析，否则控制在 3 到 5 行。"
+        "只在补丁差异和补丁意图不足以回答时，才读取源码补充判断。"
     ),
     IntentType.PATCH_REVISE: (
         "当前任务是 patch_revise。请围绕当前待确认补丁和用户反馈只重写当前补丁。"
@@ -163,6 +166,11 @@ def build_patch_explain_user_prompt(current_item: PatchReviewItem, user_text: st
         f"当前待确认补丁文件: {current_item.file_path}\n"
         f"补丁意图: {draft.rationale or '无说明'}\n"
         f"补丁差异:\n{draft.diff}\n\n"
+        "回答要求:\n"
+        "1. 先直接回答用户问题。\n"
+        "2. 默认只说明改了什么、为什么改、是否有明显风险。\n"
+        "3. 不要重复粘贴补丁 diff。\n"
+        "4. 不要输出长篇 Markdown 报告，除非用户明确要求。\n\n"
         f"用户问题:\n{user_text}"
     )
 

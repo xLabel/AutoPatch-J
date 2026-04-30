@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.llm_client import LLMClient, LLMResponse
-from autopatch_j.agent.prompts import build_task_system_prompt
+from autopatch_j.agent.prompts import build_patch_explain_user_prompt, build_task_system_prompt
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.models import IntentType, PatchDraftData, PatchReviewItem, PatchReviewStatus
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.workspace_manager import WorkspaceManager
@@ -111,6 +111,56 @@ def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
         "get_finding_detail",
         "revise_patch",
     ]
+
+
+def test_perform_patch_explain_keeps_read_only_tool_profile(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="done")
+    agent = _build_agent(tmp_path, mock_llm)
+
+    agent.perform_patch_explain("这个补丁是什么意思", current_item=MagicMock())
+
+    assert _fetch_tool_names(mock_llm) == [
+        "search_symbols",
+        "read_source_code",
+    ]
+
+
+def test_patch_explain_prompt_keeps_cli_answer_compact() -> None:
+    item = PatchReviewItem(
+        item_id="p1",
+        file_path="src/main/java/demo/LegacyConfig.java",
+        finding_ids=["F1"],
+        status=PatchReviewStatus.PENDING,
+        draft=PatchDraftData(
+            file_path="src/main/java/demo/LegacyConfig.java",
+            old_string='MessageDigest.getInstance("MD5")',
+            new_string='MessageDigest.getInstance("SHA-256")',
+            diff='- MessageDigest.getInstance("MD5")\n+ MessageDigest.getInstance("SHA-256")',
+            validation_status="ok",
+            validation_message="ok",
+            rationale="将弱哈希算法升级为 SHA-256。",
+        ),
+    )
+
+    prompt = build_patch_explain_user_prompt(item, "这个补丁是什么意思")
+
+    assert "先直接回答用户问题" in prompt
+    assert "不要重复粘贴补丁 diff" in prompt
+    assert "不要输出长篇 Markdown 报告" in prompt
+    assert "用户问题:\n这个补丁是什么意思" in prompt
+
+
+def test_patch_explain_system_prompt_limits_report_style() -> None:
+    prompt = build_task_system_prompt(
+        intent=IntentType.PATCH_EXPLAIN,
+        pending_file="src/main/java/demo/LegacyConfig.java",
+        last_scan="scan-1",
+    )
+
+    assert "控制在 3 到 5 行" in prompt
+    assert "不要复述完整 diff" in prompt
+    assert "才读取源码补充判断" in prompt
 
 
 def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:
