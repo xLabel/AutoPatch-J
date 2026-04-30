@@ -77,9 +77,11 @@ def test_llm_intent_classifier_maps_response_to_intent() -> None:
     class FakeLLM:
         def __init__(self) -> None:
             self.messages = None
+            self.kwargs = None
 
-        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+        def chat(self, messages, **kwargs):
             self.messages = messages
+            self.kwargs = kwargs
             return FakeResponse()
 
     llm = FakeLLM()
@@ -89,6 +91,13 @@ def test_llm_intent_classifier_maps_response_to_intent() -> None:
     assert classifier("change this patch", True) is IntentType.PATCH_REVISE
     assert llm.messages is not None
     assert "has_pending_review: true" in llm.messages[1]["content"]
+    assert llm.kwargs == {
+        "tools": None,
+        "stream": False,
+        "reasoning_effort": None,
+        "max_tokens": 32,
+        "temperature": 0,
+    }
 
 
 def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> None:

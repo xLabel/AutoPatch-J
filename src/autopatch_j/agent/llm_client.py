@@ -8,9 +8,16 @@ import openai
 from .dialect import ToolCall, MessageDialect, StandardDialect, DeepSeekAliyunDialect
 
 
+_USE_CLIENT_REASONING = object()
+
+
 @dataclass(slots=True)
 class LLMResponse:
-    """大模型响应统一包装模型"""
+    """
+    LLM 响应的统一包装。
+
+    content 是最终可见文本，tool_calls 是标准化后的工具调用，reasoning_content 保留供应商返回的思考链字段。
+    """
     content: str
     tool_calls: list[ToolCall] | None = None
     reasoning_content: str | None = None
@@ -18,11 +25,12 @@ class LLMResponse:
 
 class LLMClient:
     """
-    大模型网关与方言适配器 (LLM Gateway & Dialect Strategy)。
-    核心职责：
-    1. 封装标准的 OpenAI 兼容协议，处理大模型流式响应、思考链 (Reasoning) 与工具调用 (Tool Calls)。
-    2. 利用策略模式 (Strategy Pattern) 动态挂载方言解析器 (MessageDialect)，
-       将特定厂商的黑盒参数与专属标签（如百炼的 <｜DSML｜>）同核心业务逻辑彻底解耦。
+    OpenAI 兼容 LLM 网关。
+
+    职责边界：
+    1. 封装聊天补全的流式调用，统一收集可见文本、reasoning 和 Tool Call。
+    2. 通过 MessageDialect 兼容不同供应商的流式标签和工具调用格式。
+    3. 不理解 AutoPatch-J 的业务意图；它只提供协议层输入输出。
     """
 
     def __init__(self, api_key: str, base_url: str, model: str, reasoning_effort: str | None = None, stream_dialect: str = "standard") -> None:
@@ -41,25 +49,41 @@ class LLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         extra_body: dict[str, Any] | None = None,
+        stream: bool = True,
+        reasoning_effort: str | None | object = _USE_CLIENT_REASONING,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
         on_token: Callable[[str], None] | None = None,
         on_reasoning_token: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         stream_options = None
-        if extra_body and (extra_body.get("enable_thinking") or "thinking" in extra_body):
-             stream_options = {"include_usage": True}
+        if stream and extra_body and (extra_body.get("enable_thinking") or "thinking" in extra_body):
+            stream_options = {"include_usage": True}
 
         kwargs = {
             "model": self.model,
             "messages": messages,
             "tools": tools,
-            "stream": True,
+            "stream": stream,
             "extra_body": extra_body,
-            "stream_options": stream_options
         }
-        if self.reasoning_effort:
-            kwargs["reasoning_effort"] = self.reasoning_effort
+        if stream_options is not None:
+            kwargs["stream_options"] = stream_options
+        effective_reasoning_effort = (
+            self.reasoning_effort
+            if reasoning_effort is _USE_CLIENT_REASONING
+            else reasoning_effort
+        )
+        if effective_reasoning_effort:
+            kwargs["reasoning_effort"] = effective_reasoning_effort
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if temperature is not None:
+            kwargs["temperature"] = temperature
 
         response = self.client.chat.completions.create(**kwargs)
+        if not stream:
+            return self._parse_non_stream_response(response, on_token=on_token)
 
         full_content = ""
         visible_content = ""
@@ -131,6 +155,51 @@ class LLMClient:
             content=final_content,
             tool_calls=final_tool_calls if final_tool_calls else None,
             reasoning_content=full_reasoning if full_reasoning else None
+        )
+
+    def _parse_non_stream_response(
+        self,
+        response: Any,
+        on_token: Callable[[str], None] | None = None,
+    ) -> LLMResponse:
+        if not response.choices:
+            return LLMResponse(content="")
+
+        message = response.choices[0].message
+        content = message.content or ""
+        dialect = self._create_dialect()
+        visible_content = dialect.strip_markup(content)
+        if on_token and visible_content:
+            on_token(visible_content)
+
+        reasoning = getattr(message, "reasoning_content", None)
+        if reasoning is None:
+            reasoning = getattr(message, "reasoning", None)
+
+        final_tool_calls: list[ToolCall] = []
+        for tool_call in getattr(message, "tool_calls", None) or []:
+            function = tool_call.function
+            raw_arguments = function.arguments or ""
+            try:
+                arguments = json.loads(raw_arguments) if raw_arguments else {}
+            except json.JSONDecodeError:
+                continue
+            final_tool_calls.append(
+                ToolCall(
+                    name=function.name,
+                    arguments=arguments,
+                    call_id=tool_call.id,
+                    raw_arguments=raw_arguments,
+                )
+            )
+
+        if not final_tool_calls:
+            final_tool_calls.extend(dialect.extract_tool_calls(content))
+
+        return LLMResponse(
+            content=visible_content,
+            tool_calls=final_tool_calls if final_tool_calls else None,
+            reasoning_content=reasoning if reasoning else None,
         )
 
 

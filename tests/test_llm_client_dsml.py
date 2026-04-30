@@ -21,6 +21,20 @@ def _chunk(
     return SimpleNamespace(choices=[choice])
 
 
+def _non_stream_response(
+    content: str,
+    reasoning_content: str | None = None,
+    tool_calls: list[object] | None = None,
+) -> SimpleNamespace:
+    message = SimpleNamespace(
+        content=content,
+        reasoning_content=reasoning_content,
+        reasoning=None,
+        tool_calls=tool_calls,
+    )
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+
 def test_chat_parses_dsml_tool_call_and_hides_markup() -> None:
     client = LLMClient(api_key="test-key", base_url="https://example.invalid/v1", model="test-model", stream_dialect="bailian-dsml")
     client.client = MagicMock()
@@ -75,3 +89,35 @@ def test_chat_parses_dsml_tool_call_with_preamble_and_spacing() -> None:
     assert response.tool_calls[0].arguments == {"path": "src/main/java/demo/UserService.java"}
     assert response.content == "现在需要获取 UserService.java 的完整代码。使用 read_source_code。"
     assert "".join(streamed_tokens) == "现在需要获取 UserService.java 的完整代码。使用 read_source_code。\n\n"
+
+
+def test_chat_supports_non_stream_response_without_reasoning_effort() -> None:
+    client = LLMClient(
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+        model="test-model",
+        reasoning_effort="high",
+    )
+    client.client = MagicMock()
+    client.client.chat.completions.create.return_value = _non_stream_response(
+        content="code_audit",
+        reasoning_content="hidden reasoning",
+    )
+
+    response = client.chat(
+        messages=[{"role": "user", "content": "检查代码"}],
+        tools=None,
+        stream=False,
+        reasoning_effort=None,
+        max_tokens=32,
+        temperature=0,
+    )
+
+    kwargs = client.client.chat.completions.create.call_args.kwargs
+    assert kwargs["stream"] is False
+    assert kwargs["max_tokens"] == 32
+    assert kwargs["temperature"] == 0
+    assert "reasoning_effort" not in kwargs
+    assert "stream_options" not in kwargs
+    assert response.content == "code_audit"
+    assert response.reasoning_content == "hidden reasoning"

@@ -324,7 +324,7 @@ def test_cli_wires_llm_intent_classifier(tmp_path: Path, monkeypatch: pytest.Mon
         content = "code_audit"
 
     class FakeLLM:
-        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+        def chat(self, messages, **kwargs):
             return FakeResponse()
 
     monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())
@@ -342,7 +342,7 @@ def test_handle_chat_routes_llm_code_audit_intent(tmp_path: Path, monkeypatch: p
         content = "code_audit"
 
     class FakeLLM:
-        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+        def chat(self, messages, **kwargs):
             return FakeResponse()
 
     monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())
@@ -365,7 +365,7 @@ def test_handle_chat_filters_patch_intent_without_pending_review(
         content = "patch_revise"
 
     class FakeLLM:
-        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+        def chat(self, messages, **kwargs):
             return FakeResponse()
 
     monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())

@@ -81,7 +81,14 @@ def build_llm_intent_classifier(llm: Any | None) -> Callable[[str, bool], Intent
                 ),
             },
         ]
-        response = llm.chat(messages=messages, tools=None)
+        response = llm.chat(
+            messages=messages,
+            tools=None,
+            stream=False,
+            reasoning_effort=None,
+            max_tokens=32,
+            temperature=0,
+        )
         return parse_llm_intent(str(response.content))
 
     return classify
@@ -89,10 +96,12 @@ def build_llm_intent_classifier(llm: Any | None) -> Callable[[str, bool], Intent
 
 class IntentDetector:
     """
-    意图判定服务 (Intent Gateway)。
-    核心职责：作为拦截幻觉和约束 Agent 行为的“前哨站”。
-    纯粹依赖大模型的零样本分类能力，摒弃脆弱的本地正则/规则匹配，
-    精准区分 code_audit（代码审查）、code_explain（代码解释）、patch_revise（补丁修改）等工作流。
+    用户输入的语义意图分类器。
+
+    职责边界：
+    1. 将自然语言输入归类为 code_audit、code_explain、general_chat、patch_explain 或 patch_revise。
+    2. 使用短 LLM 做语义判断，并用程序硬约束过滤无 pending review 时的 patch-only 意图。
+    3. 不决定 pending review 是否应继续；会话连续性由 ConversationRouter 判断。
     """
 
     def __init__(
@@ -127,10 +136,12 @@ class IntentDetector:
 @dataclass(slots=True)
 class ConversationRouter:
     """
-    会话连续性路由 (Continuity Router)。
-    核心职责：在系统处于人工确认环节（REVIEWING 状态）时，精确判断用户新输入的意图走向。
-    决定用户的下一句话是在“提出修改意见以继续打磨当前补丁”（REVIEW_CONTINUE），
-    还是企图“跳出当前上下文，发起全新的扫描或提问任务”（NEW_TASK），或是纯粹的系统命令（COMMAND）。
+    pending review 场景下的会话连续性路由器。
+
+    职责边界：
+    1. 判断用户输入是继续当前补丁审核、发起新任务，还是系统命令。
+    2. 优先使用显式信号（命令、@scope）切换路径，模糊输入再交给短 LLM。
+    3. 不分类具体业务意图；route 确定后才由 IntentDetector 决定工作流类型。
     """
 
     llm: LLMClient | None = None
@@ -195,7 +206,14 @@ class ConversationRouter:
             },
         ]
         try:
-            response = self.llm.chat(messages=messages, tools=None)
+            response = self.llm.chat(
+                messages=messages,
+                tools=None,
+                stream=False,
+                reasoning_effort=None,
+                max_tokens=32,
+                temperature=0,
+            )
         except Exception:
             return None
         return self._parse_route(str(response.content))

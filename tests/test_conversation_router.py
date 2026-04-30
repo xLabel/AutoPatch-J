@@ -43,7 +43,12 @@ def test_continuity_judge_defaults_ambiguous_review_input_to_review_continue() -
 
 def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> None:
     class FakeLLM:
-        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+        def __init__(self) -> None:
+            self.kwargs = None
+
+        def chat(self, messages, **kwargs):
+            self.kwargs = kwargs
+
             class Response:
                 content = "NEW_TASK"
                 tool_calls = None
@@ -51,7 +56,8 @@ def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> No
 
             return Response()
 
-    service = ConversationRouter(llm=FakeLLM())  # type: ignore[arg-type]
+    llm = FakeLLM()
+    service = ConversationRouter(llm=llm)  # type: ignore[arg-type]
 
     route = service.determine_route(
         user_text="重新检查一下",
@@ -62,11 +68,18 @@ def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> No
     )
 
     assert route is ConversationRoute.NEW_TASK
+    assert llm.kwargs == {
+        "tools": None,
+        "stream": False,
+        "reasoning_effort": None,
+        "max_tokens": 32,
+        "temperature": 0,
+    }
 
 
 def test_continuity_judge_falls_back_when_llm_classifier_fails() -> None:
     class FailingLLM:
-        def chat(self, messages, tools=None, extra_body=None, on_token=None, on_reasoning_token=None):
+        def chat(self, messages, **kwargs):
             raise RuntimeError("router unavailable")
 
     service = ConversationRouter(llm=FailingLLM())  # type: ignore[arg-type]
