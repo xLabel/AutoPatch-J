@@ -9,7 +9,7 @@ from autopatch_j.config import GlobalConfig
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
 from autopatch_j.core.workspace_manager import WorkspaceManager
-from autopatch_j.scanners import ALL_SCANNERS, DEFAULT_SCANNER_NAME, get_scanner
+from autopatch_j.scanners import ALL_SCANNERS
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 
 
@@ -136,16 +136,8 @@ class CliCommandController:
         table.add_column("Value")
 
         table.add_row("[bold]项目根目录[/]", str(self.context.repo_root))
-        table.add_row("[bold]LLM 模型[/]", f"{GlobalConfig.llm_model} ([dim]{GlobalConfig.llm_base_url}[/])")
-
-        scanner = get_scanner(DEFAULT_SCANNER_NAME)
-        scanner_meta = scanner.get_meta(self.context.repo_root) if scanner else None
-        scanner_status = (
-            f"[green]就绪 ({scanner_meta.version})[/]"
-            if scanner_meta and scanner_meta.is_implemented and "就绪" in scanner_meta.status
-            else "[red]未就绪[/]"
-        )
-        table.add_row("[bold]静态扫描器[/]", scanner_status)
+        table.add_row("[bold]LLM 模型[/]", GlobalConfig.llm_model)
+        table.add_row("[bold]调试模式[/]", "开启" if GlobalConfig.debug_mode else "关闭")
 
         workspace = self.context.workspace_manager.load_workspace()
         pending = workspace.get_current_patch()

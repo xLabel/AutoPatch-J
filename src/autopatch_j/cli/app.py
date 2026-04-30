@@ -109,7 +109,9 @@ class CLI:
 
         if not self.repo_root:
             self.renderer.print_panel(
-                "AutoPatch-J: Java 安全与正确性修复智能体\n输入 /help 查看命令，使用 @ 符号绑定上下文。",
+                "AutoPatch-J: Java 安全与正确性修复智能体\n"
+                f"{self._describe_debug_output_mode()}"
+                "输入 /help 查看命令，使用 @ 符号绑定上下文。",
                 title="AutoPatch-J",
                 style=SYSTEM_STYLE,
             )
@@ -118,6 +120,7 @@ class CLI:
             if self.is_first_run:
                 self.renderer.print_panel(
                     f"当前项目: {self.repo_root}\n"
+                    f"{self._describe_debug_output_mode()}"
                     "[bold yellow]检测到首次在本项目运行。[/]\n"
                     "👉 请在下方输入 [bold green]/init[/] 执行初始化，系统将下载扫描器规则并构建本地代码索引。",
                     title="欢迎使用 AutoPatch-J",
@@ -131,6 +134,7 @@ class CLI:
                 self.renderer.print_panel(
                     f"当前项目: {self.repo_root}\n"
                     f"[bold green][就绪] 已静默加载现有工作台与本地索引 (共包含 {file_count} 个项目文件)。[/]\n"
+                    f"{self._describe_debug_output_mode()}"
                     f"💡 提示：若代码发生大规模变更，请使用 [bold]/reindex[/] 手动刷新 AST 缓存。\n"
                     f"输入 /help 查看命令，使用 @ 符号绑定上下文。",
                     title="AutoPatch-J",
@@ -186,6 +190,11 @@ class CLI:
                     self.renderer.print_error(f"指令执行异常: {error_message}")
 
         return 0
+
+    def _describe_debug_output_mode(self) -> str:
+        if GlobalConfig.debug_mode:
+            return "[bold green][调试模式] 显示完整思考链与工具输出详情。[/]\n"
+        return ""
 
     def _run_agent_request(
         self,
@@ -348,6 +357,7 @@ class CLI:
             describe_current_scope_paths=self._describe_current_scope_paths,
             build_static_scan_summary=self._build_static_scan_summary,
             build_local_no_issue_summary=self._build_local_no_issue_summary,
+            debug_mode=lambda: GlobalConfig.debug_mode,
         )
 
 
