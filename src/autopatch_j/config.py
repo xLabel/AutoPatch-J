@@ -7,13 +7,7 @@ from typing import Final
 
 SEMGREP_RULE_RELATIVE_PATH: Final = "scanners/resources/semgrep/rules/java.yml"
 
-DEFAULT_LLM_MODEL: Final = "deepseek-v4-flash"
-DEFAULT_LLM_EXTRA_BODY: Final = "{}"
-DEFAULT_LLM_STREAM_DIALECT: Final = "standard"
-DEFAULT_SEMGREP_VERSION: Final = "1.160.0"
-DEFAULT_SEMGREP_INSTALL_LOCK_TIMEOUT: Final = 600
-DEFAULT_SCANNER_TIMEOUT: Final = 300
-DEFAULT_IGNORED_DIRS: Final = frozenset(
+IGNORED_DIRS: Final = frozenset(
     {
         ".autopatch-j",
         ".git",
@@ -49,35 +43,46 @@ class AppConfig:
 
     # LLM 配置
     # LLM_API_KEY 和 LLM_BASE_URL 必填；LLM_BASE_URL 使用 OpenAI 兼容地址。
-    llm_api_key: str | None = field(default_factory=lambda: os.getenv("LLM_API_KEY"))
-    llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "").rstrip("/"))
+    llm_api_key: str
+    llm_base_url: str
 
     # 默认使用 deepseek-v4-flash；如供应商支持，也可切换为 qwen-max 等 OpenAI 兼容模型名。
-    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", DEFAULT_LLM_MODEL))
+    llm_model: str
 
     # 可选值取决于模型供应商，常见为 low、medium、high、max；不需要时留空。
-    llm_reasoning_effort: str | None = field(default_factory=lambda: os.getenv("LLM_REASONING_EFFORT"))
+    llm_reasoning_effort: str | None
 
     # 供应商私有扩展参数，必须是 JSON 字符串；例如 '{"thinking": {"type": "enabled"}}'。
-    llm_extra_body: str = field(default_factory=lambda: os.getenv("LLM_EXTRA_BODY", DEFAULT_LLM_EXTRA_BODY))
+    llm_extra_body: str
 
     # 可选值：standard、bailian-dsml；阿里云百炼旧版 DeepSeek DSML 流式输出使用 bailian-dsml。
-    llm_stream_dialect: str = field(
-        default_factory=lambda: os.getenv("LLM_STREAM_DIALECT", DEFAULT_LLM_STREAM_DIALECT)
-    )
+    llm_stream_dialect: str
 
     # 仅 "true" 开启调试输出。
-    debug_mode: bool = field(
-        default_factory=lambda: os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true"
-    )
+    debug_mode: bool
 
     # 扫描器配置
-    semgrep_version: str = DEFAULT_SEMGREP_VERSION
-    semgrep_install_lock_timeout: int = DEFAULT_SEMGREP_INSTALL_LOCK_TIMEOUT
-    scanner_timeout: int = DEFAULT_SCANNER_TIMEOUT
+    semgrep_version: str
+    semgrep_install_lock_timeout: int
+    scanner_timeout: int
 
     # 索引器配置
-    ignored_dirs: set[str] = field(default_factory=lambda: set(DEFAULT_IGNORED_DIRS))
+    ignored_dirs: set[str] = field(default_factory=lambda: set(IGNORED_DIRS))
+
+    @classmethod
+    def from_env(cls) -> "AppConfig":
+        return cls(
+            llm_api_key = os.getenv("LLM_API_KEY", ""),
+            llm_base_url = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+            llm_model = os.getenv("LLM_MODEL", "deepseek-v4-flash"),
+            llm_reasoning_effort = os.getenv("LLM_REASONING_EFFORT"),
+            llm_extra_body = os.getenv("LLM_EXTRA_BODY", "{}"),
+            llm_stream_dialect = os.getenv("LLM_STREAM_DIALECT", "standard"),
+            debug_mode = os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true",
+            semgrep_version = "1.160.0",
+            semgrep_install_lock_timeout = 600,
+            scanner_timeout = 300,
+        )
 
     def is_llm_ready(self) -> bool:
         """检查 LLM 必要配置是否就绪"""
@@ -89,8 +94,8 @@ class AppConfig:
             "LLM 核心配置缺失。请确保已设置以下环境变量：\n"
             "1. LLM_API_KEY\n"
             "2. LLM_BASE_URL\n"
-            f"3. LLM_MODEL (可选，默认 {DEFAULT_LLM_MODEL})"
+            f"3. LLM_MODEL (可选，默认 {self.llm_model})"
         )
 
 
-GlobalConfig = AppConfig()
+GlobalConfig = AppConfig.from_env()

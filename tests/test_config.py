@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.config import AppConfig, DEFAULT_LLM_MODEL
+from autopatch_j.config import AppConfig
 
 
 def test_app_config_reads_llm_environment(monkeypatch) -> None:
@@ -9,7 +9,7 @@ def test_app_config_reads_llm_environment(monkeypatch) -> None:
     monkeypatch.setenv("LLM_MODEL", "custom-model")
     monkeypatch.setenv("AUTOPATCH_DEBUG", "true")
 
-    config = AppConfig()
+    config = AppConfig.from_env()
 
     assert config.llm_api_key == "key"
     assert config.llm_base_url == "https://example.com/v1"
@@ -24,11 +24,13 @@ def test_app_config_uses_defaults_and_isolates_ignored_dirs(monkeypatch) -> None
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.delenv("AUTOPATCH_DEBUG", raising=False)
 
-    first = AppConfig()
-    second = AppConfig()
+    first = AppConfig.from_env()
+    second = AppConfig.from_env()
     first.ignored_dirs.add("custom")
 
-    assert first.llm_model == DEFAULT_LLM_MODEL
+    assert first.llm_api_key == ""
+    assert first.llm_base_url == "https://api.deepseek.com"
+    assert first.llm_model == "deepseek-v4-flash"
     assert first.debug_mode is False
     assert first.is_llm_ready() is False
     assert "custom" not in second.ignored_dirs
