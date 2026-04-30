@@ -135,7 +135,7 @@ autopatch-j> 加一行注释说明原因
 - `patch_explain`
 - `patch_revise`
 
-其中 `patch_explain` 可以读取当前补丁相关代码来解释风险和影响，但不会生成新补丁；`patch_revise` 会基于用户反馈重建当前补丁及其后的剩余补丁队列。
+其中 `patch_explain` 可以按需读取当前补丁相关代码来解释风险和影响，但不会生成新补丁，默认也会压缩为简短回答；`patch_revise` 只会基于用户反馈重写当前待确认补丁，不会修改后续补丁队列。
 
 ### 编程相关聊天
 
@@ -186,7 +186,7 @@ CLI 当前支持这些斜杠命令：
 7. `PatchEngine` 负责 `old_string` 匹配、diff 生成
 8. `PatchVerifier` 执行语法和语义复核
 9. `CliWorkflowController` 把结果写入 `WorkspaceManager`
-10. 最后进入人工确认阶段：`apply / discard / abort / revise`
+10. 最后进入人工确认阶段：`apply / discard / abort / <反馈文本>`
 
 其他分流入口：
 
@@ -249,6 +249,7 @@ LLM 层，负责：
 - `read_source_code`
 - `get_finding_detail`
 - `propose_patch`
+- `revise_patch`
 - `search_symbols`
 
 ### `scanners/`
@@ -279,7 +280,8 @@ LLM 层，负责：
 
 - `code_audit`：允许 `get_finding_detail / read_source_code / propose_patch`
 - `code_explain`：单文件只开 `read_source_code`
-- `patch_revise`：允许 `search_symbols / read_source_code / get_finding_detail / propose_patch`
+- `patch_explain`：允许 `search_symbols / read_source_code`
+- `patch_revise`：允许 `search_symbols / read_source_code / get_finding_detail / revise_patch`
 
 这不是限制模型，而是把模型的自由度放在真正需要的地方。
 
@@ -307,6 +309,8 @@ Agent 仍然是 ReAct 风格：
 `IntentDetector` 当前使用 LLM 分类用户输入，识别 `code_audit / code_explain / general_chat / patch_explain / patch_revise`。  
 如果没有待确认补丁，即使 LLM 返回 `patch_explain` 或 `patch_revise`，程序也会拒绝这些补丁态意图，避免误进入无法执行的补丁流程。
 
+意图识别调用与 ReAct 调用使用不同策略：意图识别请求不走流式输出，并会主动关闭推理模式、限制输出长度，以降低延迟和避免把思考链带入意图判断；ReAct 请求则保留流式输出和工具调用能力。
+
 ### 默认按 Java 语义工作
 
 Agent 的基础系统提示会明确说明：当前目标代码默认是 Java。除非上下文明确显示其他语言，否则审计、解释和补丁设计都会按 Java 语义、JDK 标准库行为和 Java 工程实践处理。
@@ -323,7 +327,13 @@ Agent 的基础系统提示会明确说明：当前目标代码默认是 Java。
 - 单个 finding 失败不会吞掉后续 finding
 - patch retry 更可控
 
-### 2. Patch 安全链路
+`propose_patch` 工具只会暂存本轮候选补丁；只有当 workflow 判断该 finding 成功完成后，补丁才会进入人工确认队列，避免工具多次调用时直接污染待确认队列。
+
+### 2. 当前补丁修订
+
+待确认阶段的普通反馈会进入 `patch_revise`。修订工具 `revise_patch` 只生成当前补丁的替代草案，ReAct 结束后由 workflow 替换当前补丁；后续补丁队列保持不变。
+
+### 3. Patch 安全链路
 
 `PatchEngine` 在 draft 阶段会检查：
 
@@ -335,7 +345,7 @@ Agent 的基础系统提示会明确说明：当前目标代码默认是 Java。
 真正 `apply` 时，`PatchVerifier` 会执行 `Tree-sitter` 语法校验。
 真正 `apply` 后，`PatchVerifier` 会对目标文件重新扫描，验证对应 finding 是否真的消失。
 
-### 3. 上下文控制
+### 4. 上下文控制
 
 项目显式做了几层 Context Engineering：
 
@@ -346,7 +356,7 @@ Agent 的基础系统提示会明确说明：当前目标代码默认是 Java。
 
 目标不是“让模型看到更多”，而是“让模型只看到对当前任务真正有用的东西”。
 
-### 4. SQLite + Tree-sitter 索引
+### 5. SQLite + Tree-sitter 索引
 
 `SymbolIndexer` 使用：
 
@@ -355,7 +365,7 @@ Agent 的基础系统提示会明确说明：当前目标代码默认是 Java。
 
 它提供了向后兼容的降级保护，且对主流 IDE 的临时构建目录（如 `target/`, `node_modules/`）进行了智能隔离。
 
-### 5. Finding 证据纠偏
+### 6. Finding 证据纠偏
 
 优先按 `path + line range` 回源文件提取真实代码片段，而不是盲信扫描器返回的原始 snippet。
 
@@ -381,27 +391,27 @@ pip install -e .[test]
 必填项：
 
 ```bash
-set LLM_API_KEY=your_api_key
-set LLM_BASE_URL=https://api.deepseek.com
-set LLM_MODEL=deepseek-v4-flash
+set AUTOPATCH_LLM_API_KEY=your_api_key
 ```
 
 常用可选项：
 
 ```bash
+set AUTOPATCH_LLM_BASE_URL=https://api.deepseek.com
+set AUTOPATCH_LLM_MODEL=deepseek-v4-flash
 set AUTOPATCH_DEBUG=true
-set LLM_STREAM_DIALECT=standard
+set AUTOPATCH_LLM_STREAM_DIALECT=standard
 ```
 
 配置说明：
 
-- `LLM_API_KEY`：必填；缺失时不会创建 LLM 客户端
-- `LLM_BASE_URL`：必填，使用 OpenAI 兼容地址
-- `LLM_MODEL`：必填，使用供应商提供的模型名
+- `AUTOPATCH_LLM_API_KEY`：必填；缺失时不会创建 LLM 客户端
+- `AUTOPATCH_LLM_BASE_URL`：可选，OpenAI 兼容地址，默认 `https://api.deepseek.com`
+- `AUTOPATCH_LLM_MODEL`：可选，供应商提供的模型名，默认 `deepseek-v4-flash`
 - `AUTOPATCH_DEBUG`：可选，默认关闭；仅设为 `true` 时展示完整思考链和工具输出详情
-- `LLM_STREAM_DIALECT`：可选，支持 `standard`、`bailian-dsml`
-- `LLM_REASONING_EFFORT`：可选，传给支持该参数的模型供应商
-- `LLM_EXTRA_BODY`：可选，JSON 字符串，用于传递供应商私有扩展参数，默认 `{}`
+- `AUTOPATCH_LLM_STREAM_DIALECT`：可选，支持 `standard`、`bailian-dsml`
+- `AUTOPATCH_LLM_REASONING_EFFORT`：可选，传给支持该参数的模型供应商
+- `AUTOPATCH_LLM_EXTRA_BODY`：可选，JSON 字符串，用于传递供应商私有扩展参数，默认 `{}`
 
 ### 启动
 
@@ -432,7 +442,7 @@ python -m autopatch_j
 ```text
 src/autopatch_j/
 ├─ agent/         # LLM Client、Prompt、ReAct Loop、Task Profile、Dialect 策略
-├─ cli/           # prompt-toolkit + Rich 交互层、Workflow 调度
+├─ cli/           # prompt-toolkit + Rich 交互层、Workflow 调度、流式输出适配
 ├─ core/          # 域模型、扫描、索引、事务工作台、补丁验证与生命周期
 ├─ scanners/      # Semgrep 与扩展扫描器适配位
 └─ tools/         # 暴露给 Agent 可调用的工具集

@@ -135,7 +135,7 @@ The system distinguishes automatically between:
 - `patch_explain`
 - `patch_revise`
 
-`patch_explain` may read code related to the current patch to explain risk and impact, but it does not generate a new patch. `patch_revise` rebuilds the current patch and the remaining patch queue based on user feedback.
+`patch_explain` may read code related to the current patch when needed to explain risk and impact, but it does not generate a new patch and defaults to a compact answer. `patch_revise` rewrites only the current pending patch based on user feedback; it does not modify the remaining patch queue.
 
 ### Programming-related chat
 
@@ -186,7 +186,7 @@ Using `code_audit` as an example, a full execution goes through the following st
 7. `PatchEngine` handles `old_string` matching and diff generation
 8. `PatchVerifier` handles syntax and semantic validation
 9. `CliWorkflowController` writes the result into `WorkspaceManager`
-10. Finally, human confirmation: `apply / discard / abort / revise`
+10. Finally, human confirmation: `apply / discard / abort / <feedback text>`
 
 Other entry points:
 
@@ -249,6 +249,7 @@ Tool adapters exposed to the Agent:
 - `read_source_code`
 - `get_finding_detail`
 - `propose_patch`
+- `revise_patch`
 - `search_symbols`
 
 ### `scanners/`
@@ -279,7 +280,8 @@ For example:
 
 - `code_audit`: `get_finding_detail / read_source_code / propose_patch`
 - `code_explain`: single-file mode opens only `read_source_code`
-- `patch_revise`: `search_symbols / read_source_code / get_finding_detail / propose_patch`
+- `patch_explain`: `search_symbols / read_source_code`
+- `patch_revise`: `search_symbols / read_source_code / get_finding_detail / revise_patch`
 
 This is not about restricting the model for its own sake. It is about putting model freedom where it is actually useful.
 
@@ -307,6 +309,8 @@ That is the key design tradeoff in AutoPatch-J:
 `IntentDetector` currently asks the LLM to classify user input into `code_audit / code_explain / general_chat / patch_explain / patch_revise`.  
 If there is no pending patch, even an LLM response of `patch_explain` or `patch_revise` is rejected by program logic, so the CLI does not enter patch-only flows that cannot run.
 
+Classifier calls use a different strategy from ReAct calls: they are non-streaming, disable reasoning when supported, and cap the output length to reduce latency and keep reasoning traces out of intent classification. ReAct calls keep streaming output and tool-call capability.
+
 ### Java is the default semantic context
 
 The Agent base system prompt explicitly states that the target code is Java by default. Unless the context clearly shows another language, auditing, explanation, and patch design follow Java semantics, JDK standard-library behavior, and Java engineering practice.
@@ -324,7 +328,13 @@ Benefits:
 - one failed finding does not swallow the rest
 - patch retry stays controlled
 
-### 2. Patch safety chain
+The `propose_patch` tool only stages the candidate patch for the current turn. A patch enters the human confirmation queue only after the workflow decides that the finding completed successfully, which prevents repeated tool calls from directly polluting the pending queue.
+
+### 2. Current patch revision
+
+Plain feedback during confirmation mode enters `patch_revise`. The `revise_patch` tool only creates a replacement draft for the current patch; after the ReAct turn ends, the workflow replaces the current patch and leaves the remaining patch queue unchanged.
+
+### 3. Patch safety chain
 
 At the draft stage, `PatchEngine` checks:
 
@@ -336,7 +346,7 @@ At the draft stage, `PatchEngine` checks:
 Upon real `apply`, `PatchVerifier` runs `Tree-sitter` syntax validation.
 After a real `apply`, `PatchVerifier` rescans the target file and verifies that the corresponding finding actually disappeared.
 
-### 3. Context control
+### 4. Context control
 
 The project applies several layers of Context Engineering explicitly:
 
@@ -347,7 +357,7 @@ The project applies several layers of Context Engineering explicitly:
 
 The goal is not "show the model more". It is "show the model only what is truly useful for the current task".
 
-### 4. SQLite + Tree-sitter indexing
+### 5. SQLite + Tree-sitter indexing
 
 `SymbolIndexer` uses:
 
@@ -356,7 +366,7 @@ The goal is not "show the model more". It is "show the model only what is truly 
 
 It provides backward-compatible degradation protection and smartly isolates IDE temporary build directories (like `target/`, `node_modules/`).
 
-### 5. Correcting finding evidence
+### 6. Correcting finding evidence
 
 The system prefers reconstructing real code snippets from `path + line range`, instead of blindly trusting the raw snippet returned by the scanner.
 
@@ -382,27 +392,27 @@ Configuration is read from system environment variables only. The CLI does not a
 Required variables:
 
 ```bash
-set LLM_API_KEY=your_api_key
-set LLM_BASE_URL=https://api.deepseek.com
-set LLM_MODEL=deepseek-v4-flash
+set AUTOPATCH_LLM_API_KEY=your_api_key
 ```
 
 Common optional variables:
 
 ```bash
+set AUTOPATCH_LLM_BASE_URL=https://api.deepseek.com
+set AUTOPATCH_LLM_MODEL=deepseek-v4-flash
 set AUTOPATCH_DEBUG=true
-set LLM_STREAM_DIALECT=standard
+set AUTOPATCH_LLM_STREAM_DIALECT=standard
 ```
 
 Configuration notes:
 
-- `LLM_API_KEY`: required; without it no LLM client is created
-- `LLM_BASE_URL`: required, uses an OpenAI-compatible endpoint
-- `LLM_MODEL`: required, uses the model name provided by the vendor
+- `AUTOPATCH_LLM_API_KEY`: required; without it no LLM client is created
+- `AUTOPATCH_LLM_BASE_URL`: optional OpenAI-compatible endpoint, defaults to `https://api.deepseek.com`
+- `AUTOPATCH_LLM_MODEL`: optional vendor model name, defaults to `deepseek-v4-flash`
 - `AUTOPATCH_DEBUG`: optional, disabled by default; only `true` shows full reasoning chains and tool-output details
-- `LLM_STREAM_DIALECT`: optional, supports `standard` and `bailian-dsml`
-- `LLM_REASONING_EFFORT`: optional, passed through to model providers that support it
-- `LLM_EXTRA_BODY`: optional JSON string for provider-specific request extensions, defaults to `{}`
+- `AUTOPATCH_LLM_STREAM_DIALECT`: optional, supports `standard` and `bailian-dsml`
+- `AUTOPATCH_LLM_REASONING_EFFORT`: optional, passed through to model providers that support it
+- `AUTOPATCH_LLM_EXTRA_BODY`: optional JSON string for provider-specific request extensions, defaults to `{}`
 
 ### Launch
 
@@ -433,7 +443,7 @@ python -m autopatch_j
 ```text
 src/autopatch_j/
 ├─ agent/         # LLM client, prompts, ReAct loop, task profiles, dialect strategies
-├─ cli/           # prompt-toolkit + Rich interaction layer, workflow orchestration
+├─ cli/           # prompt-toolkit + Rich interaction layer, workflow orchestration, streaming output adapter
 ├─ core/          # domain models, scan, index, transactional workspace, patch validation
 ├─ scanners/      # Semgrep and future scanner adapters
 └─ tools/         # toolset exposed to the Agent
