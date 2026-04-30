@@ -63,10 +63,10 @@ class _StreamExecution:
             return
 
         if not self.in_reasoning:
-            self.renderer.print("[dim italic]-- 深度思考中 --[/]")
+            self.renderer.print_reasoning_text("-- 深度思考中 --\n")
         self.in_reasoning = True
         self.reasoning_visible = True
-        self.renderer.print_reasoning(token)
+        self.renderer.print_reasoning_text(token)
 
     def on_tool_start(self, tool_name: str) -> None:
         self.finish_reasoning_status_if_visible()
@@ -77,9 +77,9 @@ class _StreamExecution:
         self.finish_reasoning_status_if_visible()
         if self.policy.compact_observation:
             fallback = summary if summary else f"已执行工具: {self.current_tool_name}"
-            self.renderer.print_info(fallback)
+            self.renderer.print_agent_text(fallback)
             return
-        self.renderer.print_observation(message)
+        self.renderer.print_agent_text(message)
 
     def finish_reasoning_status_if_visible(self) -> None:
         if self.reasoning_visible:

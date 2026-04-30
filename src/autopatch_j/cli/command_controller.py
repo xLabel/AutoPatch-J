@@ -204,4 +204,4 @@ class CliCommandController:
                 self.context.renderer.print_error(result.message)
 
     def handle_discard(self) -> None:
-        self.context.renderer.print_info("已丢弃当前草案")
+        self.context.renderer.print_agent_text("已丢弃当前草案")

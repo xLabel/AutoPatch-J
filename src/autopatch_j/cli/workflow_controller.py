@@ -76,7 +76,7 @@ class CliWorkflowController:
             with self.context.workspace_manager.edit() as workspace:
                 workspace.mark_applied()
                 if not workspace.has_pending_patch():
-                    self.context.renderer.print_info("补丁队列已清空")
+                    self.context.renderer.print_agent_text("补丁队列已清空")
             return
 
         if user_input.lower() == "discard":
@@ -84,13 +84,13 @@ class CliWorkflowController:
             with self.context.workspace_manager.edit() as workspace:
                 workspace.mark_discarded()
                 if not workspace.has_pending_patch():
-                    self.context.renderer.print_info("补丁队列已清空")
+                    self.context.renderer.print_agent_text("补丁队列已清空")
             return
 
         if user_input.lower() == "abort":
             self.context.workspace_manager.clear_workspace()
             self.context.agent.reset_history()
-            self.context.renderer.print_info("已中止审核流程，丢弃所有剩余补丁草案。")
+            self.context.renderer.print_agent_text("已中止审核流程，丢弃所有剩余补丁草案。")
             return
 
         self.handle_chat(user_input)
@@ -111,7 +111,7 @@ class CliWorkflowController:
 
         stripped_instruction = re.sub(r"@([^\s@]+)", "", text).strip()
         if "@" in text and not stripped_instruction:
-            self.context.renderer.print_info("请继续输入代码指令")
+            self.context.renderer.print_agent_text("请继续输入代码指令")
             return
 
         decision = self.classify_chat_input(text)
@@ -152,7 +152,7 @@ class CliWorkflowController:
         self.context.agent.reset_history()
         if has_pending_review:
             self.context.workspace_manager.clear_workspace()
-            self.context.renderer.print_info("已切换到新任务")
+            self.context.renderer.print_agent_text("已切换到新任务")
 
     def dispatch_chat_intent(self, text: str, intent: IntentType) -> None:
         if intent is IntentType.CODE_AUDIT:
@@ -434,10 +434,10 @@ class CliWorkflowController:
         )
         revised_patch = self.context.agent.session.pop_revised_patch_draft()
         if revised_patch is None:
-            self.context.renderer.print_info("未生成修订补丁，当前补丁保持不变。")
+            self.context.renderer.print_agent_text("未生成修订补丁，当前补丁保持不变。")
             return
         self.context.workspace_manager.replace_current_patch(revised_patch)
-        self.context.renderer.print_info("已更新当前补丁，后续补丁保持不变。")
+        self.context.renderer.print_agent_text("已更新当前补丁，后续补丁保持不变。")
 
     def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
         assert self.context.agent is not None

@@ -196,7 +196,7 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: CLI) -> None:
     assert updated.patch_items[0].draft.new_string == "better"
     assert updated.patch_items[1].file_path == "src/main/java/demo/UserService.java"
     assert updated.patch_items[1].draft.rationale == "fix F2"
-    cli.renderer.print_info.assert_any_call("已更新当前补丁，后续补丁保持不变。")
+    cli.renderer.print_agent_text.assert_any_call("已更新当前补丁，后续补丁保持不变。")
 
 
 def test_handle_patch_revise_keeps_queue_when_no_revision_created(cli: CLI) -> None:
@@ -224,7 +224,7 @@ def test_handle_patch_revise_keeps_queue_when_no_revision_created(cli: CLI) -> N
     assert [item.item_id for item in updated.patch_items] == ["item-1", "item-2"]
     assert updated.patch_items[0].draft.rationale == "fix F1"
     assert updated.patch_items[1].draft.rationale == "fix F2"
-    cli.renderer.print_info.assert_any_call("未生成修订补丁，当前补丁保持不变。")
+    cli.renderer.print_agent_text.assert_any_call("未生成修订补丁，当前补丁保持不变。")
 
 
 def test_process_single_finding_commits_staged_patch_after_success(cli: CLI) -> None:
@@ -405,7 +405,7 @@ def test_handle_chat_switches_new_task_with_pending_review(cli: CLI) -> None:
     cli.workflow_controller.handle_chat("@Foo.java explain code")
 
     assert cli.workspace_manager.load_workspace().has_pending_patch() is False
-    cli.renderer.print_info.assert_any_call("已切换到新任务")
+    cli.renderer.print_agent_text.assert_any_call("已切换到新任务")
     cli.workflow_controller.handle_general_chat.assert_called_once_with("@Foo.java explain code")
 
 

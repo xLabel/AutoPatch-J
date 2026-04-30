@@ -38,7 +38,7 @@ class CliRenderer:
         self.console.print(f"[{MUTED_STYLE}]你: {message}[/]")
 
     def print_assistant_anchor(self, label: str = "AutoPatch-J") -> None:
-        self.console.print(f"[bold {SYSTEM_STYLE}]{label}:[/]")
+        self.console.print(f"[{BODY_STYLE}]{label}:[/]")
 
     def print_panel(self, content: Any, title: str | None = None, style: str = SYSTEM_STYLE) -> None:
         self.console.print(Panel(content, title=title, border_style=style, box=ROUNDED))
@@ -51,7 +51,10 @@ class CliRenderer:
         style = MUTED_STYLE
         self.console.print(f"[{style}]正在执行工具[{caller_upper}]: {tool_name}...[/]")
 
-    def print_reasoning(self, message: str, end: str = "") -> None:
+    def print_agent_text(self, message: str, end: str = "\n") -> None:
+        self.console.print(message, end=end, highlight=False, markup=False, style=MUTED_STYLE)
+
+    def print_reasoning_text(self, message: str, end: str = "") -> None:
         self.console.print(message, end=end, highlight=False, markup=False, style=f"italic {MUTED_STYLE}")
 
     def print_reasoning_status(self, step: int) -> None:
@@ -64,17 +67,11 @@ class CliRenderer:
     def finish_reasoning_status(self) -> None:
         self.console.print()
 
-    def print_observation(self, message: str) -> None:
-        self.console.print(message, highlight=False, markup=False, style=MUTED_STYLE)
-
     def print_success(self, message: str) -> None:
         self.console.print(f"[bold {SUCCESS_STYLE}]{message}[/]")
 
     def print_error(self, message: str) -> None:
         self.console.print(f"[bold {ERROR_STYLE}]{message}[/]")
-
-    def print_info(self, message: str) -> None:
-        self.console.print(message, highlight=False, markup=False, style=MUTED_STYLE)
 
     def print_diff(self, diff: str, title: str = "预览") -> None:
         """渲染带语法高亮的补丁差异"""

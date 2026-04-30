@@ -112,7 +112,7 @@ class CLI:
                 title="AutoPatch-J",
                 style=SYSTEM_STYLE,
             )
-            self.renderer.print_info("未检测到有效目录，请进入项目目录后执行 /init")
+            self.renderer.print_agent_text("未检测到有效目录，请进入项目目录后执行 /init")
         else:
             if self.is_first_run:
                 self.renderer.print_panel(

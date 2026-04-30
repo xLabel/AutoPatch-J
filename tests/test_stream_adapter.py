@@ -58,9 +58,8 @@ def test_stream_adapter_compacts_reasoning_and_observation_when_debug_is_off() -
     stream.run(prompt="check", agent_call=agent_call)
 
     stream.renderer.print_reasoning_status.assert_called_once_with(0)
-    stream.renderer.print_reasoning.assert_not_called()
-    stream.renderer.print_observation.assert_not_called()
-    stream.renderer.print_info.assert_any_call("已读取源代码: Demo.java")
+    stream.renderer.print_reasoning_text.assert_not_called()
+    stream.renderer.print_agent_text.assert_any_call("已读取源代码: Demo.java")
     stream.renderer.print.assert_not_called()
 
 
@@ -74,10 +73,11 @@ def test_stream_adapter_expands_reasoning_and_observation_when_debug_is_on() -> 
 
     stream.run(prompt="check", agent_call=agent_call)
 
-    stream.renderer.print_info.assert_not_called()
-    stream.renderer.print_reasoning.assert_called_once_with("full reasoning")
+    stream.renderer.print_agent_text.assert_called_once_with("full observation")
+    stream.renderer.print_reasoning_text.assert_any_call("-- 深度思考中 --\n")
+    stream.renderer.print_reasoning_text.assert_any_call("full reasoning")
     stream.renderer.print_reasoning_status.assert_not_called()
-    stream.renderer.print_observation.assert_called_once_with("full observation")
+    stream.renderer.print.assert_not_called()
 
 
 def test_stream_adapter_renders_patch_explain_answer_with_pending_patch() -> None:
