@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from autopatch_j.agent.llm_client import LLMClient, build_default_llm_client
 from autopatch_j.agent.dialect import ToolCall
+from autopatch_j.agent.message_adapter import AgentMessageAdapter
 from autopatch_j.agent.prompts import (
     build_task_system_prompt,
     build_zero_finding_review_system_prompt,
@@ -25,7 +26,12 @@ from autopatch_j.tools.source_reader_tool import SourceReaderTool
 from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 
 ToolCallback = Callable[[str], None]
-ObservationCallback = Callable[[str, str | None], None]
+
+
+@dataclass(frozen=True, slots=True)
+class TaskProfile:
+    intent: IntentType
+    tool_names: tuple[str, ...]
 
 
 class Agent:
@@ -37,34 +43,59 @@ class Agent:
     3. 管理会话历史 (History Dehydration) 和上下文防爆。
     """
 
+    TASK_PROFILES: dict[IntentType, TaskProfile] = {
+        IntentType.CODE_AUDIT: TaskProfile(
+            intent=IntentType.CODE_AUDIT,
+            tool_names=(
+                "get_finding_detail",
+                "read_source_code",
+                "propose_patch",
+            ),
+        ),
+        IntentType.CODE_EXPLAIN: TaskProfile(
+            intent=IntentType.CODE_EXPLAIN,
+            tool_names=(
+                "search_symbols",
+                "read_source_code",
+            ),
+        ),
+        IntentType.GENERAL_CHAT: TaskProfile(
+            intent=IntentType.GENERAL_CHAT,
+            tool_names=(),
+        ),
+        IntentType.PATCH_EXPLAIN: TaskProfile(
+            intent=IntentType.PATCH_EXPLAIN,
+            tool_names=(
+                "search_symbols",
+                "read_source_code",
+            ),
+        ),
+        IntentType.PATCH_REVISE: TaskProfile(
+            intent=IntentType.PATCH_REVISE,
+            tool_names=(
+                "search_symbols",
+                "read_source_code",
+                "get_finding_detail",
+                "revise_patch",
+            ),
+        ),
+    }
     TASK_TOOL_NAMES: dict[IntentType, tuple[str, ...]] = {
-        IntentType.CODE_AUDIT: (
-            "get_finding_detail",
+        intent: profile.tool_names for intent, profile in TASK_PROFILES.items()
+    }
+    CODE_EXPLAIN_SINGLE_FILE_PROFILE = TaskProfile(
+        intent=IntentType.CODE_EXPLAIN,
+        tool_names=("read_source_code",),
+    )
+    ZERO_FINDING_REVIEW_PROFILE = TaskProfile(
+        intent=IntentType.CODE_AUDIT,
+        tool_names=(
             "read_source_code",
             "propose_patch",
         ),
-        IntentType.CODE_EXPLAIN: (
-            "search_symbols",
-            "read_source_code",
-        ),
-        IntentType.GENERAL_CHAT: (),
-        IntentType.PATCH_EXPLAIN: (
-            "search_symbols",
-            "read_source_code",
-        ),
-        IntentType.PATCH_REVISE: (
-            "search_symbols",
-            "read_source_code",
-            "get_finding_detail",
-            "revise_patch",
-        ),
-    }
-    CODE_EXPLAIN_SINGLE_FILE_TOOL_NAMES: tuple[str, ...] = ("read_source_code",)
-    ZERO_FINDING_REVIEW_TOOL_NAMES: tuple[str, ...] = (
-        "read_source_code",
-        "propose_patch",
     )
-
+    CODE_EXPLAIN_SINGLE_FILE_TOOL_NAMES: tuple[str, ...] = CODE_EXPLAIN_SINGLE_FILE_PROFILE.tool_names
+    ZERO_FINDING_REVIEW_TOOL_NAMES: tuple[str, ...] = ZERO_FINDING_REVIEW_PROFILE.tool_names
     def __init__(
         self,
         session: AgentSession,
@@ -84,6 +115,7 @@ class Agent:
             ]
         }
         self.messages: list[dict[str, Any]] = []
+        self.message_adapter = AgentMessageAdapter(self.available_tools)
 
     def perform_code_audit(
         self,
@@ -96,8 +128,8 @@ class Agent:
         on_tool_start: ToolCallback | None = None,
     ) -> str:
         prompt = build_code_audit_user_prompt(raw_user_text, current_finding, force_reread)
-        return self._run_task(
-            intent=IntentType.CODE_AUDIT,
+        return self._run_profile(
+            profile=self.TASK_PROFILES[IntentType.CODE_AUDIT],
             user_text=prompt,
             on_token=on_token,
             on_reasoning=on_reasoning,
@@ -120,20 +152,19 @@ class Agent:
             if allow_symbol_search is None
             else allow_symbol_search
         )
-        tool_names = (
-            self.TASK_TOOL_NAMES[IntentType.CODE_EXPLAIN]
+        profile = (
+            self.TASK_PROFILES[IntentType.CODE_EXPLAIN]
             if effective_allow_symbol_search
-            else self.CODE_EXPLAIN_SINGLE_FILE_TOOL_NAMES
+            else self.CODE_EXPLAIN_SINGLE_FILE_PROFILE
         )
         prompt = build_code_explain_user_prompt(raw_user_text, scope) if scope else raw_user_text
-        return self._run_task(
-            intent=IntentType.CODE_EXPLAIN,
+        return self._run_profile(
+            profile=profile,
             user_text=prompt,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
             on_tool_start=on_tool_start,
-            tool_names_override=tool_names,
         )
 
     def perform_general_chat(
@@ -144,8 +175,8 @@ class Agent:
         on_observation: ToolCallback | None = None,
         on_tool_start: ToolCallback | None = None,
     ) -> str:
-        return self._run_task(
-            intent=IntentType.GENERAL_CHAT,
+        return self._run_profile(
+            profile=self.TASK_PROFILES[IntentType.GENERAL_CHAT],
             user_text=raw_user_text,
             on_token=on_token,
             on_reasoning=on_reasoning,
@@ -166,7 +197,7 @@ class Agent:
         return self._run_react_loop(
             user_text=prompt,
             system_prompt=self._build_zero_finding_review_system_prompt(),
-            allowed_tool_names=self.ZERO_FINDING_REVIEW_TOOL_NAMES,
+            allowed_tool_names=self.ZERO_FINDING_REVIEW_PROFILE.tool_names,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -183,8 +214,8 @@ class Agent:
         on_tool_start: ToolCallback | None = None,
     ) -> str:
         prompt = build_patch_explain_user_prompt(current_item, raw_user_text)
-        return self._run_task(
-            intent=IntentType.PATCH_EXPLAIN,
+        return self._run_profile(
+            profile=self.TASK_PROFILES[IntentType.PATCH_EXPLAIN],
             user_text=prompt,
             on_token=on_token,
             on_reasoning=on_reasoning,
@@ -202,8 +233,8 @@ class Agent:
         on_tool_start: ToolCallback | None = None,
     ) -> str:
         prompt = build_patch_revise_user_prompt(current_item, raw_user_text)
-        return self._run_task(
-            intent=IntentType.PATCH_REVISE,
+        return self._run_profile(
+            profile=self.TASK_PROFILES[IntentType.PATCH_REVISE],
             user_text=prompt,
             on_token=on_token,
             on_reasoning=on_reasoning,
@@ -221,12 +252,33 @@ class Agent:
         on_tool_start: ToolCallback | None,
         tool_names_override: tuple[str, ...] | None = None,
     ) -> str:
-        system_prompt = self._build_task_system_prompt(intent)
-        tool_names = tool_names_override or self.TASK_TOOL_NAMES[intent]
+        profile = TaskProfile(
+            intent=intent,
+            tool_names=tool_names_override or self.TASK_PROFILES[intent].tool_names,
+        )
+        return self._run_profile(
+            profile=profile,
+            user_text=user_text,
+            on_token=on_token,
+            on_reasoning=on_reasoning,
+            on_observation=on_observation,
+            on_tool_start=on_tool_start,
+        )
+
+    def _run_profile(
+        self,
+        profile: TaskProfile,
+        user_text: str,
+        on_token: ToolCallback | None,
+        on_reasoning: ToolCallback | None,
+        on_observation: ToolCallback | None,
+        on_tool_start: ToolCallback | None,
+    ) -> str:
+        system_prompt = self._build_task_system_prompt(profile.intent)
         return self._run_react_loop(
             user_text=user_text,
             system_prompt=system_prompt,
-            allowed_tool_names=tool_names,
+            allowed_tool_names=profile.tool_names,
             on_token=on_token,
             on_reasoning=on_reasoning,
             on_observation=on_observation,
@@ -250,10 +302,10 @@ class Agent:
         extra_body = self._build_llm_extra_body()
 
         for _ in range(10):
-            processed_messages = self._dehydrate_history(system_prompt)
+            processed_messages = self.message_adapter.dehydrate_history(self.messages, system_prompt)
             response = self.llm.chat(
                 messages=processed_messages,
-                tools=self._get_tool_schemas(allowed_tool_names),
+                tools=self.message_adapter.tool_schemas(allowed_tool_names),
                 extra_body=extra_body,
                 on_token=on_token,
                 on_reasoning_token=on_reasoning,
@@ -264,7 +316,11 @@ class Agent:
                 {
                     "role": "assistant",
                     "content": assistant_content,
-                    "tool_calls": self._serialize_tool_calls(response.tool_calls) if response.tool_calls else None,
+                    "tool_calls": (
+                        self.message_adapter.serialize_tool_calls(response.tool_calls)
+                        if response.tool_calls
+                        else None
+                    ),
                     "reasoning_content": response.reasoning_content,
                 }
             )
@@ -341,90 +397,16 @@ class Agent:
             return {}
 
     def _dehydrate_history(self, current_system_prompt: str) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = [{"role": "system", "content": current_system_prompt}]
-
-        # 保留完整角色序列，避免消息窗口裁剪后破坏 tool_call 对应关系。
-        for i, message in enumerate(self.messages):
-            new_message = self._fetch_llm_message(message)
-
-            if message.get("role") == "tool":
-                is_recent = i >= len(self.messages) - 5
-                is_scan = message.get("name") == "scan_project"
-
-                # 压缩旧的工具观察，但保护 scan_project 结果。
-                if not is_recent and not is_scan:
-                    content = str(message.get("content", ""))
-                    if len(content) > 200:
-                        new_message["content"] = content[:100] + "\n... [已脱水压缩] ..."
-
-            result.append(new_message)
-
-        return result
+        return self.message_adapter.dehydrate_history(self.messages, current_system_prompt)
 
     def _fetch_llm_message(self, message: dict[str, Any]) -> dict[str, Any]:
-        role = str(message.get("role", ""))
-        if role == "assistant":
-            llm_message: dict[str, Any] = {
-                "role": "assistant",
-                "content": message.get("content", ""),
-            }
-            if message.get("tool_calls") is not None:
-                llm_message["tool_calls"] = message["tool_calls"]
-            
-            # DeepSeek V4 深度思考模式契约要求：如果产生了思考链，必须在多轮对话中原样传回，否则会报 400 错误。
-            # 如果配置了思考力度或显式开启了思考，即便为空也建议带上字段以符合 V4 API 的强校验。
-            reasoning = message.get("reasoning_content")
-            if reasoning is not None:
-                llm_message["reasoning_content"] = reasoning
-            elif GlobalConfig.llm_reasoning_effort or "thinking" in GlobalConfig.llm_extra_body:
-                llm_message["reasoning_content"] = ""
-                
-            return llm_message
-
-        if role == "tool":
-            # OpenAI/DeepSeek 标准：role为 tool 时，仅允许 tool_call_id 和 content 字段。
-            # 这里的 name, tool_status, tool_payload 仅供本地业务使用，发送给 API 前必须剔除。
-            return {
-                "role": "tool",
-                "tool_call_id": message.get("tool_call_id", ""),
-                "content": message.get("content", ""),
-            }
-
-        return {
-            "role": role,
-            "content": message.get("content", ""),
-        }
+        return self.message_adapter.fetch_llm_message(message)
 
     def _get_tool_schemas(self, allowed_tool_names: tuple[str, ...]) -> list[dict[str, Any]]:
-        schemas: list[dict[str, Any]] = []
-        for tool_name in allowed_tool_names:
-            tool = self.available_tools.get(tool_name)
-            if tool is None:
-                continue
-            schemas.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.parameters,
-                    },
-                }
-            )
-        return schemas
+        return self.message_adapter.tool_schemas(allowed_tool_names)
 
     def _serialize_tool_calls(self, calls: list[ToolCall]) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": call.call_id,
-                "type": "function",
-                "function": {
-                    "name": call.name,
-                    "arguments": call.raw_arguments,
-                },
-            }
-            for call in calls
-        ]
+        return self.message_adapter.serialize_tool_calls(calls)
 
     def reset_history(self) -> None:
         self.messages = []
