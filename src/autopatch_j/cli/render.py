@@ -44,16 +44,15 @@ class CliRenderer:
 
     def print_tool_start(self, tool_name: str, caller: str) -> None:
         caller_upper = caller.upper()
-        style = f"bold {SYSTEM_STYLE}" if caller_upper == "AGENT" else f"bold {MUTED_STYLE}"
-        self.console.print(f"\n[{style}]正在执行工具[{caller_upper}]: {tool_name}...[/]")
+        style = MUTED_STYLE
+        self.console.print(f"[{style}]正在执行工具[{caller_upper}]: {tool_name}...[/]")
 
     def print_reasoning(self, message: str, end: str = "") -> None:
-        self.console.print(message, end=end, style=f"italic {MUTED_STYLE}")
+        self.console.print(message, end=end, highlight=False, markup=False, style=f"italic {MUTED_STYLE}")
 
     def print_reasoning_status(self, step: int) -> None:
-        dots = "." * ((step % 3) + 1)
         self.console.print(
-            f"\r[italic {MUTED_STYLE}]思考中{dots}[/]",
+            f"[italic {MUTED_STYLE}]思考中...[/]",
             end="",
             soft_wrap=True,
         )
@@ -62,7 +61,7 @@ class CliRenderer:
         self.console.print()
 
     def print_observation(self, message: str) -> None:
-        self.console.print(f"\n{message}\n", style=BODY_STYLE)
+        self.console.print(message, highlight=False, markup=False, style=MUTED_STYLE)
 
     def print_success(self, message: str) -> None:
         self.console.print(f"[bold {SUCCESS_STYLE}]{message}[/]")
@@ -71,7 +70,7 @@ class CliRenderer:
         self.console.print(f"[bold {ERROR_STYLE}]{message}[/]")
 
     def print_info(self, message: str) -> None:
-        self.console.print(f"[bold {MUTED_STYLE}]{message}[/]")
+        self.console.print(message, highlight=False, markup=False, style=MUTED_STYLE)
 
     def print_diff(self, diff: str, title: str = "预览") -> None:
         """渲染带语法高亮的补丁差异"""

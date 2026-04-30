@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from autopatch_j.cli.render import CliRenderer
@@ -8,11 +9,25 @@ from autopatch_j.core.models import IntentType
 from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
+@dataclass(slots=True)
+class ReActDisplayPolicy:
+    debug_mode: bool
+    force_compact_observation: bool = False
+
+    @property
+    def compact_reasoning(self) -> bool:
+        return not self.debug_mode
+
+    @property
+    def compact_observation(self) -> bool:
+        return self.force_compact_observation or not self.debug_mode
+
+
 class _StreamExecution:
-    def __init__(self, stream: StreamAdapter, compact_observation: bool) -> None:
+    def __init__(self, stream: StreamAdapter, policy: ReActDisplayPolicy) -> None:
         self.stream = stream
         self.renderer = stream.renderer
-        self.compact_observation = compact_observation
+        self.policy = policy
         
         self.in_reasoning: bool = False
         self.answer_after_reasoning: bool = False
@@ -28,8 +43,15 @@ class _StreamExecution:
         self.buffered_answer_parts.append(token)
 
     def on_reasoning(self, token: str) -> None:
+        if self.policy.compact_reasoning:
+            if not self.in_reasoning:
+                self.in_reasoning = True
+                self.reasoning_visible = True
+                self.renderer.print_reasoning_status(0)
+            return
+
         if not self.in_reasoning:
-            self.renderer.print("\n[dim italic]-- 深度思考中 --[/]")
+            self.renderer.print("[dim italic]-- 深度思考中 --[/]")
         self.in_reasoning = True
         self.reasoning_visible = True
         self.renderer.print_reasoning(token)
@@ -41,7 +63,7 @@ class _StreamExecution:
 
     def on_observation(self, message: str, summary: str | None = None) -> None:
         self.finish_reasoning_status_if_visible()
-        if self.compact_observation:
+        if self.policy.compact_observation:
             fallback = summary if summary else f"已执行工具: {self.current_tool_name}"
             self.renderer.print_info(fallback)
             return
@@ -70,6 +92,7 @@ class StreamAdapter:
         describe_current_scope_paths: Callable[[], list[str]],
         build_static_scan_summary: Callable[[], str],
         build_local_no_issue_summary: Callable[[], str],
+        debug_mode: Callable[[], bool],
     ) -> None:
         self.renderer = renderer
         self.workspace_manager = workspace_manager
@@ -78,6 +101,7 @@ class StreamAdapter:
         self._describe_current_scope_paths = describe_current_scope_paths
         self._build_static_scan_summary = build_static_scan_summary
         self._build_local_no_issue_summary = build_local_no_issue_summary
+        self._debug_mode = debug_mode
 
     def run(
         self,
@@ -96,9 +120,12 @@ class StreamAdapter:
         assert self.workspace_manager is not None
         assert self.chat_filter is not None
 
-        self.renderer.print()
+        policy = ReActDisplayPolicy(
+            debug_mode=self._debug_mode(),
+            force_compact_observation=compact_observation,
+        )
         
-        execution = _StreamExecution(self, compact_observation)
+        execution = _StreamExecution(self, policy)
         start_index = len(self.agent.messages)
 
         final_answer = agent_call(
@@ -113,22 +140,17 @@ class StreamAdapter:
 
         has_pending_patches = self.workspace_manager.load_workspace().has_pending_patch()
         if has_pending_patches:
-            self.renderer.print()
             return new_messages
 
         if render_no_issue_panel:
-            if execution.buffered_answer_parts or final_answer:
-                self.renderer.print("\n")
             self.renderer.print_no_issue_panel(
                 scope_paths=scope_paths or self._describe_current_scope_paths(),
                 scanner_summary=self._build_static_scan_summary(),
                 llm_summary=self._build_local_no_issue_summary(),
             )
-            self.renderer.print()
             return new_messages
 
         if suppress_answer_output:
-            self.renderer.print()
             return new_messages
 
         buffered_answer = "".join(execution.buffered_answer_parts)
@@ -138,8 +160,6 @@ class StreamAdapter:
                 answer=buffered_answer,
                 intent=answer_intent,
             ) if answer_intent else buffered_answer
-            if execution.answer_after_reasoning:
-                self.renderer.print("\n\n")
             if show_chat_anchors:
                 self.renderer.print_assistant_anchor()
             if plain_answer:
@@ -157,9 +177,8 @@ class StreamAdapter:
                 if show_chat_anchors:
                     self.renderer.print_assistant_anchor()
                 if plain_answer:
-                    self.renderer.print_plain(f"\n{rendered_answer}")
+                    self.renderer.print_plain(rendered_answer)
                 else:
-                    self.renderer.print(f"\n{rendered_answer}")
+                    self.renderer.print(rendered_answer)
 
-        self.renderer.print()
         return new_messages
