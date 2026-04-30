@@ -102,6 +102,7 @@ autopatch-j> 看一下这个项目里有没有空指针风险
 - 本地先扫描
 - finding 逐项推进
 - 支持 `old_string` 失配后的单次重试
+- 如果静态扫描没有 finding，会对焦点文件执行一次轻量 LLM 复核
 - 生成补丁后自动进入确认流
 
 ### 代码讲解
@@ -134,6 +135,8 @@ autopatch-j> 加一行注释说明原因
 - `patch_explain`
 - `patch_revise`
 
+其中 `patch_explain` 可以读取当前补丁相关代码来解释风险和影响，但不会生成新补丁；`patch_revise` 会基于用户反馈重建当前补丁及其后的剩余补丁队列。
+
 ### 编程相关聊天
 
 `general_chat` 当前被限制在工程相关范围内：
@@ -147,11 +150,34 @@ autopatch-j> 加一行注释说明原因
 
 它不是泛生活问答机器人。
 
+## 常用命令与调试模式
+
+### 系统命令
+
+CLI 当前支持这些斜杠命令：
+
+- `/init`：初始化当前项目，安装/自检扫描器运行时并建立本地索引
+- `/status`：查看项目根目录、LLM 模型、调试模式、补丁缓冲区、符号索引和符号提取状态
+- `/scanner`：查看所有注册扫描器的状态、版本和说明
+- `/reindex`：重建本地代码符号索引
+- `/reset`：清空工作台状态与 Agent 对话历史
+- `/help`：显示命令帮助
+- `/quit`：退出程序
+
+### 调试模式
+
+`AUTOPATCH_DEBUG` 控制 CLI 输出详细程度：
+
+- 默认关闭：折叠思考链和工具输出详情，只显示 `思考中...`、工具名和简短摘要
+- 开启后：欢迎界面显示 `[调试模式]` 提示，并展示完整思考链与工具输出详情
+
+`/status` 中的 `调试模式` 会显示为 `关闭` 或 `开启`。扫描器详情不放在 `/status`，请使用 `/scanner` 查看。
+
 ## 一条真实链路
 
 以 `code_audit` 为例，一次完整执行会按下面的顺序推进：
 
-1. 用户输入先进入 `IntentDetector` (意图检测)
+1. 用户输入先进入 `IntentDetector` (由 LLM 分类，程序再做状态合法性约束)
 2. `ScopeService` 解析代码范围
 3. 路由命中 `code_audit`
 4. `ScannerRunner` 先做本地静态扫描
@@ -276,6 +302,15 @@ Agent 仍然是 ReAct 风格：
 这正是 AutoPatch-J 的关键设计取舍：  
 **让 Agent 保留智能，让 Workflow 保留边界。**
 
+### 意图检测也走 LLM，但状态由程序兜底
+
+`IntentDetector` 当前使用 LLM 分类用户输入，识别 `code_audit / code_explain / general_chat / patch_explain / patch_revise`。  
+如果没有待确认补丁，即使 LLM 返回 `patch_explain` 或 `patch_revise`，程序也会拒绝这些补丁态意图，避免误进入无法执行的补丁流程。
+
+### 默认按 Java 语义工作
+
+Agent 的基础系统提示会明确说明：当前目标代码默认是 Java。除非上下文明确显示其他语言，否则审计、解释和补丁设计都会按 Java 语义、JDK 标准库行为和 Java 工程实践处理。
+
 ## 工程细节
 
 ### 1. 逐 finding 推进
@@ -341,13 +376,32 @@ pip install -e .[test]
 
 ### 环境变量
 
-可以通过系统的环境变量进行配置，或者在根目录创建 `.env`（但推荐使用系统全局配置，以保持项目工作区纯净）：
+当前配置只读取系统环境变量，不会自动加载 `.env` 文件。
+
+必填项：
 
 ```bash
 set LLM_API_KEY=your_api_key
 set LLM_BASE_URL=https://api.deepseek.com
 set LLM_MODEL=deepseek-v4-flash
 ```
+
+常用可选项：
+
+```bash
+set AUTOPATCH_DEBUG=true
+set LLM_STREAM_DIALECT=standard
+```
+
+配置说明：
+
+- `LLM_API_KEY`：必填；缺失时不会创建 LLM 客户端
+- `LLM_BASE_URL`：必填，使用 OpenAI 兼容地址
+- `LLM_MODEL`：必填，使用供应商提供的模型名
+- `AUTOPATCH_DEBUG`：可选，默认关闭；仅设为 `true` 时展示完整思考链和工具输出详情
+- `LLM_STREAM_DIALECT`：可选，支持 `standard`、`bailian-dsml`
+- `LLM_REASONING_EFFORT`：可选，传给支持该参数的模型供应商
+- `LLM_EXTRA_BODY`：可选，JSON 字符串，用于传递供应商私有扩展参数，默认 `{}`
 
 ### 启动
 

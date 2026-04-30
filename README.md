@@ -102,6 +102,7 @@ Characteristics:
 - local scan first
 - findings are advanced one by one
 - supports a single retry after an `old_string` mismatch
+- if the static scan returns no findings, the focused files receive a lightweight LLM review
 - enters patch confirmation automatically after a patch draft is produced
 
 ### Code explanation
@@ -134,6 +135,8 @@ The system distinguishes automatically between:
 - `patch_explain`
 - `patch_revise`
 
+`patch_explain` may read code related to the current patch to explain risk and impact, but it does not generate a new patch. `patch_revise` rebuilds the current patch and the remaining patch queue based on user feedback.
+
 ### Programming-related chat
 
 `general_chat` is currently limited to engineering-related topics:
@@ -147,11 +150,34 @@ The system distinguishes automatically between:
 
 It is not intended to be a general lifestyle chatbot.
 
+## Commands and Debug Mode
+
+### Slash commands
+
+The CLI currently supports these slash commands:
+
+- `/init`: initialize the current project, install/check scanner runtime, and build the local index
+- `/status`: show project root, LLM model, debug mode, patch buffer, symbol index, and symbol extraction status
+- `/scanner`: show all registered scanners with status, version, and description
+- `/reindex`: rebuild the local symbol index
+- `/reset`: clear workspace state and Agent conversation history
+- `/help`: show command help
+- `/quit`: exit the program
+
+### Debug mode
+
+`AUTOPATCH_DEBUG` controls how much CLI detail is shown:
+
+- disabled by default: reasoning chains and tool-output details are folded, while `思考中...`, tool names, and compact summaries remain visible
+- enabled: the welcome screen shows a `[调试模式]` notice, and full reasoning chains plus tool-output details are displayed
+
+The `调试模式` row in `/status` displays `关闭` or `开启`. Scanner details are intentionally kept out of `/status`; use `/scanner` for them.
+
 ## A Real Execution Path
 
 Using `code_audit` as an example, a full execution goes through the following steps:
 
-1. user input enters `IntentDetector`
+1. user input enters `IntentDetector` (LLM classification first, then program-side state validation)
 2. `ScopeService` resolves the code scope
 3. routing selects `code_audit`
 4. `ScannerRunner` performs the local static scan first
@@ -276,6 +302,15 @@ But the loop always runs under these constraints:
 That is the key design tradeoff in AutoPatch-J:  
 **let the Agent keep intelligence, and let Workflow keep boundaries.**
 
+### Intent detection uses the LLM, with program-side guardrails
+
+`IntentDetector` currently asks the LLM to classify user input into `code_audit / code_explain / general_chat / patch_explain / patch_revise`.  
+If there is no pending patch, even an LLM response of `patch_explain` or `patch_revise` is rejected by program logic, so the CLI does not enter patch-only flows that cannot run.
+
+### Java is the default semantic context
+
+The Agent base system prompt explicitly states that the target code is Java by default. Unless the context clearly shows another language, auditing, explanation, and patch design follow Java semantics, JDK standard-library behavior, and Java engineering practice.
+
 ## Engineering Details
 
 ### 1. Finding-by-finding progression
@@ -342,13 +377,32 @@ pip install -e .[test]
 
 ### Environment Variables
 
-You can configure these via system environment variables, or create a `.env` file in the root directory (though using global system variables is recommended to keep the project workspace clean):
+Configuration is read from system environment variables only. The CLI does not automatically load a `.env` file.
+
+Required variables:
 
 ```bash
 set LLM_API_KEY=your_api_key
 set LLM_BASE_URL=https://api.deepseek.com
 set LLM_MODEL=deepseek-v4-flash
 ```
+
+Common optional variables:
+
+```bash
+set AUTOPATCH_DEBUG=true
+set LLM_STREAM_DIALECT=standard
+```
+
+Configuration notes:
+
+- `LLM_API_KEY`: required; without it no LLM client is created
+- `LLM_BASE_URL`: required, uses an OpenAI-compatible endpoint
+- `LLM_MODEL`: required, uses the model name provided by the vendor
+- `AUTOPATCH_DEBUG`: optional, disabled by default; only `true` shows full reasoning chains and tool-output details
+- `LLM_STREAM_DIALECT`: optional, supports `standard` and `bailian-dsml`
+- `LLM_REASONING_EFFORT`: optional, passed through to model providers that support it
+- `LLM_EXTRA_BODY`: optional JSON string for provider-specific request extensions, defaults to `{}`
 
 ### Launch
 
