@@ -6,8 +6,10 @@ from unittest.mock import MagicMock
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.llm_client import LLMClient, LLMResponse
+from autopatch_j.agent.prompts import build_task_system_prompt
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
+from autopatch_j.core.models import IntentType
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.workspace_manager import WorkspaceManager
@@ -46,6 +48,17 @@ def test_perform_code_explain_uses_navigation_tool_profile_by_default(tmp_path: 
     agent.perform_code_explain("@User.java explain code", scope=None)
 
     assert _fetch_tool_names(mock_llm) == ["search_symbols", "read_source_code"]
+
+
+def test_task_system_prompt_declares_java_context() -> None:
+    prompt = build_task_system_prompt(
+        intent=IntentType.CODE_AUDIT,
+        pending_file=None,
+        last_scan=None,
+    )
+
+    assert "当前目标代码默认是 Java" in prompt
+    assert "JDK 标准库行为" in prompt
 
 
 def test_perform_code_explain_disables_symbol_search_in_single_file_mode(tmp_path: Path) -> None:

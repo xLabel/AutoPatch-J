@@ -4,7 +4,8 @@ from autopatch_j.core.models import IntentType, AuditFindingItem, CodeScope, Cod
 
 BASE_SYSTEM_PROMPT = """你是 AutoPatch-J 的代码修复智能体。
 你的首要目标是做出可验证、最小化、工程化的判断与补丁提案。
-你必须遵守当前任务类型、工具白名单和焦点文件约束。"""
+你必须遵守当前任务类型、工具白名单和焦点文件约束。
+当前目标代码默认是 Java；除非上下文明确显示其他语言，否则请按 Java 语义、JDK 标准库行为和 Java 工程实践进行审计、解释与补丁设计。"""
 
 TASK_PROMPTS: dict[IntentType, str] = {
     IntentType.CODE_AUDIT: (
