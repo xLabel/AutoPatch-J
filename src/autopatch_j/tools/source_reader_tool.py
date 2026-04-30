@@ -15,7 +15,7 @@ class SourceReaderTool(Tool):
     name = "read_source_code"
     description = (
         "读取指定路径下的源码内容。支持自动提取完整的类或方法定义。"
-        "注意：在提出任何补丁提案 (propose_patch) 之前，你必须通过此工具获取目标代码的最准确内容。"
+        "注意：在提出或修订任何补丁 (propose_patch/revise_patch) 之前，你必须通过此工具获取目标代码的最准确内容。"
     )
     parameters = {
         "type": "object",

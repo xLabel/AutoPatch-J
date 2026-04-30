@@ -84,6 +84,23 @@ class WorkspaceManager:
                 workspace.mode = WorkspaceStatus.REVIEWING
                 workspace.current_patch_index = 0
 
+    def replace_current_patch(self, draft: PatchDraft) -> bool:
+        """用新的草案替换当前正在审核的补丁，不改变后续队列。"""
+        with self.edit() as workspace:
+            current_item = workspace.get_current_patch()
+            if current_item is None:
+                return False
+            finding_ids = [draft.target_check_id] if draft.target_check_id else list(current_item.finding_ids)
+            replacement_item = PatchReviewItem(
+                item_id=current_item.item_id,
+                file_path=draft.file_path,
+                finding_ids=finding_ids,
+                status=PatchReviewStatus.PENDING,
+                draft=PatchDraftData.fetch_from_patch_draft(draft),
+            )
+            workspace.replace_current_patch(replacement_item)
+            return True
+
     def load_pending_patch(self) -> PatchDraft | None:
         """加载当前正在等待审核的补丁草案。"""
         workspace = self.load_workspace()

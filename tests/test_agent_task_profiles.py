@@ -103,13 +103,13 @@ def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
     mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
 
-    agent.perform_patch_revise("add one comment", current_item=MagicMock(), remaining_items=[])
+    agent.perform_patch_revise("add one comment", current_item=MagicMock())
 
     assert _fetch_tool_names(mock_llm) == [
         "search_symbols",
         "read_source_code",
         "get_finding_detail",
-        "propose_patch",
+        "revise_patch",
     ]
 
 

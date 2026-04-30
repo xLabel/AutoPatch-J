@@ -20,6 +20,7 @@ from autopatch_j.core.models import IntentType, AuditFindingItem, CodeScope, Pat
 from autopatch_j.tools.base import Tool, ToolResult
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
+from autopatch_j.tools.patch_revision_tool import PatchRevisionTool
 from autopatch_j.tools.source_reader_tool import SourceReaderTool
 from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
 
@@ -55,7 +56,7 @@ class Agent:
             "search_symbols",
             "read_source_code",
             "get_finding_detail",
-            "propose_patch",
+            "revise_patch",
         ),
     }
     CODE_EXPLAIN_SINGLE_FILE_TOOL_NAMES: tuple[str, ...] = ("read_source_code",)
@@ -76,6 +77,7 @@ class Agent:
             tool.name: tool
             for tool in [
                 PatchProposalTool(self.session),
+                PatchRevisionTool(self.session),
                 SymbolSearchTool(self.session),
                 SourceReaderTool(self.session),
                 FindingRetrieverTool(self.session),
@@ -194,13 +196,12 @@ class Agent:
         self,
         raw_user_text: str,
         current_item: PatchReviewItem,
-        remaining_items: list[PatchReviewItem],
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
         on_observation: ToolCallback | None = None,
         on_tool_start: ToolCallback | None = None,
     ) -> str:
-        prompt = build_patch_revise_user_prompt(current_item, remaining_items, raw_user_text)
+        prompt = build_patch_revise_user_prompt(current_item, raw_user_text)
         return self._run_task(
             intent=IntentType.PATCH_REVISE,
             user_text=prompt,

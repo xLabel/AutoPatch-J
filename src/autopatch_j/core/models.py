@@ -289,6 +289,12 @@ class ActiveWorkspace:
         else:
             self.mode = WorkspaceStatus.IDLE
 
+    def replace_current_patch(self, replacement_item: PatchReviewItem) -> None:
+        if self.get_current_patch() is None:
+            return
+        self.patch_items[self.current_patch_index] = replacement_item
+        self.mode = WorkspaceStatus.REVIEWING
+
     def _advance_after_terminal_patch(self) -> None:
         next_index: int | None = None
         for index in range(self.current_patch_index + 1, len(self.patch_items)):

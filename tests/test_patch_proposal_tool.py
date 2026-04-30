@@ -7,6 +7,7 @@ from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.patch_verifier import PatchVerifier
 from autopatch_j.core.workspace_manager import WorkspaceManager
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
+from autopatch_j.tools.patch_revision_tool import PatchRevisionTool
 
 
 class _FakeAgentSession:
@@ -18,9 +19,13 @@ class _FakeAgentSession:
         self.focus_paths = ["src/main/java/demo/UserService.java"]
         self.patch_source_hint = None
         self.patch_verifier = PatchVerifier(repo_root, None)
+        self.revised_patch_draft = None
 
     def is_path_in_focus(self, path: str) -> bool:
         return path in self.focus_paths
+
+    def set_revised_patch_draft(self, draft) -> None:
+        self.revised_patch_draft = draft
 
 
 def test_patch_proposal_tool_returns_structured_old_string_error(tmp_path: Path) -> None:
@@ -45,3 +50,27 @@ def test_patch_proposal_tool_returns_structured_old_string_error(tmp_path: Path)
     assert result.payload["file_path"] == "src/main/java/demo/UserService.java"
     assert result.payload["associated_finding_id"] == "F1"
     assert result.payload["error_code"] == "OLD_STRING_NOT_FOUND"
+
+
+def test_patch_revision_tool_stashes_draft_without_appending_workspace(tmp_path: Path) -> None:
+    java_dir = tmp_path / "src" / "main" / "java" / "demo"
+    java_dir.mkdir(parents=True)
+    (java_dir / "UserService.java").write_text(
+        'package demo;\n\npublic class UserService {\n    public boolean isAdmin(User user) {\n        return user.getName().equals("admin");\n    }\n}\n',
+        encoding="utf-8",
+    )
+    session = _FakeAgentSession(tmp_path)
+    tool = PatchRevisionTool(session)
+
+    result = tool.execute(
+        file_path="src/main/java/demo/UserService.java",
+        old_string='return user.getName().equals("admin");',
+        new_string='return user != null && user.getName().equals("admin");',
+        rationale="fix npe",
+        associated_finding_id="F1",
+    )
+
+    assert result.status in {"ok", "unavailable"}
+    assert session.revised_patch_draft is not None
+    assert session.revised_patch_draft.new_string == 'return user != null && user.getName().equals("admin");'
+    assert session.workspace_manager.load_workspace().patch_items == []

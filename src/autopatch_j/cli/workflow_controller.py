@@ -343,23 +343,23 @@ class CliWorkflowController:
             self.context.renderer.print_error("当前没有待确认补丁")
             return
 
-        remaining_items = self.context.workspace_manager.load_workspace().get_remaining_patches()
         self.context.agent.session.set_focus_paths(self.context._fetch_review_scope_paths(current_item))
-        
-        with self.context.workspace_manager.edit() as workspace:
-            workspace.replace_tail([])
+        self.context.agent.session.revised_patch_draft = None
 
         self.context._run_agent_request(
             prompt=text,
             agent_call=lambda p, **kwargs: self.context.agent.perform_patch_revise(
                 raw_user_text=text,
                 current_item=current_item,
-                remaining_items=remaining_items,
                 **kwargs
             ),
         )
-        if not self.context.workspace_manager.load_workspace().has_pending_patch():
-            self.context.renderer.print_info("补丁队列已清空")
+        revised_patch = self.context.agent.session.pop_revised_patch_draft()
+        if revised_patch is None:
+            self.context.renderer.print_info("未生成修订补丁，当前补丁保持不变。")
+            return
+        self.context.workspace_manager.replace_current_patch(revised_patch)
+        self.context.renderer.print_info("已更新当前补丁，后续补丁保持不变。")
 
     def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
         assert self.context.agent is not None

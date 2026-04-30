@@ -12,6 +12,8 @@ from autopatch_j.core.models import (
     PatchReviewStatus,
     WorkspaceStatus,
 )
+from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.core.patch_verifier import SyntaxCheckResult
 from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
@@ -146,3 +148,36 @@ def test_workspace_manager_replace_remaining_patch_items_keeps_applied_head(tmp_
     assert replaced.patch_items[0].status is PatchReviewStatus.APPLIED
     assert replaced.get_current_patch() is not None
     assert replaced.get_current_patch().item_id == "item-3"
+
+
+def test_workspace_manager_replace_current_patch_keeps_queue_order(tmp_path: Path) -> None:
+    service = WorkspaceManager(ArtifactManager(tmp_path))
+    service.initialize_review_workspace(
+        scope=_scope(),
+        latest_scan_id="scan-5",
+        patch_items=[
+            _item("item-1", "src/main/java/demo/User.java", "F1"),
+            _item("item-2", "src/main/java/demo/UserService.java", "F2"),
+        ],
+    )
+    replacement = PatchDraft(
+        file_path="src/main/java/demo/User.java",
+        old_string="old",
+        new_string="better",
+        diff="better diff",
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+        rationale="better fix",
+        target_check_id="F1",
+    )
+
+    replaced = service.replace_current_patch(replacement)
+    workspace = service.load_workspace()
+
+    assert replaced is True
+    assert workspace.current_patch_index == 0
+    assert [item.item_id for item in workspace.patch_items] == ["item-1", "item-2"]
+    assert workspace.patch_items[0].draft.new_string == "better"
+    assert workspace.patch_items[0].draft.rationale == "better fix"
+    assert workspace.patch_items[1].draft.rationale == "fix F2"

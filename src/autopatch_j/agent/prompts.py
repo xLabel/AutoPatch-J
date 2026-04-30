@@ -27,8 +27,9 @@ TASK_PROMPTS: dict[IntentType, str] = {
         "当前任务是 patch_explain。请解释当前待确认补丁的意图、风险和影响，只读回答。"
     ),
     IntentType.PATCH_REVISE: (
-        "当前任务是 patch_revise。请围绕当前待确认补丁和用户反馈重写剩余补丁方案。"
-        "你可以读代码、查找符号、取回漏洞详情并重新 propose_patch。"
+        "当前任务是 patch_revise。请围绕当前待确认补丁和用户反馈只重写当前补丁。"
+        "不要影响后续补丁队列。如需提交修订结果，必须调用 revise_patch。"
+        "你可以读代码、查找符号、取回漏洞详情并修订当前补丁。"
     ),
 }
 
@@ -167,17 +168,14 @@ def build_patch_explain_user_prompt(current_item: PatchReviewItem, user_text: st
 
 def build_patch_revise_user_prompt(
     current_item: PatchReviewItem,
-    remaining_items: list[PatchReviewItem],
     user_text: str,
 ) -> str:
     draft = current_item.draft
-    remaining_files = "\n".join(f"- {item.file_path}" for item in remaining_items)
     return (
         f"当前待重写补丁文件: {current_item.file_path}\n"
         f"当前补丁意图: {draft.rationale or '无说明'}\n"
         f"当前补丁差异:\n{draft.diff}\n\n"
-        "以下补丁尾部已失效，需要基于用户反馈整体重建:\n"
-        f"{remaining_files}\n\n"
         f"用户反馈:\n{user_text}\n"
-        "请基于最新意见重新生成 remaining_patch_items。"
+        "请只重写当前补丁，不要修改、删除或重建后续补丁。"
+        "如果需要提交修订结果，必须调用 revise_patch。"
     )

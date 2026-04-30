@@ -5,17 +5,16 @@ from autopatch_j.tools.base import Tool, ToolResult
 from autopatch_j.tools.patch_draft_builder import build_patch_draft
 
 
-class PatchProposalTool(Tool):
+class PatchRevisionTool(Tool):
     """
-    补丁提案工具 (Adapter Layer)
-    职责：基于 search-replace 逻辑生成补丁草案，不直接修改磁盘文件。
+    当前补丁修订工具。
+    职责：生成当前待确认补丁的替代草案，不直接写入正式补丁队列。
     """
 
-    name = "propose_patch"
+    name = "revise_patch"
     description = (
-        "提交一个针对特定漏洞的修复补丁提案（草案）。"
-        "执行该工具不会修改文件系统，草案会进入待确认队列。"
-        "在调用前应先通过 read_source_code 确认目标代码内容。"
+        "重写当前待确认补丁。执行该工具不会修改文件系统，也不会影响后续补丁队列。"
+        "修订草案会由 workflow 在 ReAct 结束后替换当前补丁。"
     )
     parameters = {
         "type": "object",
@@ -23,7 +22,7 @@ class PatchProposalTool(Tool):
             "file_path": {"type": "string", "description": "目标文件相对路径。"},
             "old_string": {"type": "string", "description": "要被替换的原始代码精确块。"},
             "new_string": {"type": "string", "description": "替换后的新代码块。"},
-            "rationale": {"type": "string", "description": "说明修复依据。"},
+            "rationale": {"type": "string", "description": "说明修订依据。"},
             "associated_finding_id": {
                 "type": "string",
                 "description": "关联的 finding 句柄，如 F1，用于语义校验与 workflow 推进。",
@@ -41,7 +40,6 @@ class PatchProposalTool(Tool):
         associated_finding_id: str | None = None,
     ) -> ToolResult:
         assert self.context is not None
-        workspace_manager = self.context.workspace_manager
 
         draft_result = build_patch_draft(
             context=self.context,
@@ -50,25 +48,25 @@ class PatchProposalTool(Tool):
             new_string=new_string,
             rationale=rationale,
             associated_finding_id=associated_finding_id,
-            action_label="补丁提案",
-            focus_verb="修复",
+            action_label="补丁修订",
+            focus_verb="修订",
         )
         if isinstance(draft_result, ToolResult):
             return draft_result
 
         draft: PatchDraft = draft_result
-        workspace_manager.add_pending_patch(draft)
-        message = f"补丁草案已加入队列。目标文件：{file_path}。\n"
+        self.context.set_revised_patch_draft(draft)
+        message = f"当前补丁修订草案已生成。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"
         message += f"差异预览：\n{draft.diff}\n\n"
         if draft.status == "invalid":
-            message += f"警告：补丁导致语法错误（{draft.validation.message}），请及时修正方案。"
+            message += f"警告：修订草案导致语法错误（{draft.validation.message}），请及时修正方案。"
         else:
-            message += "此补丁正在等待人工确认。"
+            message += "此修订草案将在本轮结束后替换当前待确认补丁。"
         return ToolResult(
             status=draft.status,
             message=message,
-            summary=f"已起草补丁草案: {file_path}",
+            summary=f"已修订当前补丁: {file_path}",
             payload={
                 "file_path": file_path,
                 "associated_finding_id": associated_finding_id,
