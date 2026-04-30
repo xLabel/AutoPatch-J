@@ -8,6 +8,8 @@ from typing import Any
 
 
 class ScannerName(str, Enum):
+    """AutoPatch-J 已知的 Java 扫描器标识。"""
+
     SEMGREP = "semgrep"
     SPOTBUGS = "spotbugs"
     PMD = "pmd"
@@ -16,7 +18,7 @@ class ScannerName(str, Enum):
 
 @dataclass(slots=True)
 class Finding:
-    """单个安全/正确性发现"""
+    """扫描器输出的单个 Java 安全或正确性问题。"""
     check_id: str
     path: str
     start_line: int
@@ -41,7 +43,7 @@ class Finding:
 
 @dataclass(slots=True)
 class ScanResult:
-    """扫描任务的全量结果"""
+    """一次扫描的标准结果，供 artifact 和 CLI 层持久化、展示。"""
     engine: str
     scope: list[str]
     targets: list[str]
@@ -75,7 +77,7 @@ class ScanResult:
 
 @dataclass(slots=True)
 class ScannerMeta:
-    """扫描器元数据，用于展示"""
+    """扫描器能力与就绪状态元数据，用于 `/scanner` 等展示入口。"""
     name: ScannerName
     is_implemented: bool
     status: str
@@ -84,7 +86,7 @@ class ScannerMeta:
 
 
 class JavaScanner(ABC):
-    """扫描器抽象基类"""
+    """Java 扫描器适配器契约，统一扫描执行和状态展示接口。"""
     name: ScannerName
 
     @abstractmethod

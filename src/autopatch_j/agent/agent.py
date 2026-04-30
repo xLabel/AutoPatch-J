@@ -30,17 +30,25 @@ ToolCallback = Callable[[str], None]
 
 @dataclass(frozen=True, slots=True)
 class TaskProfile:
+    """
+    Agent 任务的静态执行边界。
+
+    intent 决定系统提示词，tool_names 决定本轮 ReAct 可调用的工具集合。
+    它只描述任务配置，不保存运行时状态。
+    """
+
     intent: IntentType
     tool_names: tuple[str, ...]
 
 
 class Agent:
     """
-    大模型智能决策引擎 (ReAct Execution Engine)。
-    核心职责：
-    1. 在 Workflow 赋予的明确任务类型和范围边界下，执行纯粹的 ReAct 循环。
-    2. 解析 LLM 返回的 Tool Calls 并调度执行。
-    3. 管理会话历史 (History Dehydration) 和上下文防爆。
+    ReAct 执行引擎。
+
+    职责边界：
+    1. 根据 Workflow 指定的任务 profile 组织系统提示词、用户提示词和工具白名单。
+    2. 驱动 LLM 多轮 ReAct 循环，解析 Tool Call 并调度工具执行。
+    3. 管理短期消息历史和循环保护；不负责 CLI 路由、扫描调度或 workspace 队列推进。
     """
 
     TASK_PROFILES: dict[IntentType, TaskProfile] = {

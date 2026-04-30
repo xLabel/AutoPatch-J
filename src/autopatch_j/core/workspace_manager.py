@@ -19,10 +19,12 @@ from autopatch_j.core.patch_engine import PatchDraft
 @dataclass(slots=True)
 class WorkspaceManager:
     """
-    工作台业务逻辑管理器 (Workspace Domain Manager)。
-    职责：
-    1. 负责 ActiveWorkspace 领域对象的业务操作（如添加补丁、加载当前补丁）。
-    2. 提供 edit() 事务会话，确保业务修改的原子性。
+    ActiveWorkspace 的持久化事务门面。
+
+    职责边界：
+    1. 从 ArtifactManager 加载/保存 workspace，并在不存在时提供空闲工作台。
+    2. 提供 edit() 事务和常用队列操作，如初始化审核队列、追加补丁、替换当前补丁。
+    3. 不重新定义队列推进规则；apply/discard/replace 的领域行为仍在 ActiveWorkspace 中。
     """
 
     artifact_manager: ArtifactManager

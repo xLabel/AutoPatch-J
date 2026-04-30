@@ -7,8 +7,10 @@ from autopatch_j.tools.base import Tool, ToolResult
 
 class FindingRetrieverTool(Tool):
     """
-    漏洞证据检索工具。
-    职责：将逻辑句柄 (F1, F2) 映射回真实的漏洞详情。
+    Finding 详情检索工具。
+
+    将 CLI 摘要里的 F1/F2 句柄还原为真实扫描结果，并补齐当前源码片段；
+    它只读取最近一次扫描 artifact，不发起新扫描，也不生成补丁。
     """
 
     name = "get_finding_detail"

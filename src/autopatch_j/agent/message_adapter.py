@@ -9,7 +9,14 @@ from autopatch_j.tools.base import Tool
 
 
 class AgentMessageAdapter:
-    """Convert local agent messages and tools into the LLM wire format."""
+    """
+    Agent 本地消息与 LLM wire format 的适配器。
+
+    职责边界：
+    1. 把本地保存的 assistant/tool 消息清洗成 OpenAI 兼容消息结构。
+    2. 压缩旧工具观察并保留 DeepSeek reasoning_content 兼容字段。
+    3. 生成 tool schema 和序列化 Tool Call；不执行工具，也不改变 AgentSession 状态。
+    """
 
     def __init__(self, available_tools: Mapping[str, Tool]) -> None:
         self.available_tools = available_tools

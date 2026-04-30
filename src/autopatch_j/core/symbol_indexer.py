@@ -12,7 +12,11 @@ from autopatch_j.config import get_project_state_dir
 
 @dataclass(slots=True)
 class IndexEntry:
-    """单条索引记录。"""
+    """
+    本地代码索引的一条记录。
+
+    kind 表示目录、文件、类或方法；line 用于 CodeFetcher 定位符号块。
+    """
     path: str
     name: str
     kind: str
@@ -23,10 +27,12 @@ class IndexEntry:
 
 class SymbolIndexer:
     """
-    本地符号索引引擎 (Local Symbol Indexer)。
-    核心职责：扫描 Java 项目并构建基于 SQLite + Tree-sitter 的轻量级本地缓存。
-    避免 LLM 在调用 search_symbols 时盲目全盘扫描，极大节省成本与等待时间。
-    具备降维打击保护能力（当 Tree-sitter 环境不可用时，自动平滑退化为基础文件级索引）。
+    本地 Java 符号索引服务。
+
+    职责边界：
+    1. 扫描项目文件并维护 SQLite 索引，支撑 @补全、范围解析和 search_symbols。
+    2. 可用 Tree-sitter 时提取类/方法符号；不可用时降级为文件/目录级索引。
+    3. 不读取完整代码内容，也不执行扫描器规则；源码读取和静态扫描由其他组件负责。
     """
 
     def __init__(self, repo_root: Path, ignored_dirs: set[str] | None = None) -> None:

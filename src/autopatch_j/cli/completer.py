@@ -9,10 +9,12 @@ from autopatch_j.core.symbol_indexer import IndexEntry
 
 class AutoPatchCompleter(Completer):
     """
-    全能智能补全器 (Interaction Layer)
-    职责：
-    1. 基于 @ 符号提供代码索引补全。
-    2. 基于 / 符号提供系统指令补全。
+    prompt_toolkit 补全器。
+
+    职责边界：
+    1. 输入 '/' 时补全系统命令。
+    2. 输入 '@' 时基于本地索引补全文件、目录、类或方法。
+    3. 不解析最终工作范围；@mention 到 CodeScope 的转换由 ScopeService 完成。
     """
 
     def __init__(self, search_func: Callable[[str], list[IndexEntry]]) -> None:

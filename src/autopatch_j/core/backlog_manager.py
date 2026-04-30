@@ -15,10 +15,12 @@ from autopatch_j.scanners.base import ScanResult
 @dataclass(slots=True)
 class BacklogManager:
     """
-    漏洞待办推进服务 (Finding State Machine)。
-    核心职责：
-    1. 将静态扫描器吐出的全量结果 (ScanResult) 展开成可逐个推进的漏洞队列。
-    2. 根据 Agent 执行修复后的返回/异常码，推断漏洞当前应当处于 PATCH_READY、FAILED 还是允许重试 (Retry)。
+    本轮审计 finding 队列的状态机。
+
+    职责边界：
+    1. 将 ScanResult 展开为 F1/F2 这类可逐个推进的 AuditFindingItem。
+    2. 根据 propose_patch 的工具消息推断补丁已就绪、可重试或失败。
+    3. 不生成补丁、不调用 Agent，也不写 workspace；这些由 WorkflowController 协调。
     """
 
     def fetch_backlog(self, scan_result: ScanResult) -> list[AuditFindingItem]:

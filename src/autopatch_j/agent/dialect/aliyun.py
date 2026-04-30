@@ -8,8 +8,12 @@ if TYPE_CHECKING:
 
 class DeepSeekAliyunDialect:
     """
-    针对阿里云百炼 DeepSeek 模型的 DSML 标签解析器。
-    职责：拦截流式响应中的 <｜DSML｜> 标签，将其还原为标准的工具调用。
+    阿里云百炼 DSML 流式方言适配器。
+
+    职责边界：
+    1. 从流式文本中隐藏 <｜DSML｜> 标记，避免标签泄漏到 CLI。
+    2. 把 DSML function_calls 解析为标准 ToolCall。
+    3. 不参与工具执行，也不处理非 DSML 的标准 OpenAI tool_calls。
     """
     _DSML_MARKER_PATTERN = re.compile(r"<\s*[｜|]\s*DSML\s*[｜|]")
     _DSML_INVOKE_PATTERN = re.compile(

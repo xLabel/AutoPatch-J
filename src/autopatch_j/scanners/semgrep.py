@@ -22,6 +22,8 @@ DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
 
 
 class SemgrepScanner:
+    """Semgrep Java 扫描器适配器，负责选择目标、调用 runtime 并归一化结果。"""
+
     name = ScannerName.SEMGREP
 
     def __init__(self) -> None:

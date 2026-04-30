@@ -8,8 +8,10 @@ from autopatch_j.tools.base import Tool, ToolResult
 
 class SourceReaderTool(Tool):
     """
-    源码读取工具 (Reader)
-    职责：从磁盘获取指定路径或符号的真实代码内容。
+    Java 源码读取工具。
+
+    根据路径、符号或行号读取当前工作区的真实源码，并维护本轮 ReAct 的读取缓存；
+    propose/revise 补丁前应先通过它确认精确 old_string。
     """
 
     name = "read_source_code"

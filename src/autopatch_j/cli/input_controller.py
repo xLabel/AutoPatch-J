@@ -15,7 +15,7 @@ from autopatch_j.config import get_project_state_dir
 
 
 class CliInputController:
-    """Manage prompt_toolkit session creation and completion behavior for the CLI."""
+    """CLI 输入层适配器，负责 prompt_toolkit 会话、历史记录和补全交互。"""
 
     def __init__(
         self,

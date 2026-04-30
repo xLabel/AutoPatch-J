@@ -18,11 +18,24 @@ from autopatch_j.config import GlobalConfig
 
 @dataclass(slots=True)
 class ChatInputDecision:
+    """
+    单次用户输入经过会话路由和意图识别后的决策。
+
+    route 描述当前输入是命令、新任务还是继续审核；intent 描述后续要进入的业务工作流。
+    该对象只承载分类结果，不执行任何副作用。
+    """
+
     route: ConversationRoute
     intent: IntentType | None
 
 
 class WorkflowControllerContext(Protocol):
+    """
+    WorkflowController 依赖的 CLI 能力协议。
+
+    该协议刻意只描述 workflow 需要调用的能力，避免 workflow 层直接依赖完整 CLI 实现。
+    """
+
     renderer: Any
     agent: Any
     intent_detector: Any
@@ -43,13 +56,12 @@ class WorkflowControllerContext(Protocol):
 
 class CliWorkflowController:
     """
-    工作流总控与调度中心 (Workflow Orchestrator)。
-    核心职责：接收原始输入，调用意图识别，并编排复杂的业务流。
-    
-    Typical process (e.g., code_audit):
-    1. Resolve scope (Scope) -> 2. Trigger static scan (ScannerRunner) -> 
-    3. Push to backlog (BacklogManager) -> 4. Drive Agent repair one by one (Agent) -> 
-    5. Retry or skip on failure -> 6. Final human confirmation (WorkspaceManager).
+    用户输入到业务工作流的编排器。
+
+    职责边界：
+    1. 负责 chat 输入的会话路由、意图分发、审计 backlog 推进和 pending patch 审核流程。
+    2. 协调 ScopeService、ScannerRunner、BacklogManager、WorkspaceManager 和 Agent。
+    3. 不直接执行工具、不直接修改文件内容；工具执行由 Agent 完成，补丁落盘由命令控制器和 PatchEngine 完成。
     """
 
     def __init__(self, context: WorkflowControllerContext) -> None:

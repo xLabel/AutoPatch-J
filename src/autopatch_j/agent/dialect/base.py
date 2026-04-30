@@ -7,7 +7,11 @@ from typing import Any, Protocol
 
 @dataclass(slots=True)
 class ToolCall:
-    """大模型工具调用模型 (Domain Model)"""
+    """
+    LLM 工具调用的统一内部表示。
+
+    不同供应商的 tool call 解析后都归一到该结构，供 Agent 调度工具执行。
+    """
     name: str
     arguments: dict[str, Any]
     call_id: str
@@ -16,8 +20,9 @@ class ToolCall:
 
 class MessageDialect(Protocol):
     """
-    大模型方言解析策略接口。
-    用于抹平不同厂商流式返回的特殊标签差异。
+    供应商流式消息方言协议。
+
+    实现类负责过滤可见文本、解析工具调用和剥离供应商标记。
     """
     def consume_visible_text(self, chunk: str) -> str: ...
     def flush_visible_text(self) -> str: ...
@@ -26,7 +31,11 @@ class MessageDialect(Protocol):
 
 
 class StandardDialect:
-    """符合 OpenAI 标准的方言解析器"""
+    """
+    标准 OpenAI tool_calls 方言。
+
+    标准协议下无需从文本中额外解析工具调用，因此该实现只透传可见文本。
+    """
     def consume_visible_text(self, chunk: str) -> str:
         return chunk
 

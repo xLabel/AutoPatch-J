@@ -7,8 +7,10 @@ from autopatch_j.tools.patch_draft_builder import build_patch_draft
 
 class PatchRevisionTool(Tool):
     """
-    当前补丁修订工具。
-    职责：生成当前待确认补丁的替代草案，不直接写入正式补丁队列。
+    当前待确认补丁的修订工具。
+
+    只为正在 review 的补丁生成替代 PatchDraft，并暂存在本轮 AgentSession；
+    ReAct 结束后由 workflow 替换队头补丁，不影响后续补丁队列。
     """
 
     name = "revise_patch"

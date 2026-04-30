@@ -5,7 +5,7 @@ from autopatch_j.scanners.base import JavaScanner, ScannerMeta, ScannerName, Sca
 
 
 class SpotBugsScanner(JavaScanner):
-    """SpotBugs 扫描器适配器 (规划中)"""
+    """SpotBugs 预留适配器，仅暴露规划状态，不参与当前扫描流程。"""
     name = ScannerName.SPOTBUGS
 
     def get_meta(self, repo_root: Path | None = None) -> ScannerMeta:

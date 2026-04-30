@@ -25,6 +25,15 @@ from autopatch_j.scanners import DEFAULT_SCANNER_NAME, get_scanner
 
 @dataclass(slots=True)
 class CliContextSummary:
+    """
+    CLI 展示摘要提供者。
+
+    职责边界：
+    1. 从 workspace、scan artifact 和 agent session 中提取适合展示的路径与摘要文案。
+    2. 服务于 StreamAdapter、空结果面板和当前审核上下文提示。
+    3. 不修改 workspace，不触发扫描，也不参与意图判断。
+    """
+
     repo_root: Path
     artifact_manager: ArtifactManager
     workspace_manager: WorkspaceManager
@@ -85,6 +94,15 @@ class CliContextSummary:
 
 @dataclass(slots=True)
 class CliServices:
+    """
+    CLI 启动后的服务集合。
+
+    职责边界：
+    1. 表达一次初始化产生的 core service、controller 依赖和 Agent 依赖。
+    2. 让 CLI 入口不用关心每个对象的构造细节。
+    3. 本身不包含业务流程；业务仍由各 service/controller 执行。
+    """
+
     artifact_manager: ArtifactManager
     symbol_indexer: SymbolIndexer
     patch_engine: PatchEngine

@@ -7,9 +7,12 @@ from autopatch_j.core.models import IntentType
 
 class ChatFilter:
     """
-    输出内容治理服务 (Output Governance)。
-    核心职责：对 LLM 冗长的回答进行物理裁切，避免大段 Markdown 破坏 CLI 体验。
-    不再包含硬编码的意图拦截逻辑，拦截闲聊职责已完全交由大模型的 System Prompt 处理。
+    CLI 最终回答的轻量格式过滤器。
+
+    职责边界：
+    1. 对 general_chat/code_explain 的最终回答做简单 Markdown 降噪。
+    2. 保持控制台文本清爽，避免标题和粗体标记污染输出。
+    3. 不做意图拦截，也不裁剪 ReAct 过程；这些由 input classifier 和 StreamAdapter 负责。
     """
 
     def build_display_answer(

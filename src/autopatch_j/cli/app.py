@@ -40,11 +40,12 @@ from autopatch_j.core.patch_verifier import PatchVerifier
 
 class CLI:
     """
-    AutoPatch-J CLI 门面与依赖注入容器 (DI Container)。
-    核心职责：
-    1. 启动容器与主事件循环 (Event Loop)，拦截退出信号。
-    2. 负责所有核心服务（Service、Manager、Agent 等）的实例化与组装。
-    3. 驱动 prompt_toolkit 终端渲染和智能补全。
+    AutoPatch-J 的命令行应用入口。
+
+    职责边界：
+    1. 持有主事件循环、欢迎界面、退出信号和 prompt 会话。
+    2. 调用服务 builder 完成依赖组装，并把控制权交给 command/workflow controller。
+    3. 不承载具体业务规则；扫描、意图路由、补丁队列和 ReAct 执行都由下层组件负责。
     """
 
     def __init__(self, cwd: Path) -> None:

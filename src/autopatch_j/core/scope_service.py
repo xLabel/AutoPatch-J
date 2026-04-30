@@ -10,9 +10,12 @@ from autopatch_j.core.models import CodeScope, CodeScopeKind
 
 class ScopeService:
     """
-    范围解析与锁定服务 (Scope Resolver)。
-    核心职责：解析用户的 @mention 语法，结合本地索引将目录/文件名展开并提纯为精确的文件级 CodeScope。
-    这一步是建立“上下文物理隔离墙”的关键，通过锁定焦点范围 (focus_paths)，防止大模型自由发散、漫无目的地读取整个仓库库代码。
+    用户 @mention 到 CodeScope 的解析服务。
+
+    职责边界：
+    1. 结合 SymbolIndexer 将文件、目录、类或方法 mention 解析为文件级 focus_files。
+    2. 决定当前任务是否锁定焦点范围，作为 Agent/Tool 的路径约束来源。
+    3. 不判断用户意图，也不触发扫描；它只产出可执行的代码范围。
     """
 
     def __init__(self, repo_root: Path, symbol_indexer: SymbolIndexer, ignored_dirs: set[str] | None = None) -> None:

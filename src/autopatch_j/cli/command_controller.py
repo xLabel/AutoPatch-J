@@ -14,6 +14,12 @@ from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 
 
 class CommandControllerContext(Protocol):
+    """
+    斜杠命令处理器所需的 CLI 能力协议。
+
+    该协议把命令层和完整 CLI 实现解耦，只暴露初始化、退出、渲染和核心服务引用。
+    """
+
     cwd: Path
     repo_root: Path | None
     artifacts: Any
@@ -28,7 +34,14 @@ class CommandControllerContext(Protocol):
 
 
 class CliCommandController:
-    """Handle slash commands and patch confirmation commands for the CLI."""
+    """
+    CLI 斜杠命令和补丁确认动作的处理器。
+
+    职责边界：
+    1. 处理 /init、/status、/scanner、/reset、/reindex、/help、/quit。
+    2. 处理 apply/discard 触发的补丁应用或丢弃展示。
+    3. 不做自然语言意图识别；普通输入由 WorkflowController 接管。
+    """
 
     def __init__(self, context: CommandControllerContext) -> None:
         self.context = context

@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 @dataclass(slots=True)
 class ToolResult:
-    """工具执行结果的通用契约"""
+    """LLM 工具调用返回给 Agent 的统一结果对象。"""
     status: str
     message: str
     summary: str | None = None
@@ -16,10 +16,10 @@ class ToolResult:
 
 class ToolContext(Protocol):
     """
-    工具环境契约 (Duck Typing Protocol)。
-    核心架构设计：通过 Protocol (鸭子类型) 声明 Tool 执行时所需的底层服务依赖，
-    而不是直接导入 Agent 或 WorkspaceManager 等实体类。
-    这一设计彻底斩断了 Tool 层与 Agent 层/流程层的双向循环依赖，保障了工具链的独立拓展性与单元测试的可行性。
+    ReAct 工具运行时依赖契约。
+
+    工具层只通过这个 Protocol 访问仓库、artifact、索引、补丁和缓存能力，
+    避免直接依赖 Agent 或 CLI 流程类，便于单测中替换为轻量上下文对象。
     """
     repo_root: Path
     artifact_manager: Any
@@ -42,8 +42,10 @@ class ToolContext(Protocol):
 
 class Tool:
     """
-    工具基类 (Adapter Layer)
-    职责：定义所有供 LLM 调用的工具必须遵循的接口。
+    所有 LLM function call 工具的基类。
+
+    子类负责声明 JSON schema 和执行逻辑；流程控制、入队和用户确认仍由
+    Agent/Workflow 层决定，工具本身不直接修改用户源文件。
     """
     name: str
     description: str
@@ -53,6 +55,6 @@ class Tool:
         self.context = context
 
     def execute(self, **kwargs: Any) -> ToolResult:
-        """执行逻辑，子类通过 self.context 访问服务，不再通过入参传递"""
+        """执行工具逻辑，子类通过 self.context 访问运行时服务。"""
         raise NotImplementedError
 

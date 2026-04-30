@@ -8,6 +8,8 @@ from autopatch_j.core.patch_engine import PatchDraft
 
 
 class IntentType(str, Enum):
+    """自然语言输入可进入的业务意图集合，由 IntentDetector 产出。"""
+
     CODE_AUDIT = "code_audit"
     CODE_EXPLAIN = "code_explain"
     GENERAL_CHAT = "general_chat"
@@ -16,35 +18,47 @@ class IntentType(str, Enum):
 
 
 class ConversationRoute(str, Enum):
+    """pending review 场景下的会话路由结果，由 ConversationRouter 产出。"""
+
     NEW_TASK = "new_task"
     REVIEW_CONTINUE = "review_continue"
     COMMAND = "command"
 
 
 class WorkspaceStatus(str, Enum):
+    """工作台是否处于人工审核补丁的状态。"""
+
     IDLE = "idle"
     REVIEWING = "reviewing"
 
 
 class CodeScopeKind(str, Enum):
+    """代码范围的粗粒度类型，用于展示和流程分支。"""
+
     SINGLE_FILE = "single_file"
     MULTI_FILE = "multi_file"
     PROJECT = "project"
 
 
 class PatchReviewStatus(str, Enum):
+    """人工补丁审核项的生命周期状态。"""
+
     PENDING = "pending"
     APPLIED = "applied"
     DISCARDED = "discarded"
 
 
 class AuditFindingStatus(str, Enum):
+    """审计 finding 在自动修复流程中的推进状态。"""
+
     PENDING = "pending"
     PATCH_READY = "patch_ready"
     FAILED = "failed"
 
 
 class AuditAttemptOutcome(str, Enum):
+    """单次 finding 修复尝试的归因结果。"""
+
     PATCH_READY = "patch_ready"
     RETRYABLE_ERROR = "retryable_error"
     NO_PATCH = "no_patch"
@@ -52,6 +66,13 @@ class AuditAttemptOutcome(str, Enum):
 
 @dataclass(slots=True)
 class CodeScope:
+    """
+    一次用户请求解析出的代码范围。
+
+    source_roots 保留用户选择的原始入口，focus_files 是展开后的文件级范围。
+    is_locked 为 True 时，Agent 和 Tool 只能在 focus_files 内读取或修改代码。
+    """
+
     kind: CodeScopeKind
     source_roots: list[str]
     focus_files: list[str]
@@ -77,6 +98,12 @@ class CodeScope:
 
 @dataclass(slots=True)
 class PatchDraftData:
+    """
+    PatchDraft 的可持久化快照。
+
+    用于写入 workspace JSON，避免把运行时对象和验证结果对象直接序列化。
+    """
+
     file_path: str
     old_string: str
     new_string: str
@@ -159,6 +186,12 @@ class PatchDraftData:
 
 @dataclass(slots=True)
 class PatchReviewItem:
+    """
+    人工审核队列中的一个补丁项。
+
+    它把补丁草案、目标文件、关联 finding 和审核状态绑定在一起，供 CLI 展示和 apply/discard 推进。
+    """
+
     item_id: str
     file_path: str
     finding_ids: list[str]
@@ -190,6 +223,12 @@ class PatchReviewItem:
 
 @dataclass(slots=True)
 class AuditFindingItem:
+    """
+    扫描 finding 在本轮审计 workflow 中的待办项。
+
+    它保存 F1/F2 这类逻辑句柄、重试次数和最后失败原因，不直接持久化到 workspace。
+    """
+
     finding_id: str
     file_path: str
     check_id: str
@@ -208,6 +247,12 @@ class AuditFindingItem:
 
 @dataclass(slots=True)
 class AuditAttemptDecision:
+    """
+    一次 Agent 修复尝试后的流程决策。
+
+    BacklogManager 根据工具消息推断该 finding 是否已产生补丁、是否可重试或应标记失败。
+    """
+
     outcome: AuditAttemptOutcome
     error_code: str | None = None
     error_message: str | None = None
@@ -216,9 +261,12 @@ class AuditAttemptDecision:
 @dataclass(slots=True)
 class ActiveWorkspace:
     """
-    人工确认区工作台 (Rich Domain Model)。
-    核心职责：管理系统当前状态（IDLE 还是 REVIEWING），维护待确认补丁队列的游标推进，
-    并直接控制 apply / discard 时的内部状态跳变。
+    待审补丁工作台领域模型。
+
+    职责边界：
+    1. 维护当前审核模式、扫描范围、补丁队列和游标位置。
+    2. 定义 apply/discard/replace 后队列如何推进的领域规则。
+    3. 不负责磁盘读写；持久化由 WorkspaceManager 和 ArtifactManager 完成。
     """
     mode: WorkspaceStatus
     scope: CodeScope | None

@@ -5,7 +5,7 @@ from autopatch_j.scanners.base import JavaScanner, ScannerMeta, ScannerName, Sca
 
 
 class CheckstyleScanner(JavaScanner):
-    """Checkstyle 扫描器适配器 (规划中)"""
+    """Checkstyle 预留适配器，仅暴露规划状态，不参与当前扫描流程。"""
     name = ScannerName.CHECKSTYLE
 
     def get_meta(self, repo_root: Path | None = None) -> ScannerMeta:

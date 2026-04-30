@@ -13,9 +13,12 @@ from autopatch_j.scanners.base import Finding, ScanResult
 @dataclass(slots=True)
 class ArtifactManager:
     """
-    工件物理持久化管理器 (Storage Provider)。
-    核心职责：负责 .autopatch-j/ 目录下 JSON 文件的物理读写与 ID 生成。
-    它不包含任何关于补丁队列或审核状态的业务逻辑，仅作为纯粹的持久化驱动。
+    .autopatch-j 目录下的 JSON 工件存储驱动。
+
+    职责边界：
+    1. 保存和读取扫描快照、workspace 快照，并生成 scan artifact id。
+    2. 只处理物理读写和 JSON 反序列化容错。
+    3. 不理解补丁队列、审核游标或 finding 状态机；这些属于 core 领域服务。
     """
 
     repo_root: Path

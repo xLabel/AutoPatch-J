@@ -17,8 +17,12 @@ BODY_STYLE = "#E5E7EB"
 
 class CliRenderer:
     """
-    CLI 视觉渲染引擎 (Presentation Layer)
-    职责：封装 Rich 组件，提供统一的、高语义化的 UI 输出。
+    Rich 终端输出的统一封装。
+
+    职责边界：
+    1. 提供面板、步骤、工具状态、diff、补丁操作面板等高语义输出。
+    2. 统一颜色和样式，避免业务层直接拼 Rich 细节。
+    3. 不持有业务状态，也不决定何时进入某个工作流。
     """
 
     def __init__(self) -> None:

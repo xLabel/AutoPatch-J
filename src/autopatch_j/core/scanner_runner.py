@@ -10,8 +10,12 @@ from autopatch_j.scanners.base import JavaScanner, ScanResult
 
 class ScannerRunner:
     """
-    基准扫描服务 (Core Service)
-    职责：统一触发扫描器并持久化扫描快照。
+    静态扫描入口服务。
+
+    职责边界：
+    1. 选择默认 Java scanner，对 CodeScope 中的文件范围执行扫描。
+    2. 将成功扫描结果保存为 artifact，供后续 finding 详情和补丁流程引用。
+    3. 不解析用户输入，也不解释扫描结果；范围解析和 backlog 推进分别由其他服务负责。
     """
 
     def __init__(self, repo_root: Path, artifact_manager: ArtifactManager) -> None:

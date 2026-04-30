@@ -10,7 +10,11 @@ from autopatch_j.scanners.base import JavaScanner
 
 @dataclass(slots=True)
 class SyntaxCheckResult:
-    """Java 语法校验结果模型"""
+    """
+    Java 语法检查结果。
+
+    status 表示 ok/error/skipped/unavailable，errors 保存 Tree-sitter 定位到的语法问题。
+    """
     status: str
     message: str
     errors: list[str] = field(default_factory=list)
@@ -18,7 +22,11 @@ class SyntaxCheckResult:
 
 @dataclass(slots=True)
 class VerificationResult:
-    """重扫复核结果模型"""
+    """
+    补丁应用后的语义复核结果。
+
+    is_resolved 表示目标 finding 是否消失，remaining_findings 用于提示重扫后剩余问题数量。
+    """
     is_resolved: bool
     message: str
     remaining_findings: int = 0
@@ -26,10 +34,12 @@ class VerificationResult:
 
 class PatchVerifier:
     """
-    补丁质量验证中心 (QA Department & Safeguard)。
-    核心职责：内聚系统所有质量把关能力，形成双重防线：
-    1. 事前防线：生成草案瞬间执行 AST 语法树合法性校验 (Tree-sitter)，防止大模型写出无法编译的代码。
-    2. 事后防线：补丁落盘后执行 Semantic Rescan (扫描器重扫)，确诊目标漏洞 (check_id) 是否真正被消灭。
+    补丁质量验证服务。
+
+    职责边界：
+    1. 草案阶段用 Tree-sitter 做 Java 语法检查。
+    2. apply 后通过扫描器重扫确认目标规则是否消失。
+    3. 不生成补丁、不写文件；补丁生成和落盘分别由 PatchEngine 负责。
     """
 
     def __init__(self, repo_root: Path, scanner: JavaScanner | None) -> None:

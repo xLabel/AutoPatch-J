@@ -10,14 +10,20 @@ if TYPE_CHECKING:
 
 
 class TargetFileNotFoundError(Exception):
+    """补丁目标文件不存在。"""
+
     pass
 
 
 class OldStringNotFoundError(Exception):
+    """old_string 没有在目标文件中精确命中。"""
+
     pass
 
 
 class OldStringNotUniqueError(Exception):
+    """old_string 在目标文件中命中多处，无法安全替换。"""
+
     def __init__(self, occurrences: int):
         self.occurrences = occurrences
         super().__init__(f"old_string matched {occurrences} times.")
@@ -25,7 +31,11 @@ class OldStringNotUniqueError(Exception):
 
 @dataclass(slots=True)
 class PatchDraft:
-    """补丁草案的数据模型。"""
+    """
+    内存中的补丁草案。
+
+    保存 search-replace 输入、diff、验证结果和关联 finding 信息；进入 workspace 前会转换为 PatchDraftData。
+    """
 
     file_path: str
     old_string: str
@@ -43,11 +53,12 @@ class PatchDraft:
 
 class PatchEngine:
     """
-    核心物理补丁引擎 (Search-Replace Engine)。
-    核心职责：绝对纯粹的文本操作引擎，不理解业务逻辑。
-    1. 基于精确字符串匹配 (old_string -> new_string) 在内存中生成 Unified Diff 差异。
-    2. 处理用户输入 apply 指令时的安全落盘写入。
-    （语法树相关的保护由 PatchVerifier 负责，以保持职责单一）
+    精确字符串替换补丁引擎。
+
+    职责边界：
+    1. 基于 old_string/new_string 生成内存草案和 unified diff。
+    2. 在用户确认 apply 后按原文件换行风格安全写回磁盘。
+    3. 不判断修复是否正确，也不做语法/语义校验；这些由 PatchVerifier 负责。
     """
 
     def __init__(self, repo_root: Path) -> None:

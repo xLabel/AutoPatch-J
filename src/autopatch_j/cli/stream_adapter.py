@@ -11,6 +11,12 @@ from autopatch_j.core.workspace_manager import WorkspaceManager
 
 @dataclass(slots=True)
 class ReActDisplayPolicy:
+    """
+    ReAct 过程在 CLI 中的展示策略。
+
+    debug 模式下展示完整思考链和工具输出；普通模式下折叠为状态提示，避免 CLI 噪音过大。
+    """
+
     debug_mode: bool
     force_compact_observation: bool = False
 
@@ -24,6 +30,12 @@ class ReActDisplayPolicy:
 
 
 class _StreamExecution:
+    """
+    单次 Agent 调用期间的流式渲染状态。
+
+    该类只在 StreamAdapter 内部使用，负责把 token、reasoning、tool start 和 observation 事件转成 renderer 调用。
+    """
+
     def __init__(self, stream: StreamAdapter, policy: ReActDisplayPolicy) -> None:
         self.stream = stream
         self.renderer = stream.renderer
@@ -77,10 +89,12 @@ class _StreamExecution:
 
 class StreamAdapter:
     """
-    流式事件渲染适配器 (Stream-to-CLI Adapter)。
-    核心职责：桥接大模型的底层吐字流与 Rich 终端 UI。
-    将 LLM 的流式文本 (Tokens)、长思考链 (Reasoning) 以及工具调用流 (Tool Calls)，
-    平滑且美观地转化为终端上的高语义化反馈（如：暗色滚动的思考过程、精简折叠的工具输出总结），有效缓解用户等待焦虑。
+    Agent 流式事件到 CLI 输出的适配器。
+
+    职责边界：
+    1. 把 LLM token、reasoning、Tool Call 和 observation 转换为终端展示。
+    2. 根据 debug 模式决定展示完整过程还是折叠状态。
+    3. 不参与 ReAct 决策、不执行工具，也不改变补丁队列；它只负责展示和最终回答过滤。
     """
 
     def __init__(

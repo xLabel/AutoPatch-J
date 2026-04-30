@@ -7,8 +7,10 @@ from autopatch_j.tools.patch_draft_builder import build_patch_draft
 
 class PatchProposalTool(Tool):
     """
-    补丁提案工具 (Adapter Layer)
-    职责：基于 search-replace 逻辑生成补丁草案，不直接修改磁盘文件。
+    新补丁起草工具。
+
+    用 search-replace 输入生成单个 PatchDraft，并暂存在本轮 AgentSession；
+    ReAct 成功结束后由 workflow 统一确认入队，工具本身不写磁盘、不直接改队列。
     """
 
     name = "propose_patch"

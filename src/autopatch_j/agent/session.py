@@ -18,11 +18,12 @@ if TYPE_CHECKING:
 @dataclass
 class AgentSession:
     """
-    Agent 会话上下文 (Context Carrier)。
-    核心职责：
-    1. 隔离状态与执行逻辑，所有 Tool 均通过挂载此 Session 获取底层服务能力。
-    2. 维护对话的焦点约束 (focus_paths)。
-    3. 记录动作指纹 (action_history)，用于触发防死循环断路器 (Loop Breaker)。
+    Agent 和 Tool 共享的执行上下文。
+
+    职责边界：
+    1. 向 Tool 暴露 repo、artifact、workspace、索引、补丁和代码读取等底层能力。
+    2. 保存单次或短期任务状态，如 focus_paths、源码读取缓存、待提交/待修订补丁草案。
+    3. 不负责持久化 workspace，也不决定业务流程是否成功；这些由 Workflow/WorkspaceManager 处理。
     """
     repo_root: Path
     artifact_manager: ArtifactManager
