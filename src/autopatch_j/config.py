@@ -42,7 +42,7 @@ class AppConfig:
     """全局配置中心：统一管理 LLM、扫描器和路径相关配置。"""
 
     # LLM 配置
-    # LLM_API_KEY 和 LLM_BASE_URL 必填；LLM_BASE_URL 使用 OpenAI 兼容地址。
+    # AUTOPATCH_LLM_API_KEY 和 AUTOPATCH_LLM_BASE_URL 必填；AUTOPATCH_LLM_BASE_URL 使用 OpenAI 兼容地址。
     llm_api_key: str
     llm_base_url: str
 
@@ -72,12 +72,12 @@ class AppConfig:
     @classmethod
     def from_env(cls) -> "AppConfig":
         return cls(
-            llm_api_key = os.getenv("LLM_API_KEY", ""),
-            llm_base_url = os.getenv("LLM_BASE_URL", "https://api.deepseek.com").rstrip("/"),
-            llm_model = os.getenv("LLM_MODEL", "deepseek-v4-flash"),
-            llm_reasoning_effort = os.getenv("LLM_REASONING_EFFORT"),
-            llm_extra_body = os.getenv("LLM_EXTRA_BODY", "{}"),
-            llm_stream_dialect = os.getenv("LLM_STREAM_DIALECT", "standard"),
+            llm_api_key = os.getenv("AUTOPATCH_LLM_API_KEY", ""),
+            llm_base_url = os.getenv("AUTOPATCH_LLM_BASE_URL", "https://api.deepseek.com").rstrip("/"),
+            llm_model = os.getenv("AUTOPATCH_LLM_MODEL", "deepseek-v4-flash"),
+            llm_reasoning_effort = os.getenv("AUTOPATCH_LLM_REASONING_EFFORT"),
+            llm_extra_body = os.getenv("AUTOPATCH_LLM_EXTRA_BODY", "{}"),
+            llm_stream_dialect = os.getenv("AUTOPATCH_LLM_STREAM_DIALECT", "standard"),
             debug_mode = os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true",
             semgrep_version = "1.160.0",
             semgrep_install_lock_timeout = 600,
@@ -92,9 +92,9 @@ class AppConfig:
         """获取配置指引"""
         return (
             "LLM 核心配置缺失。请确保已设置以下环境变量：\n"
-            "1. LLM_API_KEY\n"
-            "2. LLM_BASE_URL\n"
-            f"3. LLM_MODEL (可选，默认 {self.llm_model})"
+            "1. AUTOPATCH_LLM_API_KEY\n"
+            "2. AUTOPATCH_LLM_BASE_URL\n"
+            f"3. AUTOPATCH_LLM_MODEL (可选，默认 {self.llm_model})"
         )
 
 

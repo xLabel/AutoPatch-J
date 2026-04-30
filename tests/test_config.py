@@ -4,9 +4,9 @@ from autopatch_j.config import AppConfig
 
 
 def test_app_config_reads_llm_environment(monkeypatch) -> None:
-    monkeypatch.setenv("LLM_API_KEY", "key")
-    monkeypatch.setenv("LLM_BASE_URL", "https://example.com/v1/")
-    monkeypatch.setenv("LLM_MODEL", "custom-model")
+    monkeypatch.setenv("AUTOPATCH_LLM_API_KEY", "key")
+    monkeypatch.setenv("AUTOPATCH_LLM_BASE_URL", "https://example.com/v1/")
+    monkeypatch.setenv("AUTOPATCH_LLM_MODEL", "custom-model")
     monkeypatch.setenv("AUTOPATCH_DEBUG", "true")
 
     config = AppConfig.from_env()
@@ -19,9 +19,9 @@ def test_app_config_reads_llm_environment(monkeypatch) -> None:
 
 
 def test_app_config_uses_defaults_and_isolates_ignored_dirs(monkeypatch) -> None:
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("LLM_BASE_URL", raising=False)
-    monkeypatch.delenv("LLM_MODEL", raising=False)
+    monkeypatch.delenv("AUTOPATCH_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("AUTOPATCH_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("AUTOPATCH_LLM_MODEL", raising=False)
     monkeypatch.delenv("AUTOPATCH_DEBUG", raising=False)
 
     first = AppConfig.from_env()

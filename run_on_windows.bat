@@ -24,8 +24,8 @@ echo [DEPENDENCY] Syncing project dependencies from pyproject.toml...
 "%ROOT_DIR%.venv\Scripts\python.exe" -m pip install --quiet -e "%ROOT_DIR%."
 
 :: 5. 校验系统环境变量 (Guidance)
-if "%LLM_API_KEY%"=="" (
-    echo [ERROR] LLM_API_KEY is not set in your system environment variables.
+if "%AUTOPATCH_LLM_API_KEY%"=="" (
+    echo [ERROR] AUTOPATCH_LLM_API_KEY is not set in your system environment variables.
     echo Please set it in: System Properties -> Environment Variables.
     pause
     exit /b 1

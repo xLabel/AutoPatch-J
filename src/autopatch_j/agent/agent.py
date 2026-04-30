@@ -244,7 +244,7 @@ class Agent:
         on_tool_start: ToolCallback | None,
     ) -> str:
         if not self.llm:
-            return "LLM 配置缺失。请设置 LLM_API_KEY 后重启。"
+            return "LLM 配置缺失。请设置 AUTOPATCH_LLM_API_KEY 后重启。"
 
         self.messages.append({"role": "user", "content": user_text})
         extra_body = self._build_llm_extra_body()

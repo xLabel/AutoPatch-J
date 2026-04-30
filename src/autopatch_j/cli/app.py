@@ -181,11 +181,11 @@ class CLI:
             except Exception as exc:
                 error_message = str(exc)
                 if "401" in error_message or "AuthenticationError" in error_message:
-                    self.renderer.print_error("LLM 认证失败 (401)，请检查 LLM_API_KEY。")
+                    self.renderer.print_error("LLM 认证失败 (401)，请检查 AUTOPATCH_LLM_API_KEY。")
                 elif "403" in error_message or "AccessDenied" in error_message:
                     self.renderer.print_error("LLM 模型无访问权限 (403)，请检查模型权限或账户余额。")
                 elif "404" in error_message or "NotFoundError" in error_message:
-                    self.renderer.print_error("LLM 接口未找到 (404)，请检查 LLM_BASE_URL 或 LLM_MODEL。")
+                    self.renderer.print_error("LLM 接口未找到 (404)，请检查 AUTOPATCH_LLM_BASE_URL 或 AUTOPATCH_LLM_MODEL。")
                 else:
                     self.renderer.print_error(f"指令执行异常: {error_message}")
 
