@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 
-from autopatch_j.core.finding_snippet_service import FindingSnippetService
 from autopatch_j.tools.base import Tool, ToolResult
 
 
@@ -63,7 +62,7 @@ class FindingRetrieverTool(Tool):
                 summary=f"取证越界: {finding.path}",
             )
 
-        finding.snippet = FindingSnippetService(self.context.repo_root).fetch_resolved_snippet(
+        finding.snippet = self.context.code_fetcher.fetch_resolved_snippet(
             file_path=finding.path,
             start_line=finding.start_line,
             end_line=finding.end_line,

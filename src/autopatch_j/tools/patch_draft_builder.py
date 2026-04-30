@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from autopatch_j.core.finding_snippet_service import FindingSnippetService
 from autopatch_j.core.patch_engine import (
     OldStringNotFoundError,
     OldStringNotUniqueError,
@@ -47,7 +46,7 @@ def build_patch_draft(
         )
         if finding is not None:
             target_rule = finding.check_id
-            target_snippet = FindingSnippetService(context.repo_root).fetch_resolved_snippet(
+            target_snippet = context.code_fetcher.fetch_resolved_snippet(
                 file_path=finding.path,
                 start_line=finding.start_line,
                 end_line=finding.end_line,

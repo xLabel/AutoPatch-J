@@ -83,6 +83,24 @@ class CodeFetcher:
         end_index = min(len(lines), end_line)
         return "\n".join(lines[start_index:end_index])
 
+    def fetch_resolved_snippet(
+        self,
+        file_path: str,
+        start_line: int,
+        end_line: int,
+        fallback_snippet: str | None = None,
+    ) -> str:
+        """
+        根据 finding 坐标回源提取稳定证据片段；源文件不可用时回退到扫描器快照。
+        """
+        normalized_path = file_path.replace("\\", "/").strip()
+        safe_start_line = max(1, start_line)
+        safe_end_line = max(safe_start_line, end_line)
+        snippet = self.fetch_lines(normalized_path, safe_start_line, safe_end_line).strip()
+        if snippet:
+            return snippet
+        return (fallback_snippet or "").strip()
+
     def _extract_symbol_block(self, content: str, start_line: int) -> str:
         """尝试用 Tree-sitter 提取完整语法块，失败时退化到固定行窗。"""
         self.last_extract_mode = "full"
