@@ -446,7 +446,17 @@ def test_general_chat_does_not_print_chat_anchors(cli: CLI) -> None:
     cli.renderer.print_user_anchor.assert_not_called()
 
 
-def test_reset_clears_memory(cli: CLI) -> None:
+def test_reset_clears_project_state_and_requires_reinit(cli: CLI) -> None:
+    state_dir = cli.repo_root / ".autopatch-j"
+    findings_dir = state_dir / "findings"
+    runtime_dir = state_dir / "runtime" / "semgrep"
+    findings_dir.mkdir(parents=True, exist_ok=True)
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "workspace.json").write_text("{}", encoding="utf-8")
+    (state_dir / "memory.json").write_text("{}", encoding="utf-8")
+    (state_dir / "history.txt").write_text("/status\n", encoding="utf-8")
+    (findings_dir / "scan-demo.json").write_text("{}", encoding="utf-8")
+    (runtime_dir / "cache.txt").write_text("cache", encoding="utf-8")
     cli.agent.session.append_memory_turn(
         intent=IntentType.GENERAL_CHAT,
         user_text="Java Optional 怎么用",
@@ -455,8 +465,12 @@ def test_reset_clears_memory(cli: CLI) -> None:
 
     cli.command_controller.handle_reset()
 
-    memory = cli.agent.session.memory_manager.load()
-    assert memory["working_memory"]["recent_turns"] == []
+    assert state_dir.exists()
+    assert list(state_dir.iterdir()) == []
+    assert cli.agent is None
+    assert cli.workspace_manager is None
+    assert cli.symbol_indexer is None
+    cli.renderer.print_success.assert_called_once_with("项目状态已重置，请执行 /init 重新初始化。")
 
 
 def test_handle_chat_maps_pending_code_explain_without_scope_to_patch_explain(cli: CLI) -> None:

@@ -90,6 +90,33 @@ class CLI:
         if self.agent is not None:
             self.agent.reset_history()
 
+    def _reset_project_state(self) -> None:
+        if self.agent is not None:
+            self.agent.reset_history(clear_memory=True)
+        if self.artifact_manager is not None:
+            self.artifact_manager.clear_project_state()
+        self._clear_project_services()
+        self.is_first_run = True
+
+    def _clear_project_services(self) -> None:
+        self.artifact_manager = None
+        self.symbol_indexer = None
+        self.patch_engine = None
+        self.code_fetcher = None
+        self.patch_verifier = None
+        self.intent_detector = None
+        self.conversation_router = None
+        self.backlog_manager = None
+        self.chat_filter = None
+        self.scope_service = None
+        self.scanner_runner = None
+        self.workspace_manager = None
+        self.agent = None
+        self.services = None
+        self.context_summary = None
+        self.workflow_controller = None
+        self.stream_adapter = None
+
     def _finalize_cli_exit(self, message: str | None = None) -> None:
         self._reset_agent_session()
         if message:
@@ -163,6 +190,10 @@ class CLI:
 
                 if user_input.startswith("/"):
                     self.command_controller.handle_command(user_input)
+                    continue
+
+                if self.workflow_controller is None:
+                    self.renderer.print_error("系统未初始化，请先执行 /init")
                     continue
 
                 if current_item is not None:

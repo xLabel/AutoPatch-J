@@ -30,6 +30,7 @@ class CommandControllerContext(Protocol):
     renderer: Any
 
     def _init_services(self, repo_root: Path) -> None: ...
+    def _reset_project_state(self) -> None: ...
     def request_exit(self, message: str | None = None) -> None: ...
 
 
@@ -93,11 +94,8 @@ class CliCommandController:
         self.context.renderer.console.print(act_table)
 
     def handle_reset(self) -> None:
-        if self.context.workspace_manager is not None:
-            self.context.workspace_manager.clear_workspace()
-        if hasattr(self.context, 'agent') and getattr(self.context, 'agent') is not None:
-            self.context.agent.reset_history(clear_memory=True)
-        self.context.renderer.print_success("工作台与上下文已重置为初始状态。")
+        self.context._reset_project_state()
+        self.context.renderer.print_success("项目状态已重置，请执行 /init 重新初始化。")
 
     def handle_scanners(self) -> None:
         table = Table(title="扫描器状态", show_header=True, header_style=f"bold {SYSTEM_STYLE}")
