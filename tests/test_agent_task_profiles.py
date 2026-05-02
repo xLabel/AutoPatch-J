@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 from autopatch_j.agent.agent import Agent
 from autopatch_j.llm.client import LLMClient, LLMResponse
+from autopatch_j.llm.dialect import ToolCall
 from autopatch_j.agent.prompts import (
     build_code_explain_user_prompt,
     build_patch_explain_user_prompt,
@@ -25,6 +26,7 @@ from autopatch_j.core.memory import MemoryManager
 from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.tools.base import ToolResult
 
 
 def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
@@ -258,6 +260,44 @@ def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:
 
     assert response == "chat answer"
     assert _fetch_tool_names(mock_llm) == []
+
+
+def test_react_loop_blocks_repeated_no_progress_tool_calls(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.side_effect = [
+        LLMResponse(
+            content="",
+            tool_calls=[
+                ToolCall(
+                    name="read_source_code",
+                    arguments={"path": "src/main/java/demo/User.java"},
+                    call_id=f"call-{index}",
+                )
+            ],
+        )
+        for index in range(3)
+    ]
+    agent = _build_agent(tmp_path, mock_llm)
+    agent.available_tools["read_source_code"].execute = MagicMock(
+        return_value=ToolResult(
+            status="ok",
+            message="源码内容",
+            summary="已读取源代码: src/main/java/demo/User.java",
+        )
+    )
+    observations: list[tuple[str, str]] = []
+
+    answer = agent.perform_code_explain(
+        "@User.java explain code",
+        scope=None,
+        allow_symbol_search=False,
+        on_observation=lambda message, summary: observations.append((message, summary)),
+    )
+
+    assert "工具调用无进展" in answer
+    assert "连续 3 次重复" in answer
+    assert mock_llm.chat.call_count == 3
+    assert observations[-1][1] == "工具调用无进展，已阻断"
 
 
 def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_path: Path) -> None:

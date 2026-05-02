@@ -15,6 +15,7 @@ from autopatch_j.agent.prompts import (
     build_patch_revise_user_prompt,
     build_zero_finding_review_user_prompt,
 )
+from autopatch_j.agent.progress_guard import ReactProgressGuard, build_react_step_trace
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.core.models import IntentType, AuditFindingItem, CodeScope, CodeScopeKind, PatchReviewItem
 from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
@@ -327,6 +328,7 @@ class Agent:
             return "LLM 配置缺失。请设置 AUTOPATCH_LLM_API_KEY 后重启。"
 
         self.messages.append({"role": "user", "content": user_text})
+        progress_guard = ReactProgressGuard()
 
         for _ in range(10):
             processed_messages = self.message_adapter.dehydrate_history(self.messages, system_prompt)
@@ -355,14 +357,6 @@ class Agent:
             if not response.tool_calls:
                 return response.content
 
-            fingerprint = "|".join([f"{call.name}:{call.raw_arguments}" for call in response.tool_calls])
-            self.session.record_action(fingerprint)
-            if self.session.is_stuck_in_loop():
-                stuck_message = "检测到大模型陷入死循环（连续 3 次执行相同的不合法操作），已主动阻断以节省成本。请人工介入审查。"
-                if on_observation:
-                    on_observation(stuck_message, "陷入死循环被阻断")
-                return stuck_message
-
             for call in response.tool_calls:
                 if on_tool_start:
                     on_tool_start(call.name)
@@ -379,6 +373,12 @@ class Agent:
                         "tool_payload": observation.payload,
                     }
                 )
+                guard_result = progress_guard.record(build_react_step_trace(call, observation))
+                if guard_result.blocked:
+                    stuck_message = f"检测到工具调用无进展：{guard_result.reason}。已主动停止，请人工介入审查。"
+                    if on_observation:
+                        on_observation(stuck_message, "工具调用无进展，已阻断")
+                    return stuck_message
 
         return "已达推理上限，请审阅当前结果。"
 

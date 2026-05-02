@@ -41,7 +41,6 @@ class AgentSession:
     proposed_patch_draft: PatchDraft | None = None
     revised_patch_draft: PatchDraft | None = None
     code_explain_allow_symbol_search: bool = True
-    action_history: list[str] = field(default_factory=list)
 
     def set_focus_paths(self, paths: list[str] | None) -> None:
         normalized: list[str] = []
@@ -92,16 +91,6 @@ class AgentSession:
         self.revised_patch_draft = None
         return draft
 
-    def record_action(self, action_fingerprint: str) -> None:
-        self.action_history.append(action_fingerprint)
-        if len(self.action_history) > 10:
-            self.action_history.pop(0)
-
-    def is_stuck_in_loop(self) -> bool:
-        if len(self.action_history) >= 3:
-            return self.action_history[-1] == self.action_history[-2] == self.action_history[-3]
-        return False
-
     def build_memory_context(
         self,
         intent: IntentType,
@@ -135,4 +124,3 @@ class AgentSession:
         self.code_explain_allow_symbol_search = True
         if clear_memory and self.memory_manager is not None:
             self.memory_manager.clear()
-        self.action_history.clear()
