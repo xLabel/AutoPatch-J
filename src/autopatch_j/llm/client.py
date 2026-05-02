@@ -14,6 +14,7 @@ class LLMCallPurpose(Enum):
 
     REACT = auto()
     CLASSIFIER = auto()
+    MEMORY_SUMMARY = auto()
 
 
 class LLMReasoningMode(Enum):
@@ -42,6 +43,12 @@ _PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
         stream=False,
         reasoning=LLMReasoningMode.DISABLED,
         max_tokens=128,
+        temperature=0,
+    ),
+    LLMCallPurpose.MEMORY_SUMMARY: LLMRequestOptions(
+        stream=False,
+        reasoning=LLMReasoningMode.DISABLED,
+        max_tokens=1200,
         temperature=0,
     ),
 }

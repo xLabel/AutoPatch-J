@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from autopatch_j.config import GlobalConfig
-from autopatch_j.agent.llm_client import LLMCallPurpose, LLMClient
+from autopatch_j.llm.client import LLMCallPurpose, LLMClient
 
 
 def _chunk(
@@ -158,6 +158,36 @@ def test_classifier_purpose_uses_non_stream_response_without_reasoning_effort() 
     }
     assert response.content == "code_audit"
     assert response.reasoning_content == "hidden reasoning"
+
+
+def test_memory_summary_purpose_uses_short_non_stream_response() -> None:
+    client = LLMClient(
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+        model="test-model",
+        reasoning_effort="high",
+    )
+    client.client = MagicMock()
+    client.client.chat.completions.create.return_value = _non_stream_response(
+        content='{"turn_summaries": []}',
+    )
+
+    response = client.chat(
+        messages=[{"role": "user", "content": "summarize memory"}],
+        tools=None,
+        purpose=LLMCallPurpose.MEMORY_SUMMARY,
+    )
+
+    kwargs = client.client.chat.completions.create.call_args.kwargs
+    assert kwargs["stream"] is False
+    assert kwargs["max_tokens"] == 1200
+    assert kwargs["temperature"] == 0
+    assert "reasoning_effort" not in kwargs
+    assert kwargs["extra_body"] == {
+        "thinking": {"type": "disabled"},
+        "enable_thinking": False,
+    }
+    assert response.content == '{"turn_summaries": []}'
 
 
 def test_classifier_purpose_retries_without_disabled_thinking_when_unsupported() -> None:

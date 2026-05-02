@@ -8,7 +8,7 @@ from typing import Any, Callable
 from prompt_toolkit import HTML, PromptSession
 
 from autopatch_j.agent.agent import Agent
-from autopatch_j.agent.llm_client import build_default_llm_client
+from autopatch_j.llm.client import build_default_llm_client
 from autopatch_j.cli.command_controller import CliCommandController
 from autopatch_j.cli.input_controller import CliInputController
 from autopatch_j.cli.render import (
@@ -224,6 +224,10 @@ class CLI:
     def _build_static_scan_summary(self) -> str:
         assert self.context_summary is not None
         return self.context_summary.build_static_scan_summary()
+
+    def _build_project_explain_context(self, scope: CodeScope) -> str:
+        assert self.context_summary is not None
+        return self.context_summary.build_project_explain_context(scope)
 
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
         assert self.context_summary is not None

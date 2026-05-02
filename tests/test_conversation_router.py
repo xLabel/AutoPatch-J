@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.agent.llm_client import LLMCallPurpose
+from autopatch_j.llm.client import LLMCallPurpose
 from autopatch_j.core.input_classifier import ConversationRouter
 from autopatch_j.core.models import CodeScope, CodeScopeKind, ConversationRoute
 

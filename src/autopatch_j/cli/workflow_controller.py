@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from autopatch_j.core.models import (
     AuditAttemptOutcome,
     CodeScope,
+    CodeScopeKind,
     ConversationRoute,
     IntentType,
     PatchReviewItem,
@@ -52,6 +53,7 @@ class WorkflowControllerContext(Protocol):
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]: ...
     def _build_static_scan_summary(self) -> str: ...
     def _build_local_no_issue_summary(self) -> str: ...
+    def _build_project_explain_context(self, scope: CodeScope) -> str: ...
 
 
 class CliWorkflowController:
@@ -334,25 +336,34 @@ class CliWorkflowController:
         assert self.context.agent is not None
         assert self.context.chat_filter is not None
 
-        scope = self.context.scope_service.fetch_scope(text, default_to_project=False)
+        scope = self.context.scope_service.fetch_scope(text, default_to_project=True)
         compact_observation = not GlobalConfig.debug_mode
-        self.context.renderer.print_user_anchor(text)
-        if scope is not None and scope.is_locked:
-            self.context.agent.session.set_focus_paths(scope.focus_files)
+
+        if scope is not None:
+            if not scope.focus_files:
+                self.context.renderer.print_agent_text("当前项目缺少可解释的 Java 源码范围。")
+                return
+            focus_paths = scope.focus_files if scope.is_locked else []
+            self.context.agent.session.set_focus_paths(focus_paths)
             allow_symbol_search = scope.kind.value != "single_file"
             self.context.agent.session.code_explain_allow_symbol_search = allow_symbol_search
+            project_context = (
+                self.context._build_project_explain_context(scope)
+                if scope.kind is CodeScopeKind.PROJECT
+                else None
+            )
             self.context._run_agent_request(
                 prompt=text,
                 agent_call=lambda p, **kwargs: self.context.agent.perform_code_explain(
                     raw_user_text=text,
                     scope=scope,
+                    project_context=project_context,
                     allow_symbol_search=allow_symbol_search,
                     **kwargs
                 ),
                 compact_observation=compact_observation,
                 answer_intent=IntentType.CODE_EXPLAIN,
                 raw_user_text=text,
-                show_chat_anchors=True,
                 plain_answer=True,
             )
             return
@@ -368,14 +379,12 @@ class CliWorkflowController:
             compact_observation=compact_observation,
             answer_intent=IntentType.GENERAL_CHAT,
             raw_user_text=text,
-            show_chat_anchors=True,
             plain_answer=True,
         )
 
     def handle_general_chat(self, text: str) -> None:
         assert self.context.agent is not None
         assert self.context.chat_filter is not None
-        self.context.renderer.print_user_anchor(text)
         
         self.context.agent.session.set_focus_paths([])
         self.context._run_agent_request(
@@ -387,7 +396,6 @@ class CliWorkflowController:
             compact_observation=not GlobalConfig.debug_mode,
             answer_intent=IntentType.GENERAL_CHAT,
             raw_user_text=text,
-            show_chat_anchors=True,
             plain_answer=True,
         )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autopatch_j.agent.llm_client import LLMCallPurpose
+from autopatch_j.llm.client import LLMCallPurpose
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.input_classifier import (
@@ -92,6 +92,8 @@ def test_llm_intent_classifier_maps_response_to_intent() -> None:
     assert classifier("change this patch", True) is IntentType.PATCH_REVISE
     assert llm.messages is not None
     assert "has_pending_review: true" in llm.messages[1]["content"]
+    assert "当前项目、仓库、模块、目录" in llm.messages[1]["content"]
+    assert "Java 语法、算法题" in llm.messages[1]["content"]
     assert llm.kwargs == {
         "tools": None,
         "purpose": LLMCallPurpose.CLASSIFIER,

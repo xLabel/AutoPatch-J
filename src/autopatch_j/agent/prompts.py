@@ -7,6 +7,12 @@ BASE_SYSTEM_PROMPT = """你是 AutoPatch-J 的代码修复智能体。
 你必须遵守当前任务类型、工具白名单和焦点文件约束。
 当前目标代码默认是 Java；除非上下文明确显示其他语言，否则请按 Java 语义、JDK 标准库行为和 Java 工程实践进行审计、解释与补丁设计。"""
 
+ORDINARY_CHAT_STYLE_PROMPT = (
+    "普通问答风格契约：你面对的是同一个 CLI 用户，回答应像同一个助手。"
+    "默认使用简洁中文直接回答，不要自我角色声明，不要模拟聊天室寒暄，不要输出 Markdown 标题或长篇报告。"
+    "如果提供了普通问答记忆，只在当前问题相关时引用；记忆不是代码事实来源，涉及项目代码时必须以当前项目上下文或工具读取结果为准。"
+)
+
 TASK_PROMPTS: dict[IntentType, str] = {
     IntentType.CODE_AUDIT: (
         "当前任务是 code_audit。请围绕已经给定的扫描结果做甄别、取证和补丁提案。"
@@ -16,12 +22,12 @@ TASK_PROMPTS: dict[IntentType, str] = {
     ),
     IntentType.CODE_EXPLAIN: (
         "当前任务是 code_explain。你的职责是解释代码，不做扫描，不提出补丁。"
-        "默认用 2 到 4 句纯文本短答，不要输出 Markdown 标题、教程式大纲或长篇报告。"
+        "你可以在工具白名单允许范围内查符号和读取少量源码来回答。"
     ),
     IntentType.GENERAL_CHAT: (
-        "当前任务是 general_chat。你是一个严谨的 Java 开发专家。"
-        "如果用户询问与编程、代码库、架构或软件工程完全无关的话题，请委婉但坚决地拒绝回答（例如明确告知'我只处理代码与工程相关问题'）。"
-        "默认用 1 到 3 段纯文本短答，不要输出 Markdown 标题、教程式编号大纲或长篇模板化内容。"
+        "当前任务是 general_chat。请回答 Java、算法、调试、架构、工具和软件工程相关问题。"
+        "如果用户询问与编程、代码库、架构或软件工程无关的话题，只用一句话说明你只处理代码与工程相关问题。"
+        "本任务不读取项目代码、不调用工具；如果问题需要查看当前项目，请建议用户指出范围或改问项目代码问题。"
     ),
     IntentType.PATCH_EXPLAIN: (
         "当前任务是 patch_explain。你只解释当前待确认补丁，不修改补丁，不调用修订工具。"
@@ -58,18 +64,24 @@ def build_task_system_prompt(
     pending_file: str | None,
     last_scan: str | None,
     focus_paths: list[str] | None = None,
+    memory_context: str | None = None,
 ) -> str:
-    return "\n\n".join(
-        [
-            BASE_SYSTEM_PROMPT,
-            TASK_PROMPTS[intent],
-            build_workbench_prompt(
-                pending_file=pending_file,
-                last_scan=last_scan,
-                focus_paths=focus_paths,
-            ),
-        ]
+    parts = [
+        BASE_SYSTEM_PROMPT,
+        TASK_PROMPTS[intent],
+    ]
+    if intent in {IntentType.CODE_EXPLAIN, IntentType.GENERAL_CHAT}:
+        parts.append(ORDINARY_CHAT_STYLE_PROMPT)
+        if memory_context:
+            parts.append(f"普通问答记忆（仅在相关时使用）：\n{memory_context}")
+    parts.append(
+        build_workbench_prompt(
+            pending_file=pending_file,
+            last_scan=last_scan,
+            focus_paths=focus_paths,
+        )
     )
+    return "\n\n".join(parts)
 
 
 def build_zero_finding_review_system_prompt(
@@ -141,13 +153,31 @@ def build_zero_finding_review_user_prompt(text: str, file_path: str) -> str:
         ]
     )
 
-def build_code_explain_user_prompt(text: str, scope: CodeScope) -> str:
+def build_code_explain_user_prompt(
+    text: str,
+    scope: CodeScope,
+    project_context: str | None = None,
+) -> str:
     if scope.kind is CodeScopeKind.SINGLE_FILE:
         return (
             f"当前解释范围仅限文件: {scope.focus_files[0]}\n"
             "请只基于当前文件可见内容解释代码功能，不要主动搜索、读取或推断焦点范围外的类型实现、调用方或配置来源。"
             "如果出现外部类型名，只能基于当前文件里的使用方式做保守说明。"
             "回答默认控制在 2 到 4 句；除非用户明确要求详细展开，否则不要输出分节报告。\n\n"
+            f"用户问题:\n{text}"
+        )
+
+    if scope.kind is CodeScopeKind.PROJECT:
+        listed_files = "\n".join(f"- {path}" for path in scope.focus_files[:80])
+        if len(scope.focus_files) > 80:
+            listed_files += f"\n- ... 其余 {len(scope.focus_files) - 80} 个 Java 文件已省略"
+        return (
+            "当前任务是项目级代码讲解。请基于项目结构、索引和少量必要源码证据回答，不要触发扫描，不要提出补丁。"
+            "回答默认控制在 3 到 6 行，优先说明项目用途推断、主要结构、关键类线索和判断依据。"
+            "如果信息不足，必须说明只能根据当前文件结构和可见源码推断。"
+            "最近扫描 ID（如 scan-xxxx）只是扫描记录，不是项目名称或项目描述。\n\n"
+            f"{project_context or ''}\n"
+            f"项目 Java 文件清单:\n{listed_files or '- 无 Java 文件'}\n\n"
             f"用户问题:\n{text}"
         )
 

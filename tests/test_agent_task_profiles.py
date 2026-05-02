@@ -3,15 +3,27 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import Agent
-from autopatch_j.agent.llm_client import LLMClient, LLMResponse
-from autopatch_j.agent.prompts import build_patch_explain_user_prompt, build_task_system_prompt
+from autopatch_j.llm.client import LLMClient, LLMResponse
+from autopatch_j.agent.prompts import (
+    build_code_explain_user_prompt,
+    build_patch_explain_user_prompt,
+    build_task_system_prompt,
+)
+from autopatch_j.agent.session import AgentSession
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.models import IntentType, PatchDraftData, PatchReviewItem, PatchReviewStatus
-from autopatch_j.core.symbol_indexer import SymbolIndexer
+from autopatch_j.core.models import (
+    CodeScope,
+    CodeScopeKind,
+    IntentType,
+    PatchDraftData,
+    PatchReviewItem,
+    PatchReviewStatus,
+)
+from autopatch_j.core.memory import MemoryManager
 from autopatch_j.core.patch_engine import PatchEngine
+from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.workspace_manager import WorkspaceManager
 
 
@@ -20,6 +32,7 @@ def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
     (repo_root / "src" / "main" / "java" / "demo").mkdir(parents=True)
     artifact_manager = ArtifactManager(repo_root)
     workspace_manager = WorkspaceManager(artifact_manager)
+    memory_manager = MemoryManager(artifact_manager.state_dir / "memory.json")
     symbol_indexer = SymbolIndexer(repo_root)
     patch_engine = PatchEngine(repo_root)
     code_fetcher = CodeFetcher(repo_root)
@@ -30,9 +43,12 @@ def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
         workspace_manager=workspace_manager,
         symbol_indexer=symbol_indexer,
         patch_engine=patch_engine,
-        code_fetcher=code_fetcher
+        code_fetcher=code_fetcher,
+        memory_manager=memory_manager,
     )
-    return Agent(session=session, llm=mock_llm)
+    agent = Agent(session=session, llm=mock_llm)
+    agent.memory_summary_scheduler = None
+    return agent
 
 
 def _fetch_tool_names(mock_llm: MagicMock) -> list[str]:
@@ -69,6 +85,54 @@ def test_perform_code_explain_disables_symbol_search_in_single_file_mode(tmp_pat
     agent.perform_code_explain("@User.java explain code", scope=None, allow_symbol_search=False)
 
     assert _fetch_tool_names(mock_llm) == ["read_source_code"]
+
+
+def test_memory_is_shared_by_code_explain_and_general_chat(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.side_effect = [
+        LLMResponse(content="这是一个演示项目。"),
+        LLMResponse(content="Optional 用于表达可能为空的值。"),
+        LLMResponse(content="{}"),
+    ]
+    agent = _build_agent(tmp_path, mock_llm)
+    scope = CodeScope(
+        kind=CodeScopeKind.PROJECT,
+        source_roots=["."],
+        focus_files=["src/main/java/demo/Demo.java"],
+        is_locked=False,
+    )
+
+    agent.perform_code_explain("这个项目是干什么的", scope=scope)
+    agent.perform_general_chat("Optional 怎么用")
+
+    second_messages = mock_llm.chat.call_args_list[1].kwargs["messages"]
+    assert "普通问答记忆" in second_messages[0]["content"]
+    assert "这个项目是干什么的" in second_messages[0]["content"]
+
+    memory = agent.session.memory_manager.load()
+    recent_turns = memory["working_memory"]["recent_turns"]
+    assert len(recent_turns) == 2
+    assert recent_turns[0]["intent"] == IntentType.CODE_EXPLAIN.value
+    assert recent_turns[0]["scope_paths"] == ["src/main/java/demo/Demo.java"]
+    assert recent_turns[1]["intent"] == IntentType.GENERAL_CHAT.value
+    assert "Optional" in recent_turns[1]["user_text"]
+
+
+def test_reset_history_keeps_memory_unless_explicitly_cleared(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="chat answer")
+    agent = _build_agent(tmp_path, mock_llm)
+
+    agent.perform_general_chat("Java Optional 怎么用")
+    agent.reset_history()
+
+    memory = agent.session.memory_manager.load()
+    assert "Java Optional" in memory["working_memory"]["recent_turns"][0]["user_text"]
+
+    agent.reset_history(clear_memory=True)
+
+    memory = agent.session.memory_manager.load()
+    assert memory["working_memory"]["recent_turns"] == []
 
 
 def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> None:
@@ -156,11 +220,33 @@ def test_patch_explain_system_prompt_limits_report_style() -> None:
         intent=IntentType.PATCH_EXPLAIN,
         pending_file="src/main/java/demo/LegacyConfig.java",
         last_scan="scan-1",
+        memory_context="- general_chat; 用户关注: Optional",
     )
 
     assert "控制在 3 到 5 行" in prompt
     assert "不要复述完整 diff" in prompt
     assert "才读取源码补充判断" in prompt
+    assert "普通问答记忆" not in prompt
+
+
+def test_project_code_explain_prompt_uses_lightweight_project_context() -> None:
+    scope = CodeScope(
+        kind=CodeScopeKind.PROJECT,
+        source_roots=["."],
+        focus_files=["src/main/java/demo/App.java", "src/main/java/demo/UserService.java"],
+        is_locked=False,
+    )
+
+    prompt = build_code_explain_user_prompt(
+        "这个项目是干什么的",
+        scope,
+        project_context="项目轻量上下文\n- 项目根目录名: demo-repo",
+    )
+
+    assert "项目级代码讲解" in prompt
+    assert "项目轻量上下文" in prompt
+    assert "scan-xxxx" in prompt
+    assert "src/main/java/demo/App.java" in prompt
 
 
 def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:

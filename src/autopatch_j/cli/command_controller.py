@@ -96,7 +96,7 @@ class CliCommandController:
         if self.context.workspace_manager is not None:
             self.context.workspace_manager.clear_workspace()
         if hasattr(self.context, 'agent') and getattr(self.context, 'agent') is not None:
-            self.context.agent.reset_history()
+            self.context.agent.reset_history(clear_memory=True)
         self.context.renderer.print_success("工作台与上下文已重置为初始状态。")
 
     def handle_scanners(self) -> None:

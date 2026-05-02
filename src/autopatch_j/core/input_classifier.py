@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from autopatch_j.agent.llm_client import LLMCallPurpose, LLMClient
+from autopatch_j.llm.client import LLMCallPurpose, LLMClient
 from autopatch_j.core.models import CodeScope, ConversationRoute, IntentType
 
 
@@ -73,8 +73,10 @@ def build_llm_intent_classifier(llm: Any | None) -> Callable[[str, bool], Intent
                     f"has_pending_review: {str(has_pending_review).lower()}\n"
                     "分类规则：\n"
                     "- 用户要求检查、审查、扫描、发现代码问题：返回 code_audit。\n"
-                    "- 用户要求解释代码、说明实现、讲清楚逻辑：返回 code_explain。\n"
-                    "- 普通闲聊，或与代码任务无关：返回 general_chat。\n"
+                    "- 用户询问当前项目、仓库、模块、目录、代码用途、启动方式、结构或实现逻辑：返回 code_explain。\n"
+                    "- 用户要求解释指定代码、说明实现、讲清楚逻辑：返回 code_explain。\n"
+                    "- 用户询问 Java 语法、算法题、调试方法、架构建议、工具使用或工程常识：返回 general_chat。\n"
+                    "- 与代码和工程无关的普通闲聊：返回 general_chat。\n"
                     "- 当前存在待确认补丁，并且用户询问补丁原因、影响、风险：返回 patch_explain。\n"
                     "- 当前存在待确认补丁，并且用户要求修改、重做、调整补丁：返回 patch_revise。\n"
                     "如果 has_pending_review=false，不允许返回 patch_explain 或 patch_revise。"

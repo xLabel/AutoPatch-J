@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from autopatch_j.agent.agent import Agent
-from autopatch_j.agent.llm_client import LLMClient, build_default_llm_client
+from autopatch_j.llm.client import LLMClient, build_default_llm_client
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.backlog_manager import BacklogManager
@@ -13,6 +13,7 @@ from autopatch_j.core.chat_filter import ChatFilter
 from autopatch_j.core.code_fetcher import CodeFetcher
 from autopatch_j.core.input_classifier import ConversationRouter, IntentDetector, build_llm_intent_classifier
 from autopatch_j.core.models import CodeScope, PatchReviewItem
+from autopatch_j.core.memory import MemoryManager
 from autopatch_j.core.patch_engine import PatchEngine
 from autopatch_j.core.patch_verifier import PatchVerifier
 from autopatch_j.core.scanner_runner import ScannerRunner
@@ -69,6 +70,23 @@ class CliContextSummary:
     def build_static_scan_summary(self) -> str:
         return "当前范围未发现安全或正确性问题。"
 
+    def build_project_explain_context(self, scope: CodeScope) -> str:
+        stats = self.agent.session.symbol_indexer.get_stats()
+        root_dirs = sorted({path.split("/", 1)[0] for path in scope.focus_files if "/" in path})
+        lines = [
+            "项目轻量上下文:",
+            f"- 项目根目录名: {self.repo_root.name}",
+            (
+                f"- 索引统计: 文件 {stats.get('file', 0)}，类 {stats.get('class', 0)}，"
+                f"方法 {stats.get('method', 0)}，总计 {stats.get('total', 0)}"
+            ),
+            f"- 主要顶层目录: {', '.join(root_dirs[:8]) if root_dirs else '无'}",
+        ]
+        metadata = self._read_project_metadata()
+        if metadata:
+            lines.append(metadata)
+        return "\n".join(lines)
+
     def _collect_latest_scan_paths(self) -> list[str]:
         scan_files = sorted(self.artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
@@ -90,6 +108,26 @@ class CliContextSummary:
             if normalized not in resolved:
                 resolved.append(normalized)
         return resolved
+
+    def _read_project_metadata(self) -> str:
+        candidates = ("README_CN.md", "README.md", "pom.xml", "build.gradle", "settings.gradle")
+        snippets: list[str] = []
+        for name in candidates:
+            path = self.repo_root / name
+            if not path.is_file():
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            compact = " ".join(content.split())
+            if compact:
+                snippets.append(f"- {name}: {compact[:500]}")
+            if len(snippets) >= 2:
+                break
+        if not snippets:
+            return ""
+        return "项目说明/构建文件摘录:\n" + "\n".join(snippets)
 
 
 @dataclass(slots=True)
@@ -115,6 +153,7 @@ class CliServices:
     scope_service: ScopeService
     scanner_runner: ScannerRunner
     workspace_manager: WorkspaceManager
+    memory_manager: MemoryManager
     agent: Agent
     summary: CliContextSummary
 
@@ -135,6 +174,7 @@ def build_cli_services(
     scope_service = ScopeService(repo_root, symbol_indexer, ignored_dirs=GlobalConfig.ignored_dirs)
     scanner_runner = ScannerRunner(repo_root, artifact_manager)
     workspace_manager = WorkspaceManager(artifact_manager)
+    memory_manager = MemoryManager(artifact_manager.state_dir / "memory.json")
 
     scanner = get_scanner(DEFAULT_SCANNER_NAME)
     patch_verifier = PatchVerifier(repo_root, scanner) if scanner else None
@@ -147,6 +187,7 @@ def build_cli_services(
         patch_engine=patch_engine,
         code_fetcher=code_fetcher,
         patch_verifier=patch_verifier,
+        memory_manager=memory_manager,
     )
     agent = Agent(session=agent_session, llm=shared_llm)
     summary = CliContextSummary(
@@ -169,6 +210,7 @@ def build_cli_services(
         scope_service=scope_service,
         scanner_runner=scanner_runner,
         workspace_manager=workspace_manager,
+        memory_manager=memory_manager,
         agent=agent,
         summary=summary,
     )

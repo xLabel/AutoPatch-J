@@ -411,6 +411,54 @@ def test_handle_chat_switches_new_task_with_pending_review(cli: CLI) -> None:
     cli.workflow_controller.handle_general_chat.assert_called_once_with("@Foo.java explain code")
 
 
+def test_handle_code_explain_without_scope_uses_project_context(tmp_path: Path) -> None:
+    (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
+    java_dir = tmp_path / "src" / "main" / "java" / "demo"
+    java_dir.mkdir(parents=True)
+    (java_dir / "App.java").write_text("class App {}", encoding="utf-8")
+    cli_obj = CLI(tmp_path)
+    cli_obj.renderer = MagicMock()
+    cli_obj._run_agent_request = MagicMock(return_value=[])
+    cli_obj.agent.perform_code_explain = MagicMock(return_value="项目说明")
+
+    cli_obj.workflow_controller.handle_code_explain("这个项目是干什么的")
+
+    kwargs = cli_obj._run_agent_request.call_args.kwargs
+    assert kwargs["answer_intent"] is IntentType.CODE_EXPLAIN
+    assert kwargs["plain_answer"] is True
+    assert "show_chat_anchors" not in kwargs
+    cli_obj.renderer.print_user_anchor.assert_not_called()
+    kwargs["agent_call"]("prompt")
+    call_kwargs = cli_obj.agent.perform_code_explain.call_args.kwargs
+    assert call_kwargs["scope"].kind is CodeScopeKind.PROJECT
+    assert "项目轻量上下文" in call_kwargs["project_context"]
+
+
+def test_general_chat_does_not_print_chat_anchors(cli: CLI) -> None:
+    cli._run_agent_request = MagicMock(return_value=[])
+
+    cli.workflow_controller.handle_general_chat("leetcode 第一题题解")
+
+    kwargs = cli._run_agent_request.call_args.kwargs
+    assert kwargs["answer_intent"] is IntentType.GENERAL_CHAT
+    assert kwargs["plain_answer"] is True
+    assert "show_chat_anchors" not in kwargs
+    cli.renderer.print_user_anchor.assert_not_called()
+
+
+def test_reset_clears_memory(cli: CLI) -> None:
+    cli.agent.session.append_memory_turn(
+        intent=IntentType.GENERAL_CHAT,
+        user_text="Java Optional 怎么用",
+        answer="Optional answer",
+    )
+
+    cli.command_controller.handle_reset()
+
+    memory = cli.agent.session.memory_manager.load()
+    assert memory["working_memory"]["recent_turns"] == []
+
+
 def test_handle_chat_maps_pending_code_explain_without_scope_to_patch_explain(cli: CLI) -> None:
     workspace = ActiveWorkspace(
         mode=WorkspaceStatus.REVIEWING,

@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from autopatch_j.agent.llm_client import LLMCallPurpose, LLMClient, build_default_llm_client
-from autopatch_j.agent.dialect import ToolCall
+from autopatch_j.llm.client import LLMCallPurpose, LLMClient, build_default_llm_client
+from autopatch_j.llm.dialect import ToolCall
 from autopatch_j.agent.message_adapter import AgentMessageAdapter
 from autopatch_j.agent.prompts import (
     build_task_system_prompt,
@@ -16,7 +16,8 @@ from autopatch_j.agent.prompts import (
     build_zero_finding_review_user_prompt,
 )
 from autopatch_j.agent.session import AgentSession
-from autopatch_j.core.models import IntentType, AuditFindingItem, CodeScope, PatchReviewItem
+from autopatch_j.core.models import IntentType, AuditFindingItem, CodeScope, CodeScopeKind, PatchReviewItem
+from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
 from autopatch_j.tools.base import Tool, ToolResult
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
@@ -123,6 +124,7 @@ class Agent:
         }
         self.messages: list[dict[str, Any]] = []
         self.message_adapter = AgentMessageAdapter(self.available_tools)
+        self.memory_summary_scheduler = self._build_memory_summary_scheduler()
 
     def perform_code_audit(
         self,
@@ -148,6 +150,7 @@ class Agent:
         self,
         raw_user_text: str,
         scope: CodeScope | None,
+        project_context: str | None = None,
         allow_symbol_search: bool | None = None,
         on_token: ToolCallback | None = None,
         on_reasoning: ToolCallback | None = None,
@@ -164,8 +167,8 @@ class Agent:
             if effective_allow_symbol_search
             else self.CODE_EXPLAIN_SINGLE_FILE_PROFILE
         )
-        prompt = build_code_explain_user_prompt(raw_user_text, scope) if scope else raw_user_text
-        return self._run_profile(
+        prompt = build_code_explain_user_prompt(raw_user_text, scope, project_context) if scope else raw_user_text
+        answer = self._run_profile(
             profile=profile,
             user_text=prompt,
             on_token=on_token,
@@ -173,6 +176,17 @@ class Agent:
             on_observation=on_observation,
             on_tool_start=on_tool_start,
         )
+        self.session.append_memory_turn(
+            intent=IntentType.CODE_EXPLAIN,
+            user_text=raw_user_text,
+            answer=answer,
+            scope_paths=scope.focus_files if scope else None,
+        )
+        self._summarize_memory_if_needed(
+            raw_user_text,
+            force_project_code_explain=scope is not None and scope.kind is CodeScopeKind.PROJECT,
+        )
+        return answer
 
     def perform_general_chat(
         self,
@@ -182,7 +196,7 @@ class Agent:
         on_observation: ToolCallback | None = None,
         on_tool_start: ToolCallback | None = None,
     ) -> str:
-        return self._run_profile(
+        answer = self._run_profile(
             profile=self.TASK_PROFILES[IntentType.GENERAL_CHAT],
             user_text=raw_user_text,
             on_token=on_token,
@@ -190,6 +204,13 @@ class Agent:
             on_observation=on_observation,
             on_tool_start=on_tool_start,
         )
+        self.session.append_memory_turn(
+            intent=IntentType.GENERAL_CHAT,
+            user_text=raw_user_text,
+            answer=answer,
+        )
+        self._summarize_memory_if_needed(raw_user_text)
+        return answer
 
     def perform_zero_finding_review(
         self,
@@ -281,7 +302,7 @@ class Agent:
         on_observation: ToolCallback | None,
         on_tool_start: ToolCallback | None,
     ) -> str:
-        system_prompt = self._build_task_system_prompt(profile.intent)
+        system_prompt = self._build_task_system_prompt(profile.intent, user_text)
         return self._run_react_loop(
             user_text=user_text,
             system_prompt=system_prompt,
@@ -375,7 +396,7 @@ class Agent:
         except Exception as exc:
             return ToolResult(status="error", message=f"执行异常：{exc}")
 
-    def _build_task_system_prompt(self, intent: IntentType) -> str:
+    def _build_task_system_prompt(self, intent: IntentType, current_user_text: str = "") -> str:
         pending = self.session.workspace_manager.load_pending_patch()
         last_scan_id = self._fetch_latest_scan_artifact_id()
         return build_task_system_prompt(
@@ -383,6 +404,7 @@ class Agent:
             pending_file=pending.file_path if pending else None,
             last_scan=last_scan_id,
             focus_paths=self.session.focus_paths,
+            memory_context=self.session.build_memory_context(intent, current_user_text),
         )
 
     def _build_zero_finding_review_system_prompt(self) -> str:
@@ -407,9 +429,34 @@ class Agent:
     def _serialize_tool_calls(self, calls: list[ToolCall]) -> list[dict[str, Any]]:
         return self.message_adapter.serialize_tool_calls(calls)
 
-    def reset_history(self) -> None:
+    def _build_memory_summary_scheduler(self) -> MemorySummaryScheduler | None:
+        memory_manager = self.session.memory_manager
+        if self.llm is None or memory_manager is None:
+            return None
+        return MemorySummaryScheduler(
+            memory_manager=memory_manager,
+            llm=self.llm,
+            repo_root=self.session.repo_root,
+        )
+
+    def _summarize_memory_if_needed(
+        self,
+        last_user_text: str,
+        force_project_code_explain: bool = False,
+    ) -> None:
+        if self.memory_summary_scheduler is None or self.session.memory_manager is None:
+            return
+        trigger = self.session.memory_manager.find_summary_trigger(
+            last_user_text=last_user_text,
+            force_project_code_explain=force_project_code_explain,
+        )
+        self.memory_summary_scheduler.submit_if_needed(trigger, last_user_text)
+
+    def reset_history(self, clear_memory: bool = False) -> None:
+        if clear_memory and self.memory_summary_scheduler is not None:
+            self.memory_summary_scheduler.discard_pending_results()
         self.messages = []
-        self.session.clear_cache()
+        self.session.clear_cache(clear_memory=clear_memory)
 
     @property
     def model_label(self) -> str:

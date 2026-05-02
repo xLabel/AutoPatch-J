@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from autopatch_j.agent.dialect import ToolCall
+from autopatch_j.llm.dialect import ToolCall
 from autopatch_j.config import GlobalConfig
 from autopatch_j.tools.base import Tool
 
