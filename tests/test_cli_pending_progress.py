@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from autopatch_j.cli.app import CLI
+from autopatch_j.cli.app import AutoPatchCli
 from autopatch_j.core.models import (
     ActiveWorkspace,
     CodeScope,
@@ -15,9 +15,9 @@ from autopatch_j.core.models import (
 )
 
 
-def _make_cli(tmp_path: Path) -> CLI:
+def _make_cli(tmp_path: Path) -> AutoPatchCli:
     (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
-    return CLI(tmp_path)
+    return AutoPatchCli(tmp_path)
 
 
 def _scope() -> CodeScope:
@@ -61,9 +61,9 @@ def _item(
 
 def test_run_renders_pending_patch_with_absolute_progress(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    assert cli.workspace_manager is not None
+    assert cli.runtime is not None
 
-    cli.workspace_manager.save_workspace(
+    cli.runtime.workspace_manager.save_workspace(
         ActiveWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
@@ -94,7 +94,7 @@ def test_run_renders_pending_patch_with_absolute_progress(tmp_path: Path) -> Non
 
     cli.prompt_session = MagicMock()
     cli.prompt_session.prompt.side_effect = EOFError
-    cli._reset_agent_session = MagicMock()
+    cli.reset_agent_session = MagicMock()
     cli.renderer.print_panel = MagicMock()
     cli.renderer.print = MagicMock()
     cli.renderer.print_diff = MagicMock()
@@ -110,9 +110,9 @@ def test_run_renders_pending_patch_with_absolute_progress(tmp_path: Path) -> Non
 
 def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    assert cli.workspace_manager is not None
+    assert cli.runtime is not None
 
-    cli.workspace_manager.save_workspace(
+    cli.runtime.workspace_manager.save_workspace(
         ActiveWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
@@ -132,7 +132,7 @@ def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
 
     cli.prompt_session = MagicMock()
     cli.prompt_session.prompt.side_effect = EOFError
-    cli._reset_agent_session = MagicMock()
+    cli.reset_agent_session = MagicMock()
     cli.renderer.print_panel = MagicMock()
     cli.renderer.print = MagicMock()
     cli.renderer.print_diff = MagicMock()
@@ -147,10 +147,9 @@ def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
 
 def test_run_retains_pending_patch_on_session_reset(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
-    assert cli.workspace_manager is not None
-    assert cli.agent is not None
+    assert cli.runtime is not None
 
-    cli.workspace_manager.save_workspace(
+    cli.runtime.workspace_manager.save_workspace(
         ActiveWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
@@ -169,18 +168,18 @@ def test_run_retains_pending_patch_on_session_reset(tmp_path: Path) -> None:
 
     cli.prompt_session = MagicMock()
     cli.prompt_session.prompt.side_effect = EOFError
-    cli.agent.messages = [{"role": "user", "content": "pending"}]
+    cli.runtime.agent.messages = [{"role": "user", "content": "pending"}]
     cli.renderer.print_panel = MagicMock()
     cli.renderer.print = MagicMock()
     cli.renderer.print_diff = MagicMock()
     cli.renderer.print_action_panel = MagicMock()
-    real_reset = cli._reset_agent_session
-    cli._reset_agent_session = MagicMock(wraps=real_reset)
+    real_reset = cli.reset_agent_session
+    cli.reset_agent_session = MagicMock(wraps=real_reset)
 
     cli.run()
 
-    assert cli._reset_agent_session.call_count == 2
+    assert cli.reset_agent_session.call_count == 2
     # The workspace should NOT be cleared anymore (Session Persistence)
-    assert cli.workspace_manager.load_pending_patch() is not None
+    assert cli.runtime.workspace_manager.load_pending_patch() is not None
     # Agent history is still reset
-    assert cli.agent.messages == []
+    assert cli.runtime.agent.messages == []

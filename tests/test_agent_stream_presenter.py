@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from autopatch_j.cli.stream_adapter import StreamAdapter
+from autopatch_j.cli.agent_stream_presenter import AgentStreamPresenter
 from autopatch_j.core.models import IntentType
 
 
@@ -32,8 +32,8 @@ class _Agent:
         self.messages = []
 
 
-def _build_stream_adapter(debug_mode: bool, has_pending_patch: bool = False) -> StreamAdapter:
-    return StreamAdapter(
+def _build_agent_stream_presenter(debug_mode: bool, has_pending_patch: bool = False) -> AgentStreamPresenter:
+    return AgentStreamPresenter(
         renderer=MagicMock(),
         workspace_manager=_WorkspaceManager(has_pending_patch),
         chat_filter=_ChatFilter(),
@@ -45,8 +45,8 @@ def _build_stream_adapter(debug_mode: bool, has_pending_patch: bool = False) -> 
     )
 
 
-def test_stream_adapter_compacts_reasoning_and_observation_when_debug_is_off() -> None:
-    stream = _build_stream_adapter(debug_mode=False)
+def test_agent_stream_presenter_compacts_reasoning_and_observation_when_debug_is_off() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=False)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_reasoning("reasoning one")
@@ -63,8 +63,8 @@ def test_stream_adapter_compacts_reasoning_and_observation_when_debug_is_off() -
     stream.renderer.print.assert_not_called()
 
 
-def test_stream_adapter_expands_reasoning_and_observation_when_debug_is_on() -> None:
-    stream = _build_stream_adapter(debug_mode=True)
+def test_agent_stream_presenter_expands_reasoning_and_observation_when_debug_is_on() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=True)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_reasoning("full reasoning")
@@ -80,8 +80,8 @@ def test_stream_adapter_expands_reasoning_and_observation_when_debug_is_on() -> 
     stream.renderer.print.assert_not_called()
 
 
-def test_stream_adapter_renders_patch_explain_answer_with_pending_patch() -> None:
-    stream = _build_stream_adapter(debug_mode=False, has_pending_patch=True)
+def test_agent_stream_presenter_renders_patch_explain_answer_with_pending_patch() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=True)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         return "patch explanation"
@@ -96,8 +96,8 @@ def test_stream_adapter_renders_patch_explain_answer_with_pending_patch() -> Non
     stream.renderer.print.assert_not_called()
 
 
-def test_stream_adapter_suppresses_audit_answer_with_pending_patch() -> None:
-    stream = _build_stream_adapter(debug_mode=False, has_pending_patch=True)
+def test_agent_stream_presenter_suppresses_audit_answer_with_pending_patch() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=True)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         return "audit summary"
@@ -112,8 +112,8 @@ def test_stream_adapter_suppresses_audit_answer_with_pending_patch() -> None:
     stream.renderer.print.assert_not_called()
 
 
-def test_stream_adapter_respects_explicit_suppress_answer_output() -> None:
-    stream = _build_stream_adapter(debug_mode=False, has_pending_patch=False)
+def test_agent_stream_presenter_respects_explicit_suppress_answer_output() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=False)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         return "hidden answer"
@@ -129,8 +129,8 @@ def test_stream_adapter_respects_explicit_suppress_answer_output() -> None:
     stream.renderer.print.assert_not_called()
 
 
-def test_stream_adapter_renders_buffered_answer_as_plain_agent_text() -> None:
-    stream = _build_stream_adapter(debug_mode=True)
+def test_agent_stream_presenter_renders_buffered_answer_as_plain_agent_text() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=True)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_token('**补丁已提交** `MessageDigest.getInstance("SHA-256")`')
@@ -144,8 +144,8 @@ def test_stream_adapter_renders_buffered_answer_as_plain_agent_text() -> None:
     stream.renderer.print.assert_not_called()
 
 
-def test_stream_adapter_renders_buffered_plain_answer_with_newline() -> None:
-    stream = _build_stream_adapter(debug_mode=True)
+def test_agent_stream_presenter_renders_buffered_plain_answer_with_newline() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=True)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_token("补丁解释完成")
@@ -162,8 +162,8 @@ def test_stream_adapter_renders_buffered_plain_answer_with_newline() -> None:
     stream.renderer.print.assert_not_called()
 
 
-def test_stream_adapter_drops_intermediate_answer_when_tool_call_starts() -> None:
-    stream = _build_stream_adapter(debug_mode=False)
+def test_agent_stream_presenter_drops_intermediate_answer_when_tool_call_starts() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=False)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_token("**F1 处理完成。**")
