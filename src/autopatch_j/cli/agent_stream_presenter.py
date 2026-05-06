@@ -29,18 +29,19 @@ class ReActDisplayPolicy:
         return self.force_compact_observation or not self.debug_mode
 
 
-class _StreamExecution:
+class _AgentStreamExecution:
     """
     单次 Agent 调用期间的流式渲染状态。
 
-    该类只在 StreamAdapter 内部使用，负责把 token、reasoning、tool start 和 observation 事件转成 renderer 调用。
+    该类只在 AgentStreamPresenter 内部使用，负责把 token、reasoning、
+    tool start 和 observation 事件转成 renderer 调用。
     """
 
-    def __init__(self, stream: StreamAdapter, policy: ReActDisplayPolicy) -> None:
-        self.stream = stream
-        self.renderer = stream.renderer
+    def __init__(self, presenter: AgentStreamPresenter, policy: ReActDisplayPolicy) -> None:
+        self.presenter = presenter
+        self.renderer = presenter.renderer
         self.policy = policy
-        
+
         self.in_reasoning: bool = False
         self.answer_after_reasoning: bool = False
         self.reasoning_visible: bool = False
@@ -88,9 +89,9 @@ class _StreamExecution:
             self.reasoning_visible = False
 
 
-class StreamAdapter:
+class AgentStreamPresenter:
     """
-    Agent 流式事件到 CLI 输出的适配器。
+    Agent 流式事件到 CLI 输出的展示器。
 
     职责边界：
     1. 把 LLM token、reasoning、Tool Call 和 observation 转换为终端展示。
@@ -103,7 +104,7 @@ class StreamAdapter:
         renderer: CliRenderer,
         workspace_manager: WorkspaceManager | None,
         chat_filter: ChatFilter | None,
-        agent: Agent | None,
+        agent: Any | None,
         describe_current_scope_paths: Callable[[], list[str]],
         build_static_scan_summary: Callable[[], str],
         build_local_no_issue_summary: Callable[[], str],
@@ -142,8 +143,8 @@ class StreamAdapter:
             debug_mode=self._debug_mode(),
             force_compact_observation=compact_observation,
         )
-        
-        execution = _StreamExecution(self, policy)
+
+        execution = _AgentStreamExecution(self, policy)
         start_index = len(agent.messages)
 
         final_answer = agent_call(
@@ -178,11 +179,15 @@ class StreamAdapter:
 
         buffered_answer = "".join(execution.buffered_answer_parts)
         if buffered_answer:
-            rendered_answer = chat_filter.build_display_answer(
-                user_text=raw_user_text or "",
-                answer=buffered_answer,
-                intent=answer_intent,
-            ) if answer_intent else buffered_answer
+            rendered_answer = (
+                chat_filter.build_display_answer(
+                    user_text=raw_user_text or "",
+                    answer=buffered_answer,
+                    intent=answer_intent,
+                )
+                if answer_intent
+                else buffered_answer
+            )
             if show_chat_anchors:
                 self.renderer.print_assistant_anchor()
             if plain_answer:
@@ -192,11 +197,15 @@ class StreamAdapter:
         else:
             sanitized_final_answer = final_answer or ""
             if sanitized_final_answer:
-                rendered_answer = chat_filter.build_display_answer(
-                    user_text=raw_user_text or "",
-                    answer=sanitized_final_answer,
-                    intent=answer_intent,
-                ) if answer_intent else sanitized_final_answer
+                rendered_answer = (
+                    chat_filter.build_display_answer(
+                        user_text=raw_user_text or "",
+                        answer=sanitized_final_answer,
+                        intent=answer_intent,
+                    )
+                    if answer_intent
+                    else sanitized_final_answer
+                )
                 if show_chat_anchors:
                     self.renderer.print_assistant_anchor()
                 if plain_answer:
@@ -205,3 +214,4 @@ class StreamAdapter:
                     self.renderer.print_agent_text(rendered_answer)
 
         return new_messages
+

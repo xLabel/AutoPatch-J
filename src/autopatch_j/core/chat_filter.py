@@ -12,7 +12,7 @@ class ChatFilter:
     职责边界：
     1. 对 general_chat/code_explain 的最终回答做简单 Markdown 降噪。
     2. 保持控制台文本清爽，避免标题和粗体标记污染输出。
-    3. 不做意图拦截，也不裁剪 ReAct 过程；这些由 input classifier 和 StreamAdapter 负责。
+    3. 不做意图拦截，也不裁剪 ReAct 过程；这些由 input classifier 和 AgentStreamPresenter 负责。
     """
 
     def build_display_answer(
