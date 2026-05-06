@@ -16,6 +16,7 @@ def test_app_config_reads_llm_environment(monkeypatch) -> None:
     assert config.llm_model == "custom-model"
     assert config.debug_mode is True
     assert config.is_llm_ready() is True
+    assert config.llm_extra_body_error is None
 
 
 def test_app_config_uses_defaults_and_isolates_ignored_dirs(monkeypatch) -> None:
@@ -34,3 +35,11 @@ def test_app_config_uses_defaults_and_isolates_ignored_dirs(monkeypatch) -> None
     assert first.debug_mode is False
     assert first.is_llm_ready() is False
     assert "custom" not in second.ignored_dirs
+
+
+def test_app_config_keeps_invalid_extra_body_diagnostic(monkeypatch) -> None:
+    monkeypatch.setenv("AUTOPATCH_LLM_EXTRA_BODY", "{bad json")
+
+    config = AppConfig.from_env()
+
+    assert "AUTOPATCH_LLM_EXTRA_BODY 不是有效 JSON" in str(config.llm_extra_body_error)

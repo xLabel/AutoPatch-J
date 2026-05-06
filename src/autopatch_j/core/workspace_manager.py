@@ -33,10 +33,8 @@ class WorkspaceManager:
     def edit(self) -> Iterator[ActiveWorkspace]:
         """开启一个工作台编辑事务，结束时自动落盘。"""
         workspace = self.load_workspace()
-        try:
-            yield workspace
-        finally:
-            self.save_workspace(workspace)
+        yield workspace
+        self.save_workspace(workspace)
 
     def load_workspace(self) -> ActiveWorkspace:
         """加载当前工作台状态，若不存在则返回默认空闲状态。"""

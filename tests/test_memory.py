@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -46,6 +47,23 @@ def test_append_recent_turn_writes_project_memory_file(tmp_path: Path) -> None:
     assert turn["summary_status"] == "pending"
     assert turn["summary"] == ""
     assert turn["scope_paths"] == ["src/main/java/demo/App.java"]
+
+
+def test_memory_manager_serializes_concurrent_recent_turn_appends(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+
+    def append_turn(index: int) -> None:
+        manager.append_recent_turn(
+            intent=IntentType.GENERAL_CHAT,
+            user_text=f"question {index}",
+            assistant_text=f"answer {index}",
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(append_turn, range(20)))
+
+    turns = manager.load()["working_memory"]["recent_turns"]
+    assert len(turns) == MAX_RECENT_TURNS
 
 
 def test_prompt_context_uses_pending_user_text_but_not_assistant_text(tmp_path: Path) -> None:

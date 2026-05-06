@@ -68,26 +68,36 @@ def install_managed_semgrep_runtime(
         if resolve_user_runtime_binary() is not None:
             return "ok", f"AutoPatch-J 管理的 Semgrep 已存在：{user_runtime_binary_path()}"
 
-        subprocess.run(
-            [python_executable, "-m", "venv", str(semgrep_venv_dir())],
-            check=True,
-            capture_output=True,
-            encoding="utf-8",
-        )
+        venv_result = run_setup_command([python_executable, "-m", "venv", str(semgrep_venv_dir())])
+        if venv_result is not None:
+            return venv_result
 
         pip_executable = semgrep_venv_bin_dir() / ("pip.exe" if os.name == "nt" else "pip")
-        subprocess.run(
-            [str(pip_executable), "install", "--quiet", f"semgrep=={version}"],
-            check=True,
-            capture_output=True,
-            encoding="utf-8",
-        )
+        install_result = run_setup_command([str(pip_executable), "install", "--quiet", f"semgrep=={version}"])
+        if install_result is not None:
+            return install_result
     if resolve_user_runtime_binary() is None:
         return (
             "error",
             f"Semgrep 安装完成，但未在预期路径找到可执行文件：{user_runtime_binary_path()}",
         )
     return "ok", f"已安装 AutoPatch-J 管理的 Semgrep {version}：{user_runtime_binary_path()}"
+
+
+def run_setup_command(command: list[str]) -> tuple[str, str] | None:
+    try:
+        subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        return "error", f"Semgrep 运行时初始化失败：{detail}"
+    except OSError as exc:
+        return "error", f"Semgrep 运行时初始化失败：{exc}"
+    return None
 
 
 @contextmanager

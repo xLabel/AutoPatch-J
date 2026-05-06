@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.models import (
     ActiveWorkspace,
@@ -117,6 +119,25 @@ def test_workspace_manager_persist_applied_current_patch_advances_until_idle(tmp
     assert second_pass.patch_items[1].status is PatchReviewStatus.APPLIED
     assert second_pass.current_patch_index == 2
     assert second_pass.mode is WorkspaceStatus.IDLE
+
+
+def test_workspace_edit_does_not_save_when_block_raises(tmp_path: Path) -> None:
+    service = WorkspaceManager(ArtifactManager(tmp_path))
+    service.initialize_review_workspace(
+        scope=_scope(),
+        latest_scan_id="scan-4",
+        patch_items=[_item("item-1", "src/main/java/demo/User.java", "F1")],
+    )
+
+    with pytest.raises(RuntimeError):
+        with service.edit() as workspace:
+            workspace.mark_applied()
+            raise RuntimeError("abort save")
+
+    restored = service.load_workspace()
+    assert restored.patch_items[0].status is PatchReviewStatus.PENDING
+    assert restored.current_patch_index == 0
+    assert restored.mode is WorkspaceStatus.REVIEWING
 
 
 def test_workspace_manager_replace_current_patch_keeps_queue_order(tmp_path: Path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +55,7 @@ class AppConfig:
 
     # 供应商私有扩展参数，必须是 JSON 字符串；例如 '{"thinking": {"type": "enabled"}}'。
     llm_extra_body: str
+    llm_extra_body_error: str | None
 
     # 可选值：standard、bailian-dsml；阿里云百炼旧版 DeepSeek DSML 流式输出使用 bailian-dsml。
     llm_stream_dialect: str
@@ -71,12 +73,14 @@ class AppConfig:
 
     @classmethod
     def from_env(cls) -> "AppConfig":
+        llm_extra_body = os.getenv("AUTOPATCH_LLM_EXTRA_BODY", "{}")
         return cls(
             llm_api_key = os.getenv("AUTOPATCH_LLM_API_KEY", ""),
             llm_base_url = os.getenv("AUTOPATCH_LLM_BASE_URL", "https://api.deepseek.com").rstrip("/"),
             llm_model = os.getenv("AUTOPATCH_LLM_MODEL", "deepseek-v4-flash"),
             llm_reasoning_effort = os.getenv("AUTOPATCH_LLM_REASONING_EFFORT"),
-            llm_extra_body = os.getenv("AUTOPATCH_LLM_EXTRA_BODY", "{}"),
+            llm_extra_body = llm_extra_body,
+            llm_extra_body_error = cls._validate_llm_extra_body(llm_extra_body),
             llm_stream_dialect = os.getenv("AUTOPATCH_LLM_STREAM_DIALECT", "standard"),
             debug_mode = os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true",
             semgrep_version = "1.160.0",
@@ -96,6 +100,16 @@ class AppConfig:
             "2. AUTOPATCH_LLM_BASE_URL\n"
             f"3. AUTOPATCH_LLM_MODEL (可选，默认 {self.llm_model})"
         )
+
+    @staticmethod
+    def _validate_llm_extra_body(value: str) -> str | None:
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            return f"AUTOPATCH_LLM_EXTRA_BODY 不是有效 JSON：{exc.msg}"
+        if not isinstance(parsed, dict):
+            return "AUTOPATCH_LLM_EXTRA_BODY 必须是 JSON object"
+        return None
 
 
 GlobalConfig = AppConfig.from_env()

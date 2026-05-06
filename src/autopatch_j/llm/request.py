@@ -54,8 +54,12 @@ class LLMRequestBuilder:
     def _load_global_extra_body(self) -> dict[str, Any]:
         from autopatch_j.config import GlobalConfig
 
+        if GlobalConfig.llm_extra_body_error:
+            raise ValueError(GlobalConfig.llm_extra_body_error)
         try:
             parsed = json.loads(GlobalConfig.llm_extra_body)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"AUTOPATCH_LLM_EXTRA_BODY 不是有效 JSON：{exc.msg}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("AUTOPATCH_LLM_EXTRA_BODY 必须是 JSON object")
+        return parsed

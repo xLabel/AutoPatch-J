@@ -6,6 +6,7 @@ from autopatch_j.core.artifact_manager import ArtifactManager
 from autopatch_j.core.patch_engine import PatchDraft
 from autopatch_j.core.patch_verifier import SyntaxCheckResult
 from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.scanners.base import ScanResult
 
 
 def _draft(file_path: str, rationale: str) -> PatchDraft:
@@ -42,3 +43,22 @@ def test_add_pending_patch_uses_workspace_storage_via_manager(tmp_path: Path) ->
     current = workspace_manager.load_pending_patch()
     assert current is not None
     assert current.file_path == "first.java"
+
+
+def test_scan_artifact_ids_do_not_collide_for_fast_saves(tmp_path: Path) -> None:
+    artifacts = ArtifactManager(tmp_path)
+    result = ScanResult(
+        engine="semgrep",
+        scope=["."],
+        targets=["Demo.java"],
+        status="ok",
+        message="ok",
+        findings=[],
+    )
+
+    first_id = artifacts.save_scan_result(result)
+    second_id = artifacts.save_scan_result(result)
+
+    assert first_id != second_id
+    assert artifacts.load_scan_result(first_id) is not None
+    assert artifacts.load_scan_result(second_id) is not None

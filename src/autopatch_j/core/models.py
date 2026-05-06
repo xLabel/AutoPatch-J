@@ -300,7 +300,8 @@ class ActiveWorkspace:
             return None
         if self.current_patch_index < 0 or self.current_patch_index >= len(self.patch_items):
             return None
-        return self.patch_items[self.current_patch_index]
+        item = self.patch_items[self.current_patch_index]
+        return item if item.is_pending() else None
 
     def get_review_progress(self) -> tuple[int, int]:
         total_count = len(self.patch_items)

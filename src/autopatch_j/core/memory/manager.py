@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from autopatch_j.core.models import IntentType
@@ -38,6 +39,7 @@ class MemoryManager:
     """
 
     def __init__(self, memory_file: Path) -> None:
+        self._lock = RLock()
         self.store = MemoryStore(memory_file)
         self.delta_applier = MemoryDeltaApplier()
         self.prompt_context_builder = MemoryPromptContextBuilder()
@@ -49,8 +51,9 @@ class MemoryManager:
     def build_prompt_context(self, intent: IntentType, current_user_text: str = "") -> str:
         if intent not in ORDINARY_INTENTS:
             return ""
-        memory = self.load()
-        return self.prompt_context_builder.build(memory, intent, current_user_text)
+        with self._lock:
+            memory = self.store.load()
+            return self.prompt_context_builder.build(memory, intent, current_user_text)
 
     def append_recent_turn(
         self,
@@ -62,33 +65,35 @@ class MemoryManager:
         if intent not in ORDINARY_INTENTS:
             return
 
-        memory = self.load()
-        memory["working_memory"]["recent_turns"].append(
-            {
-                "id": generate_id("turn"),
-                "intent": intent.value,
-                "user_text": clip_text(user_text, MAX_USER_TEXT),
-                "assistant_text": clip_text(assistant_text, MAX_ASSISTANT_TEXT),
-                "summary": "",
-                "summary_status": "pending",
-                "scope_paths": [clip_text(path, 240) for path in (scope_paths or [])[:MAX_SCOPE_PATHS]],
-                "created_at": now_iso(),
-            }
-        )
-        self.save(memory)
+        with self._lock:
+            memory = self.store.load()
+            memory["working_memory"]["recent_turns"].append(
+                {
+                    "id": generate_id("turn"),
+                    "intent": intent.value,
+                    "user_text": clip_text(user_text, MAX_USER_TEXT),
+                    "assistant_text": clip_text(assistant_text, MAX_ASSISTANT_TEXT),
+                    "summary": "",
+                    "summary_status": "pending",
+                    "scope_paths": [clip_text(path, 240) for path in (scope_paths or [])[:MAX_SCOPE_PATHS]],
+                    "created_at": now_iso(),
+                }
+            )
+            self.store.save(memory)
 
     def apply_delta(
         self,
         delta: dict[str, Any],
         allowed_project_evidence_ids: set[str] | None = None,
     ) -> bool:
-        memory = self.load()
-        changed = self.delta_applier.apply(
-            memory,
-            delta,
-            allowed_project_evidence_ids=allowed_project_evidence_ids,
-        )
-        return self.save(memory) if changed else False
+        with self._lock:
+            memory = self.store.load()
+            changed = self.delta_applier.apply(
+                memory,
+                delta,
+                allowed_project_evidence_ids=allowed_project_evidence_ids,
+            )
+            return self.store.save(memory) if changed else False
 
     def should_summarize(self, last_user_text: str = "") -> bool:
         return self.find_summary_trigger(last_user_text) is not None
@@ -101,24 +106,28 @@ class MemoryManager:
         if force_project_code_explain:
             return MemorySummaryTrigger.PROJECT_CODE_EXPLAIN
 
-        memory = self.load()
-        recent_turns = memory["working_memory"]["recent_turns"]
-        pending_count = sum(1 for turn in recent_turns if turn.get("summary_status") == "pending")
-        if pending_count >= 2:
-            return MemorySummaryTrigger.PENDING_TURNS
-        if len(recent_turns) >= 6:
-            return MemorySummaryTrigger.RECENT_TURNS
-        if self.store.file_size() > SOFT_FILE_BYTES:
-            return MemorySummaryTrigger.FILE_SIZE
-        if any(signal in last_user_text for signal in LONG_TERM_SIGNALS):
-            return MemorySummaryTrigger.LONG_TERM_SIGNAL
-        return None
+        with self._lock:
+            memory = self.store.load()
+            recent_turns = memory["working_memory"]["recent_turns"]
+            pending_count = sum(1 for turn in recent_turns if turn.get("summary_status") == "pending")
+            if pending_count >= 2:
+                return MemorySummaryTrigger.PENDING_TURNS
+            if len(recent_turns) >= 6:
+                return MemorySummaryTrigger.RECENT_TURNS
+            if self.store.file_size() > SOFT_FILE_BYTES:
+                return MemorySummaryTrigger.FILE_SIZE
+            if any(signal in last_user_text for signal in LONG_TERM_SIGNALS):
+                return MemorySummaryTrigger.LONG_TERM_SIGNAL
+            return None
 
     def load(self) -> dict[str, Any]:
-        return self.store.load()
+        with self._lock:
+            return self.store.load()
 
     def save(self, memory: dict[str, Any]) -> bool:
-        return self.store.save(memory)
+        with self._lock:
+            return self.store.save(memory)
 
     def clear(self) -> None:
-        self.store.clear()
+        with self._lock:
+            self.store.clear()

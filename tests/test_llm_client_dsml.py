@@ -3,7 +3,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from autopatch_j.config import GlobalConfig
+import pytest
+
+import autopatch_j.config as config_module
+from autopatch_j.config import AppConfig, GlobalConfig
 from autopatch_j.llm.client import LLMCallPurpose, LLMClient
 
 
@@ -219,3 +222,20 @@ def test_classifier_purpose_retries_without_disabled_thinking_when_unsupported()
     assert second_kwargs["stream"] is False
     assert "reasoning_effort" not in second_kwargs
     assert response.content == "code_audit"
+
+
+def test_react_request_rejects_invalid_global_extra_body(monkeypatch) -> None:
+    monkeypatch.setenv("AUTOPATCH_LLM_EXTRA_BODY", "{bad json")
+    monkeypatch.setattr(config_module, "GlobalConfig", AppConfig.from_env())
+    client = LLMClient(
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+        model="test-model",
+    )
+
+    with pytest.raises(ValueError, match="AUTOPATCH_LLM_EXTRA_BODY"):
+        client._build_request_kwargs(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=None,
+            options=client._resolve_options(LLMCallPurpose.REACT),
+        )

@@ -5,6 +5,7 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from autopatch_j.config import get_project_state_dir
 from autopatch_j.core.models import ActiveWorkspace
@@ -40,10 +41,7 @@ class ArtifactManager:
         """保存扫描结果快照并返回产生的 ID"""
         artifact_id = self._generate_id("scan")
         target_path = self.findings_dir / f"{artifact_id}.json"
-        target_path.write_text(
-            json.dumps(result.to_dict(), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        self._write_json_atomic(target_path, result.to_dict())
         return artifact_id
 
     def load_scan_result(self, artifact_id: str) -> ScanResult | None:
@@ -66,10 +64,7 @@ class ArtifactManager:
 
     def save_workspace(self, workspace: ActiveWorkspace) -> None:
         """保存工作台全量状态"""
-        self.workspace_file.write_text(
-            json.dumps(workspace.to_dict(), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        self._write_json_atomic(self.workspace_file, workspace.to_dict())
 
     def load_workspace(self) -> ActiveWorkspace | None:
         """加载工作台全量状态"""
@@ -103,5 +98,12 @@ class ArtifactManager:
         return self.state_dir.name == ".autopatch-j" and self.state_dir.parent == self.repo_root.resolve()
 
     def _generate_id(self, prefix: str) -> str:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        return f"{prefix}-{timestamp}"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+        return f"{prefix}-{timestamp}-{uuid4().hex[:8]}"
+
+    def _write_json_atomic(self, target_path: Path, data: dict) -> None:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(data, indent=2, ensure_ascii=False)
+        tmp_path = target_path.with_name(f"{target_path.name}.{uuid4().hex}.tmp")
+        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.replace(target_path)
