@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from typing import Any, Callable
-import openai
 
 from .dialect import MessageDialect, StandardDialect, DeepSeekAliyunDialect
 from .models import LLMResponse
-from .options import LLMCallPurpose, LLMReasoningMode, LLMRequestOptions, resolve_request_options
+from .options import LLMCallPurpose, LLMRequestOptions, resolve_request_options
 from .parser import LLMResponseParser
 from .request import LLMRequestBuilder
+from .transport import OpenAIChatTransport
 
 
 class LLMClient:
@@ -28,12 +28,20 @@ class LLMClient:
         reasoning_effort: str | None = None,
         stream_dialect: str = "standard",
     ) -> None:
-        self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.stream_dialect = stream_dialect
+        self.transport = OpenAIChatTransport(api_key=api_key, base_url=base_url)
         self.request_builder = LLMRequestBuilder(model=model, reasoning_effort=reasoning_effort)
         self.response_parser = LLMResponseParser(self._create_dialect)
+
+    @property
+    def client(self) -> Any:
+        return self.transport.client
+
+    @client.setter
+    def client(self, value: Any) -> None:
+        self.transport.client = value
 
     def _create_dialect(self) -> MessageDialect:
         if self.stream_dialect == "bailian-dsml":
@@ -82,15 +90,7 @@ class LLMClient:
         return self.request_builder._load_global_extra_body()
 
     def _create_completion(self, kwargs: dict[str, Any], options: LLMRequestOptions) -> Any:
-        try:
-            return self.client.chat.completions.create(**kwargs)
-        except Exception as exc:
-            if not self._should_retry_without_disabled_reasoning(exc, kwargs, options):
-                raise
-            retry_kwargs = dict(kwargs)
-            retry_kwargs["extra_body"] = None
-            retry_kwargs.pop("stream_options", None)
-            return self.client.chat.completions.create(**retry_kwargs)
+        return self.transport.create_completion(kwargs=kwargs, options=options)
 
     def _should_retry_without_disabled_reasoning(
         self,
@@ -98,22 +98,7 @@ class LLMClient:
         kwargs: dict[str, Any],
         options: LLMRequestOptions,
     ) -> bool:
-        if options.reasoning is not LLMReasoningMode.DISABLED:
-            return False
-        if not kwargs.get("extra_body"):
-            return False
-        message = str(exc).lower()
-        retry_markers = (
-            "thinking",
-            "enable_thinking",
-            "extra_body",
-            "unsupported",
-            "not supported",
-            "unknown parameter",
-            "unrecognized",
-            "invalid parameter",
-        )
-        return any(marker in message for marker in retry_markers)
+        return self.transport.should_retry_without_disabled_reasoning(exc=exc, kwargs=kwargs, options=options)
 
     def _parse_stream_response(
         self,
