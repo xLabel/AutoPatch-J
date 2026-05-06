@@ -54,6 +54,11 @@ class Tool:
     def __init__(self, context: ToolContext | None = None) -> None:
         self.context = context
 
+    def require_context(self) -> ToolContext:
+        if self.context is None:
+            raise RuntimeError(f"工具 {self.name} 缺少运行时上下文。")
+        return self.context
+
     def execute(self, **kwargs: Any) -> ToolResult:
         """执行工具逻辑，子类通过 self.context 访问运行时服务。"""
         raise NotImplementedError

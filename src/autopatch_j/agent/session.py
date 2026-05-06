@@ -4,6 +4,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from autopatch_j.core.path_guard import (
+    UnsafeRepoPathError,
+    normalize_repo_path,
+    resolve_repo_path,
+    to_repo_relative_path,
+)
+
 if TYPE_CHECKING:
     from autopatch_j.core.artifact_manager import ArtifactManager
     from autopatch_j.core.code_fetcher import CodeFetcher
@@ -45,7 +52,10 @@ class AgentSession:
     def set_focus_paths(self, paths: list[str] | None) -> None:
         normalized: list[str] = []
         for path in paths or []:
-            clean = self.normalize_repo_path(path)
+            try:
+                clean = to_repo_relative_path(self.repo_root, resolve_repo_path(self.repo_root, path))
+            except UnsafeRepoPathError:
+                continue
             if clean and clean not in normalized:
                 normalized.append(clean)
         self.focus_paths = normalized
@@ -54,15 +64,16 @@ class AgentSession:
         return bool(self.focus_paths)
 
     def is_path_in_focus(self, path: str) -> bool:
+        try:
+            safe_path = to_repo_relative_path(self.repo_root, resolve_repo_path(self.repo_root, path))
+        except UnsafeRepoPathError:
+            return False
         if not self.focus_paths:
             return True
-        return self.normalize_repo_path(path) in self.focus_paths
+        return safe_path in self.focus_paths
 
     def normalize_repo_path(self, path: str) -> str:
-        clean = path.replace("\\", "/").strip()
-        if clean.startswith("./"):
-            clean = clean[2:]
-        return clean
+        return normalize_repo_path(path)
 
     def fetch_cached_source_read(self, path: str, symbol: str | None, line: int | None) -> ToolResult | None:
         key = (self.normalize_repo_path(path), symbol, line)

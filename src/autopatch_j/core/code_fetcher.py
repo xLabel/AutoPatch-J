@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from autopatch_j.core.path_guard import UnsafeRepoPathError, normalize_repo_path, resolve_repo_path
 from autopatch_j.core.symbol_indexer import IndexEntry
 
 
@@ -26,7 +27,10 @@ class CodeFetcher:
         根据索引项抓取代码。
         如果是类或方法，会尝试定位完整语法块。
         """
-        full_path = self.repo_root / entry.path
+        try:
+            full_path = resolve_repo_path(self.repo_root, entry.path)
+        except UnsafeRepoPathError as exc:
+            return f"错误：{exc}"
         if not full_path.exists():
             return f"错误：找不到文件或目录：{entry.path}"
 
@@ -73,7 +77,10 @@ class CodeFetcher:
 
     def fetch_lines(self, file_path: str, start_line: int, end_line: int) -> str:
         """根据物理行号区间提取代码，1-based 且包含结束行。"""
-        full_path = self.repo_root / file_path
+        try:
+            full_path = resolve_repo_path(self.repo_root, file_path)
+        except UnsafeRepoPathError:
+            return ""
         if not full_path.exists():
             return ""
 
@@ -93,7 +100,7 @@ class CodeFetcher:
         """
         根据 finding 坐标回源提取稳定证据片段；源文件不可用时回退到扫描器快照。
         """
-        normalized_path = file_path.replace("\\", "/").strip()
+        normalized_path = normalize_repo_path(file_path)
         safe_start_line = max(1, start_line)
         safe_end_line = max(safe_start_line, end_line)
         snippet = self.fetch_lines(normalized_path, safe_start_line, safe_end_line).strip()

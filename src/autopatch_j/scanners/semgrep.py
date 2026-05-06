@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from autopatch_j.config import GlobalConfig
+from autopatch_j.core.path_guard import UnsafeRepoPathError, resolve_repo_path, to_repo_relative_path
 from autopatch_j.scanners.base import ScannerMeta, ScannerName, ScanResult
 from autopatch_j.scanners.semgrep_result import (
     extract_rule,
@@ -61,10 +62,10 @@ class SemgrepScanner:
                 command,
                 cwd=repo_root,
                 capture_output=True,
-                encoding="utf-8", 
+                encoding="utf-8",
                 check=False,
                 env=build_semgrep_subprocess_env(repo_root),
-                timeout=GlobalConfig.scanner_timeout
+                timeout=GlobalConfig.scanner_timeout,
             )
         except subprocess.TimeoutExpired:
             return ScanResult(
@@ -73,6 +74,15 @@ class SemgrepScanner:
                 targets=targets,
                 status="error",
                 message=f"扫描执行超时（上限 {GlobalConfig.scanner_timeout}s），请尝试缩小扫描范围。",
+                findings=[],
+            )
+        except OSError as exc:
+            return ScanResult(
+                engine="semgrep",
+                scope=list(scope),
+                targets=targets,
+                status="error",
+                message=f"Semgrep 进程启动失败：{exc}",
                 findings=[],
             )
 
@@ -87,7 +97,26 @@ class SemgrepScanner:
                 findings=[],
             )
 
-        payload = json.loads(completed.stdout or "{}")
+        try:
+            payload = json.loads(completed.stdout or "{}")
+        except json.JSONDecodeError:
+            return ScanResult(
+                engine="semgrep",
+                scope=list(scope),
+                targets=targets,
+                status="error",
+                message="Semgrep 输出不是有效 JSON，请检查扫描器运行时状态。",
+                findings=[],
+            )
+        if not isinstance(payload, dict):
+            return ScanResult(
+                engine="semgrep",
+                scope=list(scope),
+                targets=targets,
+                status="error",
+                message="Semgrep 输出 JSON 结构不符合预期，请检查扫描器运行时状态。",
+                findings=[],
+            )
         return normalize_semgrep_payload(
             payload,
             repo_root=repo_root,
@@ -155,12 +184,16 @@ def select_targets(repo_root: Path, scope: list[str]) -> list[str]:
 
     targets: list[str] = []
     for entry in scope:
-        candidate = (repo_root / entry).resolve()
+        try:
+            candidate = resolve_repo_path(repo_root, entry)
+        except UnsafeRepoPathError:
+            continue
         if not candidate.exists():
             continue
+        rel_path = to_repo_relative_path(repo_root, candidate)
         if candidate.is_dir():
-            targets.append(Path(entry).as_posix())
+            targets.append(Path(rel_path).as_posix())
             continue
         if candidate.suffix.lower() == ".java":
-            targets.append(Path(entry).as_posix())
+            targets.append(Path(rel_path).as_posix())
     return targets

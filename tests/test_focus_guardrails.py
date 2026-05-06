@@ -63,6 +63,26 @@ def test_focus_lock_blocks_unrelated_read_and_patch(tmp_path: Path) -> None:
     assert "焦点约束阻止越界修复" in patch_result.message
 
 
+def test_tools_reject_paths_outside_repo_even_without_focus_lock(tmp_path: Path) -> None:
+    outside_file = tmp_path.parent / "Outside.java"
+    outside_file.write_text("public class Outside {}", encoding="utf-8")
+
+    agent = _build_agent(tmp_path)
+    read_result = SourceReaderTool(agent.session).execute("../Outside.java")
+    assert read_result.status == "error"
+    assert "路径超出项目根目录范围" in read_result.message
+
+    patch_result = PatchProposalTool(agent.session).execute(
+        file_path="../Outside.java",
+        old_string="Outside",
+        new_string="Inside",
+        rationale="must stay inside repo",
+        associated_finding_id=None,
+    )
+    assert patch_result.status == "error"
+    assert patch_result.payload["error_code"] == "OUT_OF_FOCUS"
+
+
 def test_focus_lock_filters_symbol_search_results(tmp_path: Path) -> None:
     legacy = tmp_path / "src" / "main" / "java" / "demo" / "LegacyConfig.java"
     app_config = tmp_path / "src" / "main" / "java" / "demo" / "AppConfig.java"

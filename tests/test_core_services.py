@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from autopatch_j.llm.client import LLMCallPurpose
 from autopatch_j.core.artifact_manager import ArtifactManager
@@ -13,6 +14,8 @@ from autopatch_j.core.input_classifier import (
 from autopatch_j.core.models import CodeScopeKind, IntentType
 from autopatch_j.core.scanner_runner import ScannerRunner
 from autopatch_j.core.scope_service import ScopeService
+from autopatch_j.scanners import semgrep as semgrep_module
+from autopatch_j.scanners.semgrep import SemgrepScanner, select_targets
 
 
 def test_intent_detector_relies_entirely_on_llm_classifier() -> None:
@@ -176,6 +179,41 @@ def test_scope_service_rejects_class_and_method_mentions(tmp_path: Path) -> None
 
     assert service.fetch_scope("@UserService 检查代码") is None
     assert service.fetch_scope("@isAdmin 检查代码") is None
+
+
+def test_scope_service_rejects_paths_outside_repo(tmp_path: Path) -> None:
+    outside_file = tmp_path.parent / "Outside.java"
+    outside_file.write_text("class Outside {}", encoding="utf-8")
+
+    service = ScopeService(tmp_path, SymbolIndexer(tmp_path))
+
+    assert service.fetch_scope("@../Outside.java 检查代码") is None
+
+
+def test_semgrep_target_selection_rejects_paths_outside_repo(tmp_path: Path) -> None:
+    java_file = tmp_path / "Demo.java"
+    outside_file = tmp_path.parent / "Outside.java"
+    java_file.write_text("class Demo {}", encoding="utf-8")
+    outside_file.write_text("class Outside {}", encoding="utf-8")
+
+    assert select_targets(tmp_path, ["Demo.java", "../Outside.java"]) == ["Demo.java"]
+
+
+def test_semgrep_scanner_reports_invalid_json_output(tmp_path: Path, monkeypatch) -> None:
+    java_file = tmp_path / "Demo.java"
+    java_file.write_text("class Demo {}", encoding="utf-8")
+    scanner = SemgrepScanner()
+    monkeypatch.setattr(scanner, "resolve_binary", lambda repo_root: "semgrep")
+    monkeypatch.setattr(
+        semgrep_module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="not json", stderr=""),
+    )
+
+    result = scanner.scan(tmp_path, ["Demo.java"])
+
+    assert result.status == "error"
+    assert "不是有效 JSON" in result.message
 
 
 def test_scanner_runner_persists_scan_result(tmp_path: Path) -> None:

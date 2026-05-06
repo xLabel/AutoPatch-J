@@ -6,6 +6,12 @@ from pathlib import Path
 
 from autopatch_j.core.symbol_indexer import IndexEntry, SymbolIndexer
 from autopatch_j.core.models import CodeScope, CodeScopeKind
+from autopatch_j.core.path_guard import (
+    UnsafeRepoPathError,
+    normalize_repo_path,
+    resolve_repo_path,
+    to_repo_relative_path,
+)
 
 
 class ScopeService:
@@ -71,9 +77,12 @@ class ScopeService:
 
     def _fetch_best_entry(self, mention: str) -> IndexEntry | None:
         normalized = self._normalize_repo_path(mention)
-        candidate = (self.repo_root / normalized).resolve()
+        try:
+            candidate = resolve_repo_path(self.repo_root, normalized)
+        except UnsafeRepoPathError:
+            return None
         if candidate.exists():
-            rel_path = candidate.relative_to(self.repo_root).as_posix()
+            rel_path = to_repo_relative_path(self.repo_root, candidate)
             if candidate.is_dir():
                 return IndexEntry(path=rel_path, name=candidate.name, kind="dir")
             return IndexEntry(path=rel_path, name=candidate.name, kind="file")
@@ -94,12 +103,18 @@ class ScopeService:
         return None
 
     def _expand_directory_java_files(self, rel_dir: str) -> list[str]:
-        target_dir = (self.repo_root / rel_dir).resolve()
+        try:
+            target_dir = resolve_repo_path(self.repo_root, rel_dir)
+        except UnsafeRepoPathError:
+            return []
         if not target_dir.exists() or not target_dir.is_dir():
             return []
         java_files: list[str] = []
         for full_path in sorted(target_dir.rglob("*.java")):
-            rel_path = full_path.relative_to(self.repo_root).as_posix()
+            try:
+                rel_path = to_repo_relative_path(self.repo_root, full_path)
+            except UnsafeRepoPathError:
+                continue
             if rel_path not in java_files:
                 java_files.append(rel_path)
         return java_files
@@ -116,7 +131,4 @@ class ScopeService:
         return java_files
 
     def _normalize_repo_path(self, path: str) -> str:
-        clean = path.replace("\\", "/").strip()
-        if clean.startswith("./"):
-            clean = clean[2:]
-        return clean
+        return normalize_repo_path(path)

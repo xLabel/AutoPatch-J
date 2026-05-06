@@ -5,6 +5,8 @@ from difflib import unified_diff
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from autopatch_j.core.path_guard import UnsafeRepoPathError, resolve_repo_path
+
 if TYPE_CHECKING:
     from autopatch_j.core.patch_verifier import SyntaxCheckResult
 
@@ -109,13 +111,10 @@ class PatchEngine:
         return True
 
     def _resolve_safe_path(self, file_path: str) -> Path:
-        repo_abs = self.repo_root.resolve()
-        target_abs = (repo_abs / file_path).resolve()
         try:
-            target_abs.relative_to(repo_abs)
-        except ValueError as exc:
+            return resolve_repo_path(self.repo_root, file_path)
+        except UnsafeRepoPathError as exc:
             raise PermissionError(f"安全风险拦截：路径 '{file_path}' 超出了项目根目录范围。") from exc
-        return target_abs
 
     def _read_file_content(self, path: Path) -> str:
         raw_bytes = path.read_bytes()

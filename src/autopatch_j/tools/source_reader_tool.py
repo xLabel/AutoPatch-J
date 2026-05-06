@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from autopatch_j.core.path_guard import UnsafeRepoPathError, resolve_repo_path, to_repo_relative_path
 from autopatch_j.core.symbol_indexer import IndexEntry
 from autopatch_j.tools.base import Tool, ToolResult
 
@@ -36,26 +37,31 @@ class SourceReaderTool(Tool):
     }
 
     def execute(self, path: str, symbol: str | None = None, line: int | None = None) -> ToolResult:
-        assert self.context is not None
-        code_fetcher = self.context.code_fetcher
-        symbol_indexer = self.context.symbol_indexer
+        context = self.require_context()
+        code_fetcher = context.code_fetcher
+        symbol_indexer = context.symbol_indexer
 
-        full_path = self.context.repo_root / path
+        try:
+            full_path = resolve_repo_path(context.repo_root, path)
+            path = to_repo_relative_path(context.repo_root, full_path)
+        except UnsafeRepoPathError as exc:
+            return ToolResult(status="error", message=f"读取失败：{exc}", summary=f"读取失败: {path}")
+
         if not full_path.exists():
             filename = Path(path).name
             results = symbol_indexer.search(filename, limit=1)
             if results:
                 path = results[0].path
 
-        if not self.context.is_path_in_focus(path):
-            allowed = ", ".join(self.context.focus_paths)
+        if not context.is_path_in_focus(path):
+            allowed = ", ".join(context.focus_paths)
             return ToolResult(
                 status="error",
                 message=f"焦点约束阻止越界读取：{path}\n不在当前允许范围内。允许路径：{allowed}",
                 summary=f"读取越界: {path}",
             )
 
-        cached_result = self.context.fetch_cached_source_read(path=path, symbol=symbol, line=line)
+        cached_result = context.fetch_cached_source_read(path=path, symbol=symbol, line=line)
         if cached_result is not None:
             return cached_result
 
@@ -78,5 +84,5 @@ class SourceReaderTool(Tool):
             message=f"已成功加载源代码 [路径: {path}]：\n\n```java\n{code}\n```",
             summary=f"已读取源代码: {path}",
         )
-        self.context.persist_cached_source_read(path=path, symbol=symbol, line=line, result=result)
+        context.persist_cached_source_read(path=path, symbol=symbol, line=line, result=result)
         return result
