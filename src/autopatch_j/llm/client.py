@@ -1,69 +1,12 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from enum import Enum, auto
 from typing import Any, Callable
 import openai
 
 from .dialect import ToolCall, MessageDialect, StandardDialect, DeepSeekAliyunDialect
-
-
-class LLMCallPurpose(Enum):
-    """LLM 调用意图，业务层只声明用途，不传供应商参数。"""
-
-    REACT = auto()
-    CLASSIFIER = auto()
-    MEMORY_SUMMARY = auto()
-
-
-class LLMReasoningMode(Enum):
-    """LLMClient 内部使用的 reasoning 策略。"""
-
-    INHERIT = auto()
-    DISABLED = auto()
-
-
-@dataclass(frozen=True, slots=True)
-class LLMRequestOptions:
-    """由调用意图解析出的底层请求选项。"""
-
-    stream: bool
-    reasoning: LLMReasoningMode
-    max_tokens: int | None = None
-    temperature: float | None = None
-
-
-_PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
-    LLMCallPurpose.REACT: LLMRequestOptions(
-        stream=True,
-        reasoning=LLMReasoningMode.INHERIT,
-    ),
-    LLMCallPurpose.CLASSIFIER: LLMRequestOptions(
-        stream=False,
-        reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=128,
-        temperature=0,
-    ),
-    LLMCallPurpose.MEMORY_SUMMARY: LLMRequestOptions(
-        stream=False,
-        reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=1200,
-        temperature=0,
-    ),
-}
-
-
-@dataclass(slots=True)
-class LLMResponse:
-    """
-    LLM 响应的统一包装。
-
-    content 是最终可见文本，tool_calls 是标准化后的工具调用，reasoning_content 保留供应商返回的思考链字段。
-    """
-    content: str
-    tool_calls: list[ToolCall] | None = None
-    reasoning_content: str | None = None
+from .models import LLMResponse
+from .options import LLMCallPurpose, LLMReasoningMode, LLMRequestOptions, resolve_request_options
 
 
 class LLMClient:
@@ -119,7 +62,7 @@ class LLMClient:
         )
 
     def _resolve_options(self, purpose: LLMCallPurpose) -> LLMRequestOptions:
-        return _PURPOSE_OPTIONS[purpose]
+        return resolve_request_options(purpose)
 
     def _build_request_kwargs(
         self,
