@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
-from autopatch_j.core.path_guard import UnsafeRepoPathError, normalize_repo_path, resolve_repo_path
-from autopatch_j.core.symbol_indexer import IndexEntry
+from autopatch_j.core.project.java_blocks import JavaBlockExtractor
+from autopatch_j.core.project.repo_path import UnsafeRepoPathError, normalize_repo_path, resolve_repo_path
+from autopatch_j.core.project.symbol_index import SymbolIndexEntry
 
 
-class CodeFetcher:
+class SourceReader:
     """
     源码读取和片段回源服务。
 
@@ -22,11 +22,7 @@ class CodeFetcher:
         self.last_extract_mode: str = "full"
         self.last_extract_error: str | None = None
 
-    def fetch_entry_source(self, entry: IndexEntry) -> str:
-        """
-        根据索引项抓取代码。
-        如果是类或方法，会尝试定位完整语法块。
-        """
+    def fetch_entry_source(self, entry: SymbolIndexEntry) -> str:
         try:
             full_path = resolve_repo_path(self.repo_root, entry.path)
         except UnsafeRepoPathError as exc:
@@ -71,12 +67,15 @@ class CodeFetcher:
             return content
 
         if entry.kind in ("class", "method"):
-            return self._extract_symbol_block(content, entry.line)
+            extractor = JavaBlockExtractor()
+            source = extractor.extract(content, entry.line)
+            self.last_extract_mode = extractor.last_mode
+            self.last_extract_error = extractor.last_error
+            return source
 
         return ""
 
     def fetch_lines(self, file_path: str, start_line: int, end_line: int) -> str:
-        """根据物理行号区间提取代码，1-based 且包含结束行。"""
         try:
             full_path = resolve_repo_path(self.repo_root, file_path)
         except UnsafeRepoPathError:
@@ -97,9 +96,6 @@ class CodeFetcher:
         end_line: int,
         fallback_snippet: str | None = None,
     ) -> str:
-        """
-        根据 finding 坐标回源提取稳定证据片段；源文件不可用时回退到扫描器快照。
-        """
         normalized_path = normalize_repo_path(file_path)
         safe_start_line = max(1, start_line)
         safe_end_line = max(safe_start_line, end_line)
@@ -108,56 +104,7 @@ class CodeFetcher:
             return snippet
         return (fallback_snippet or "").strip()
 
-    def _extract_symbol_block(self, content: str, start_line: int) -> str:
-        """尝试用 Tree-sitter 提取完整语法块，失败时退化到固定行窗。"""
-        self.last_extract_mode = "full"
-        self.last_extract_error = None
-        try:
-            from tree_sitter import Language, Parser
-            import tree_sitter_java as tsjava
-
-            language = Language(tsjava.language())
-            parser = Parser(language)
-
-            normalized_content = content.replace("\r\n", "\n")
-            content_bytes = normalized_content.encode("utf-8")
-            tree = parser.parse(content_bytes)
-
-            target_node = self._find_node_at_line(tree.root_node, start_line)
-            if target_node:
-                return content_bytes[target_node.start_byte : target_node.end_byte].decode("utf-8")
-        except (ImportError, Exception) as exc:
-            self.last_extract_mode = "fallback"
-            self.last_extract_error = str(exc)
-
-        self.last_extract_mode = "fallback"
-        lines = content.splitlines()
-        start_index = max(0, start_line - 1)
-        return "\n".join(lines[start_index : start_index + 30])
-
-    def _find_node_at_line(self, node: Any, line: int) -> Any:
-        """递归查找位于指定行号的最小完整语法节点。"""
-        start_row = node.start_point[0] + 1
-
-        if start_row == line and node.type in (
-            "method_declaration",
-            "class_declaration",
-            "interface_declaration",
-            "record_declaration",
-        ):
-            return node
-
-        for child in node.children:
-            found = self._find_node_at_line(child, line)
-            if found:
-                return found
-        return None
-
     def _read_file(self, path: Path) -> str:
-        """
-        读取文件并强制归一化为 LF。
-        这是解决 Windows/Linux 补丁匹配问题的核心门禁。
-        """
         raw_bytes = path.read_bytes()
         try:
             content = raw_bytes.decode("utf-8")

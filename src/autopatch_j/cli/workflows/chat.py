@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from autopatch_j.cli.workflow_context import WorkflowServices
-from autopatch_j.core.models import CodeScopeKind, IntentType
+from autopatch_j.core.domain import CodeScopeKind, IntentType
 
 
 class ChatWorkflow:
@@ -17,7 +17,7 @@ class ChatWorkflow:
 
     def handle_code_explain(self, text: str) -> None:
         runtime = self.services.runtime
-        scope = runtime.scope_service.fetch_scope(text, default_to_project=True)
+        scope = runtime.scope_service.resolve(text, default_to_project=True)
         compact_observation = not self.services.debug_mode()
 
         if scope is not None:

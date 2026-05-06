@@ -8,12 +8,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from autopatch_j.config import get_project_state_dir
-from autopatch_j.core.models import ActiveWorkspace
+from autopatch_j.core.domain.workspace import ReviewWorkspace
 from autopatch_j.scanners.base import Finding, ScanResult
 
 
 @dataclass(slots=True)
-class ArtifactManager:
+class ProjectArtifactStore:
     """
     .autopatch-j 目录下的 JSON 工件存储驱动。
 
@@ -38,14 +38,12 @@ class ArtifactManager:
         self.findings_dir.mkdir(parents=True, exist_ok=True)
 
     def save_scan_result(self, result: ScanResult) -> str:
-        """保存扫描结果快照并返回产生的 ID"""
         artifact_id = self._generate_id("scan")
         target_path = self.findings_dir / f"{artifact_id}.json"
         self._write_json_atomic(target_path, result.to_dict())
         return artifact_id
 
     def load_scan_result(self, artifact_id: str) -> ScanResult | None:
-        """从磁盘加载指定 ID 的扫描结果"""
         target_path = self.findings_dir / f"{artifact_id}.json"
         if not target_path.exists():
             return None
@@ -56,28 +54,24 @@ class ArtifactManager:
             return None
 
     def get_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:
-        """快捷定位扫描结果中的特定 finding"""
         result = self.load_scan_result(artifact_id)
         if result is None or index < 0 or index >= len(result.findings):
             return None
         return result.findings[index]
 
-    def save_workspace(self, workspace: ActiveWorkspace) -> None:
-        """保存工作台全量状态"""
+    def save_review_workspace(self, workspace: ReviewWorkspace) -> None:
         self._write_json_atomic(self.workspace_file, workspace.to_dict())
 
-    def load_workspace(self) -> ActiveWorkspace | None:
-        """加载工作台全量状态"""
+    def load_review_workspace(self) -> ReviewWorkspace | None:
         if not self.workspace_file.exists():
             return None
         try:
             data = json.loads(self.workspace_file.read_text(encoding="utf-8"))
-            return ActiveWorkspace.from_dict(data)
+            return ReviewWorkspace.from_dict(data)
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
 
-    def clear_workspace(self) -> None:
-        """彻底清除工作台文件"""
+    def clear_review_workspace(self) -> None:
         if self.workspace_file.exists():
             self.workspace_file.unlink()
 
@@ -88,6 +82,7 @@ class ArtifactManager:
         /reset 需要回到未初始化状态，因此不能只删除 workspace.json；
         扫描快照、索引库、命令历史、运行时缓存和 memory 都属于可重建状态。
         """
+
         if not self._is_expected_state_dir():
             raise ValueError(f"拒绝清理非项目状态目录: {self.state_dir}")
         if self.state_dir.exists():

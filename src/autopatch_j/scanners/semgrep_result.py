@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autopatch_j.core.code_fetcher import CodeFetcher
+from autopatch_j.core.project import SourceReader
 from autopatch_j.scanners.base import Finding, ScanResult
 
 
@@ -14,7 +14,7 @@ def normalize_semgrep_payload(
 ) -> ScanResult:
     raw_results = payload.get("results", [])
     findings: list[Finding] = []
-    code_fetcher = CodeFetcher(repo_root)
+    code_fetcher = SourceReader(repo_root)
 
     for item in raw_results:
         if not isinstance(item, dict):

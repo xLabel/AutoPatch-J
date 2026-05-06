@@ -1,66 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from autopatch_j.core.path_guard import UnsafeRepoPathError, resolve_repo_path
-
-if TYPE_CHECKING:
-    from autopatch_j.core.patch_verifier import SyntaxCheckResult
-
-
-class TargetFileNotFoundError(Exception):
-    """补丁目标文件不存在。"""
-
-    pass
+from autopatch_j.core.patching.types import (
+    OldStringNotFoundError,
+    OldStringNotUniqueError,
+    SearchReplacePatchDraft,
+    TargetFileNotFoundError,
+)
+from autopatch_j.core.project.repo_path import UnsafeRepoPathError, resolve_repo_path
 
 
-class OldStringNotFoundError(Exception):
-    """old_string 没有在目标文件中精确命中。"""
-
-    pass
-
-
-class OldStringNotUniqueError(Exception):
-    """old_string 在目标文件中命中多处，无法安全替换。"""
-
-    def __init__(self, occurrences: int):
-        self.occurrences = occurrences
-        super().__init__(f"old_string matched {occurrences} times.")
-
-
-@dataclass(slots=True)
-class PatchDraft:
-    """
-    内存中的补丁草案。
-
-    保存 search-replace 输入、diff、验证结果和关联 finding 信息；进入 workspace 前会转换为 PatchDraftData。
-    """
-
-    file_path: str
-    old_string: str
-    new_string: str
-    diff: str
-    validation: SyntaxCheckResult
-    status: str  # "ok", "error", "invalid", "unavailable"
-    message: str
-    rationale: str | None = None
-    source_hint: str | None = None
-    error_code: str | None = None
-    target_check_id: str | None = None
-    target_snippet: str | None = None
-
-
-class PatchEngine:
+class SearchReplacePatchEngine:
     """
     精确字符串替换补丁引擎。
 
     职责边界：
     1. 基于 old_string/new_string 生成内存草案和 unified diff。
     2. 在用户确认 apply 后按原文件换行风格安全写回磁盘。
-    3. 不判断修复是否正确，也不做语法/语义校验；这些由 PatchVerifier 负责。
+    3. 不判断修复是否正确，也不做语法/语义校验；这些由 PatchQualityVerifier 负责。
     """
 
     def __init__(self, repo_root: Path) -> None:
@@ -91,7 +50,7 @@ class PatchEngine:
         patch_diff = self._generate_unified_diff(file_path, norm_content, updated_norm_content)
         return updated_norm_content, patch_diff
 
-    def apply_patch(self, draft: PatchDraft) -> bool:
+    def apply_patch(self, draft: SearchReplacePatchDraft) -> bool:
         target_path = self._resolve_safe_path(draft.file_path)
         if not target_path.exists():
             return False

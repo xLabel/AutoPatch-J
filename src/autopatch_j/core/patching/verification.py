@@ -1,45 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.core.patching.types import SearchReplacePatchDraft, SyntaxCheckResult, VerificationResult
 from autopatch_j.scanners.base import JavaScanner
 
 
-@dataclass(slots=True)
-class SyntaxCheckResult:
-    """
-    Java 语法检查结果。
-
-    status 表示 ok/error/skipped/unavailable，errors 保存 Tree-sitter 定位到的语法问题。
-    """
-    status: str
-    message: str
-    errors: list[str] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class VerificationResult:
-    """
-    补丁应用后的语义复核结果。
-
-    is_resolved 表示目标 finding 是否消失，remaining_findings 用于提示重扫后剩余问题数量。
-    """
-    is_resolved: bool
-    message: str
-    remaining_findings: int = 0
-
-
-class PatchVerifier:
+class PatchQualityVerifier:
     """
     补丁质量验证服务。
 
     职责边界：
     1. 草案阶段用 Tree-sitter 做 Java 语法检查。
     2. apply 后通过扫描器重扫确认目标规则是否消失。
-    3. 不生成补丁、不写文件；补丁生成和落盘分别由 PatchEngine 负责。
+    3. 不生成补丁、不写文件；补丁生成和落盘分别由 SearchReplacePatchEngine 负责。
     """
 
     def __init__(self, repo_root: Path, scanner: JavaScanner | None) -> None:
@@ -47,10 +22,6 @@ class PatchVerifier:
         self.scanner = scanner
 
     def verify_syntax(self, file_path: str, new_source_code: str) -> SyntaxCheckResult:
-        """
-        [事前校验]：纯内存操作。
-        使用 Tree-sitter 检查替换后的代码是否出现语法树断裂。
-        """
         if not file_path.lower().endswith(".java"):
             return SyntaxCheckResult(status="skipped", message="非 Java 文件，跳过语法校验。")
 
@@ -60,47 +31,43 @@ class PatchVerifier:
         except ImportError:
             return SyntaxCheckResult(
                 status="unavailable",
-                message="系统缺少 tree-sitter 或 tree-sitter-java 依赖，无法执行语法校验。"
+                message="系统缺少 tree-sitter 或 tree-sitter-java 依赖，无法执行语法校验。",
             )
 
         try:
             language = Language(tsjava.language())
             parser = Parser(language)
             tree = parser.parse(new_source_code.encode("utf-8"))
-            
+
             errors = self._collect_errors(tree.root_node)
             if errors:
                 return SyntaxCheckResult(
                     status="error",
                     message=f"检测到 {len(errors)} 处 Java 语法错误。",
-                    errors=errors
+                    errors=errors,
                 )
-            
+
             return SyntaxCheckResult(status="ok", message="Java 语法校验通过。")
-        except Exception as e:
-            return SyntaxCheckResult(status="error", message=f"语法分析过程出现异常：{str(e)}")
+        except Exception as exc:
+            return SyntaxCheckResult(status="error", message=f"语法分析过程出现异常：{str(exc)}")
 
     def _collect_errors(self, node: Any) -> list[str]:
-        """递归遍历语法树，搜集 ERROR 或 MISSING 节点"""
         errors = []
-        
-        def walk(n):
-            if n.is_error or n.is_missing:
-                line = n.start_point[0] + 1
-                col = n.start_point[1] + 1
-                kind = "缺失符号" if n.is_missing else "语法错误"
-                errors.append(f"[{line}:{col}] {kind} ({n.type})")
-            
-            for child in n.children:
+
+        def walk(current_node):
+            if current_node.is_error or current_node.is_missing:
+                line = current_node.start_point[0] + 1
+                col = current_node.start_point[1] + 1
+                kind = "缺失符号" if current_node.is_missing else "语法错误"
+                errors.append(f"[{line}:{col}] {kind} ({current_node.type})")
+
+            for child in current_node.children:
                 walk(child)
-        
+
         walk(node)
         return errors
 
-    def verify_finding_resolved(self, draft: PatchDraft) -> VerificationResult:
-        """
-        [事后复核]：调用 Scanner 执行增量重扫，验证补丁是否真正消灭了目标规则 (check_id)。
-        """
+    def verify_finding_resolved(self, draft: SearchReplacePatchDraft) -> VerificationResult:
         if not self.scanner:
             return VerificationResult(False, "语义重扫执行失败：未配置可用的扫描器。")
 
@@ -121,11 +88,14 @@ class PatchVerifier:
                         break
 
             if not is_fixed:
-                return VerificationResult(False, f"语义校验失败：规则 '{check_id}' 在重扫中依然被触发，补丁逻辑可能不正确。", len(rescan_result.findings))
+                return VerificationResult(
+                    False,
+                    f"语义校验失败：规则 '{check_id}' 在重扫中依然被触发，补丁逻辑可能不正确。",
+                    len(rescan_result.findings),
+                )
 
             return VerificationResult(True, f"精准校验通过：安全漏洞 '{check_id}' 已被成功消灭。", len(rescan_result.findings))
 
         if not rescan_result.findings:
             return VerificationResult(True, "全局校验通过：文件重扫未发现任何已知安全风险 (预防性修复生效)。")
-        else:
-            return VerificationResult(False, f"语义校验未通过：应用补丁后该文件依然存在 {len(rescan_result.findings)} 个漏洞发现。", len(rescan_result.findings))
+        return VerificationResult(False, f"语义校验未通过：应用补丁后该文件依然存在 {len(rescan_result.findings)} 个漏洞发现。", len(rescan_result.findings))

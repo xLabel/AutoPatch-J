@@ -4,7 +4,7 @@ import re
 from typing import Iterable, Callable
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
-from autopatch_j.core.symbol_indexer import IndexEntry
+from autopatch_j.core.project import SymbolIndexEntry
 
 
 class AutoPatchCompleter(Completer):
@@ -14,10 +14,10 @@ class AutoPatchCompleter(Completer):
     职责边界：
     1. 输入 '/' 时补全系统命令。
     2. 输入 '@' 时基于本地索引补全文件、目录、类或方法。
-    3. 不解析最终工作范围；@mention 到 CodeScope 的转换由 ScopeService 完成。
+    3. 不解析最终工作范围；@mention 到 CodeScope 的转换由 ScopeResolver 完成。
     """
 
-    def __init__(self, search_func: Callable[[str], list[IndexEntry]]) -> None:
+    def __init__(self, search_func: Callable[[str], list[SymbolIndexEntry]]) -> None:
         self.search_func = search_func
         # 预编译正则，支持双前缀识别
         self.mention_pattern = re.compile(r'@[\w\.]*')

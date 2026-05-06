@@ -5,8 +5,8 @@ from typing import Any, Callable
 
 from autopatch_j.cli.render import CliRenderer
 from autopatch_j.core.chat_filter import ChatFilter
-from autopatch_j.core.models import IntentType
-from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.core.domain import IntentType
+from autopatch_j.core.review import ReviewWorkspaceManager
 
 
 @dataclass(slots=True)
@@ -102,7 +102,7 @@ class AgentStreamPresenter:
     def __init__(
         self,
         renderer: CliRenderer,
-        workspace_manager: WorkspaceManager | None,
+        workspace_manager: ReviewWorkspaceManager | None,
         chat_filter: ChatFilter | None,
         agent: Any | None,
         describe_current_scope_paths: Callable[[], list[str]],
@@ -168,7 +168,7 @@ class AgentStreamPresenter:
         if suppress_answer_output:
             return new_messages
 
-        has_pending_patches = workspace_manager.load_workspace().has_pending_patch()
+        has_pending_patches = workspace_manager.load().has_pending_patch()
         answer_allowed_with_pending_patch = {
             IntentType.PATCH_EXPLAIN,
             IntentType.CODE_EXPLAIN,

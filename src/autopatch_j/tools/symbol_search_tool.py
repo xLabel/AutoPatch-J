@@ -7,7 +7,7 @@ class SymbolSearchTool(Tool):
     """
     Java 符号导航工具。
 
-    查询 SymbolIndexer 产出的轻量索引，帮助 LLM 在大项目中定位类、方法或文件；
+    查询 SymbolIndex 产出的轻量索引，帮助 LLM 在大项目中定位类、方法或文件；
     它只返回候选位置，读取源码仍交给 read_source_code。
     """
 

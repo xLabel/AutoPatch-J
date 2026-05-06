@@ -9,7 +9,7 @@ from autopatch_j.cli.command_router import CommandRouter
 from autopatch_j.cli.render import CliRenderer
 from autopatch_j.cli.runtime import CliRuntime
 from autopatch_j.cli.summary_provider import CliSummaryProvider
-from autopatch_j.core.models import ConversationRoute, IntentType
+from autopatch_j.core.domain import ConversationRoute, IntentType
 
 
 @dataclass(slots=True)

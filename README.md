@@ -102,7 +102,7 @@ AutoPatch-J 有项目级普通问答记忆，但它只服务 `code_explain` 和 
 | `patch_explain` | 解释当前待确认补丁 | `search_symbols` / `read_source_code` | 否 | 只解释当前补丁，不生成新补丁 |
 | `patch_revise` | 按反馈重写当前补丁 | `search_symbols` / `read_source_code` / `get_finding_detail` / `revise_patch` | 否 | 只替换当前补丁，不修改后续队列 |
 
-`IntentDetector` 使用短 LLM 判断用户输入属于哪类 intent，但程序会做状态兜底。例如没有待确认补丁时，即使 LLM 返回 `patch_explain` 或 `patch_revise`，程序也会拒绝这些补丁态意图。
+`UserIntentClassifier` 使用短 LLM 判断用户输入属于哪类 intent，但程序会做状态兜底。例如没有待确认补丁时，即使 LLM 返回 `patch_explain` 或 `patch_revise`，程序也会拒绝这些补丁态意图。
 
 ## 能做什么
 
@@ -243,16 +243,16 @@ python -m autopatch_j
 
 ```text
 用户输入
--> IntentDetector 判断任务类型
--> ScopeService 解析 @mention 或当前项目范围
--> ScannerRunner 执行 Semgrep 扫描
--> BacklogManager 按 finding 逐项推进
+-> UserIntentClassifier 判断任务类型
+-> ScopeResolver 解析 @mention 或当前项目范围
+-> StaticScanRunner 执行 Semgrep 扫描
+-> FindingBacklog 按 finding 逐项推进
 -> Agent 调用工具读取 finding 与源码
 -> propose_patch 生成候选补丁
 -> Workflow 判断本轮 finding 是否完成
--> WorkspaceManager 写入待确认补丁队列
+-> ReviewWorkspaceManager 写入待确认补丁队列
 -> 用户 apply / discard / abort / 反馈重写
--> PatchEngine + PatchVerifier 执行应用和复核
+-> SearchReplacePatchEngine + PatchQualityVerifier 执行应用和复核
 ```
 
 这条链路的核心约束是：LLM 负责推理，Workflow 负责边界，工具负责可复核动作。
@@ -281,8 +281,9 @@ docs/                 # 架构设计文档
 2. `src/autopatch_j/cli/input_router.py`
 3. `src/autopatch_j/cli/workflows/`
 4. `src/autopatch_j/agent/agent.py`
-5. `src/autopatch_j/core/input_classifier.py`
-6. `src/autopatch_j/core/workspace_manager.py`
-7. `src/autopatch_j/core/memory/`
+5. `src/autopatch_j/core/user_input/`
+6. `src/autopatch_j/core/review/`
+7. `src/autopatch_j/core/patching/`
+8. `src/autopatch_j/core/memory/`
 
 如果想理解普通问答记忆的设计边界，直接看 [Agent Memory 设计说明](docs/memory_design.md)。

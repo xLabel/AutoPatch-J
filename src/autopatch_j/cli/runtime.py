@@ -8,18 +8,18 @@ from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.cli.summary_provider import CliSummaryProvider
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.backlog_manager import BacklogManager
+from autopatch_j.core.review import ProjectArtifactStore
+from autopatch_j.core.review import FindingBacklog
 from autopatch_j.core.chat_filter import ChatFilter
-from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.input_classifier import ConversationRouter, IntentDetector, build_llm_intent_classifier
+from autopatch_j.core.project import SourceReader
+from autopatch_j.core.user_input import ReviewRouteClassifier, UserIntentClassifier, build_llm_user_intent_classifier
 from autopatch_j.core.memory import MemoryManager
-from autopatch_j.core.patch_engine import PatchEngine
-from autopatch_j.core.patch_verifier import PatchVerifier
-from autopatch_j.core.scanner_runner import ScannerRunner
-from autopatch_j.core.scope_service import ScopeService
-from autopatch_j.core.symbol_indexer import SymbolIndexer
-from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.core.patching import SearchReplacePatchEngine
+from autopatch_j.core.patching import PatchQualityVerifier
+from autopatch_j.core.review import StaticScanRunner
+from autopatch_j.core.project import ScopeResolver
+from autopatch_j.core.project import SymbolIndex
+from autopatch_j.core.review import ReviewWorkspaceManager
 from autopatch_j.llm.client import LLMClient, build_default_llm_client
 from autopatch_j.scanners import DEFAULT_SCANNER_NAME, get_scanner
 
@@ -33,18 +33,18 @@ class CliRuntime:
     不执行命令，也不承载 CLI 主循环。
     """
 
-    artifact_manager: ArtifactManager
-    symbol_indexer: SymbolIndexer
-    patch_engine: PatchEngine
-    code_fetcher: CodeFetcher
-    patch_verifier: PatchVerifier | None
-    intent_detector: IntentDetector
-    conversation_router: ConversationRouter
-    backlog_manager: BacklogManager
+    artifact_manager: ProjectArtifactStore
+    symbol_indexer: SymbolIndex
+    patch_engine: SearchReplacePatchEngine
+    code_fetcher: SourceReader
+    patch_verifier: PatchQualityVerifier | None
+    intent_detector: UserIntentClassifier
+    conversation_router: ReviewRouteClassifier
+    backlog_manager: FindingBacklog
     chat_filter: ChatFilter
-    scope_service: ScopeService
-    scanner_runner: ScannerRunner
-    workspace_manager: WorkspaceManager
+    scope_service: ScopeResolver
+    scanner_runner: StaticScanRunner
+    workspace_manager: ReviewWorkspaceManager
     memory_manager: MemoryManager
     agent: Agent
     summary_provider: CliSummaryProvider
@@ -55,21 +55,21 @@ def build_cli_runtime(
     llm_factory: Callable[[], LLMClient | None] = build_default_llm_client,
 ) -> CliRuntime:
     shared_llm = llm_factory()
-    artifact_manager = ArtifactManager(repo_root)
-    symbol_indexer = SymbolIndexer(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
-    patch_engine = PatchEngine(repo_root)
-    code_fetcher = CodeFetcher(repo_root)
-    intent_detector = IntentDetector(classify_with_llm=build_llm_intent_classifier(shared_llm))
-    backlog_manager = BacklogManager()
+    artifact_manager = ProjectArtifactStore(repo_root)
+    symbol_indexer = SymbolIndex(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
+    patch_engine = SearchReplacePatchEngine(repo_root)
+    code_fetcher = SourceReader(repo_root)
+    intent_detector = UserIntentClassifier(classify_with_llm=build_llm_user_intent_classifier(shared_llm))
+    backlog_manager = FindingBacklog()
     chat_filter = ChatFilter()
-    conversation_router = ConversationRouter(llm=shared_llm)
-    scope_service = ScopeService(repo_root, symbol_indexer, ignored_dirs=GlobalConfig.ignored_dirs)
-    scanner_runner = ScannerRunner(repo_root, artifact_manager)
-    workspace_manager = WorkspaceManager(artifact_manager)
+    conversation_router = ReviewRouteClassifier(llm=shared_llm)
+    scope_service = ScopeResolver(repo_root, symbol_indexer, ignored_dirs=GlobalConfig.ignored_dirs)
+    scanner_runner = StaticScanRunner(repo_root, artifact_manager)
+    workspace_manager = ReviewWorkspaceManager(artifact_manager)
     memory_manager = MemoryManager(artifact_manager.state_dir / "memory.json")
 
     scanner = get_scanner(DEFAULT_SCANNER_NAME)
-    patch_verifier = PatchVerifier(repo_root, scanner) if scanner else None
+    patch_verifier = PatchQualityVerifier(repo_root, scanner) if scanner else None
 
     agent_session = AgentSession(
         repo_root=repo_root,

@@ -5,7 +5,7 @@ from enum import Enum, auto
 from typing import Any
 from uuid import uuid4
 
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.domain import IntentType
 
 
 MEMORY_VERSION = 1

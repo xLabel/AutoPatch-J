@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.tools.base import Tool, ToolResult
 from autopatch_j.tools.patch_draft_builder import build_patch_draft
 
@@ -9,7 +9,7 @@ class PatchRevisionTool(Tool):
     """
     当前待确认补丁的修订工具。
 
-    只为正在 review 的补丁生成替代 PatchDraft，并暂存在本轮 AgentSession；
+    只为正在 review 的补丁生成替代 SearchReplacePatchDraft，并暂存在本轮 AgentSession；
     ReAct 结束后由 workflow 替换队头补丁，不影响后续补丁队列。
     """
 
@@ -56,7 +56,7 @@ class PatchRevisionTool(Tool):
         if isinstance(draft_result, ToolResult):
             return draft_result
 
-        draft: PatchDraft = draft_result
+        draft: SearchReplacePatchDraft = draft_result
         context.set_revised_patch_draft(draft)
         message = f"当前补丁修订草案已生成。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"

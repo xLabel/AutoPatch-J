@@ -93,10 +93,10 @@ class AutoPatchCli:
         while True:
             try:
                 runtime = self.runtime
-                workspace = runtime.workspace_manager.load_workspace() if runtime else None
-                current_item = workspace.get_current_patch() if workspace else None
-                pending_draft = current_item.draft.fetch_patch_draft() if current_item else None
-                current_idx, total_count = workspace.get_review_progress() if workspace else (0, 0)
+                workspace = runtime.workspace_manager.load() if runtime else None
+                current_item = workspace.current_patch() if workspace else None
+                pending_draft = current_item.draft.to_patch_draft() if current_item else None
+                current_idx, total_count = workspace.review_progress() if workspace else (0, 0)
                 prompt_prefix = "autopatch-j"
 
                 if pending_draft:

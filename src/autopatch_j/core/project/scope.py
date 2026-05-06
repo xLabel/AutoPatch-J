@@ -4,32 +4,32 @@ import os
 import re
 from pathlib import Path
 
-from autopatch_j.core.symbol_indexer import IndexEntry, SymbolIndexer
-from autopatch_j.core.models import CodeScope, CodeScopeKind
-from autopatch_j.core.path_guard import (
+from autopatch_j.core.domain.scope import CodeScope, CodeScopeKind
+from autopatch_j.core.project.repo_path import (
     UnsafeRepoPathError,
     normalize_repo_path,
     resolve_repo_path,
     to_repo_relative_path,
 )
+from autopatch_j.core.project.symbol_index import SymbolIndex, SymbolIndexEntry
 
 
-class ScopeService:
+class ScopeResolver:
     """
     用户 @mention 到 CodeScope 的解析服务。
 
     职责边界：
-    1. 结合 SymbolIndexer 将文件、目录、类或方法 mention 解析为文件级 focus_files。
+    1. 结合 SymbolIndex 将文件、目录、类或方法 mention 解析为文件级 focus_files。
     2. 决定当前任务是否锁定焦点范围，作为 Agent/Tool 的路径约束来源。
     3. 不判断用户意图，也不触发扫描；它只产出可执行的代码范围。
     """
 
-    def __init__(self, repo_root: Path, symbol_indexer: SymbolIndexer, ignored_dirs: set[str] | None = None) -> None:
+    def __init__(self, repo_root: Path, symbol_index: SymbolIndex, ignored_dirs: set[str] | None = None) -> None:
         self.repo_root = repo_root.resolve()
-        self.symbol_indexer = symbol_indexer
+        self.symbol_index = symbol_index
         self.ignored_dirs = ignored_dirs or set()
 
-    def fetch_scope(self, user_text: str, default_to_project: bool = False) -> CodeScope | None:
+    def resolve(self, user_text: str, default_to_project: bool = False) -> CodeScope | None:
         mentions = re.findall(r"@([^\s@]+)", user_text)
         if not mentions:
             if not default_to_project:
@@ -49,7 +49,7 @@ class ScopeService:
             entry = self._fetch_best_entry(mention)
             if entry is None:
                 continue
-            normalized_path = self._normalize_repo_path(entry.path)
+            normalized_path = normalize_repo_path(entry.path)
             if normalized_path not in source_roots:
                 source_roots.append(normalized_path)
             if entry.kind == "dir":
@@ -63,11 +63,7 @@ class ScopeService:
         if not focus_files:
             return None
 
-        if len(focus_files) == 1 and not saw_directory:
-            kind = CodeScopeKind.SINGLE_FILE
-        else:
-            kind = CodeScopeKind.MULTI_FILE
-
+        kind = CodeScopeKind.SINGLE_FILE if len(focus_files) == 1 and not saw_directory else CodeScopeKind.MULTI_FILE
         return CodeScope(
             kind=kind,
             source_roots=source_roots,
@@ -75,8 +71,8 @@ class ScopeService:
             is_locked=True,
         )
 
-    def _fetch_best_entry(self, mention: str) -> IndexEntry | None:
-        normalized = self._normalize_repo_path(mention)
+    def _fetch_best_entry(self, mention: str) -> SymbolIndexEntry | None:
+        normalized = normalize_repo_path(mention)
         try:
             candidate = resolve_repo_path(self.repo_root, normalized)
         except UnsafeRepoPathError:
@@ -84,18 +80,17 @@ class ScopeService:
         if candidate.exists():
             rel_path = to_repo_relative_path(self.repo_root, candidate)
             if candidate.is_dir():
-                return IndexEntry(path=rel_path, name=candidate.name, kind="dir")
-            return IndexEntry(path=rel_path, name=candidate.name, kind="file")
+                return SymbolIndexEntry(path=rel_path, name=candidate.name, kind="dir")
+            return SymbolIndexEntry(path=rel_path, name=candidate.name, kind="file")
 
         normalized_name = Path(normalized).name
         results = [
             entry
-            for entry in self.symbol_indexer.search(normalized_name, limit=20)
+            for entry in self.symbol_index.search(normalized_name, limit=20)
             if entry.kind in {"file", "dir"}
         ]
         for entry in results:
-            entry_path = self._normalize_repo_path(entry.path)
-            if entry_path == normalized:
+            if normalize_repo_path(entry.path) == normalized:
                 return entry
         for entry in results:
             if entry.name == normalized_name:
@@ -122,13 +117,10 @@ class ScopeService:
     def _fetch_project_java_files(self) -> list[str]:
         java_files: list[str] = []
         for root, dirs, files in os.walk(self.repo_root):
-            dirs[:] = [d for d in dirs if d not in self.ignored_dirs]
+            dirs[:] = [directory for directory in dirs if directory not in self.ignored_dirs]
             for file_name in sorted(files):
                 if not file_name.endswith(".java"):
                     continue
                 full_path = Path(root) / file_name
                 java_files.append(full_path.relative_to(self.repo_root).as_posix())
         return java_files
-
-    def _normalize_repo_path(self, path: str) -> str:
-        return normalize_repo_path(path)

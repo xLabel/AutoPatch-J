@@ -6,7 +6,7 @@ from autopatch_j.cli.workflow_context import InputRouteDecision, WorkflowService
 from autopatch_j.cli.workflows.chat import ChatWorkflow
 from autopatch_j.cli.workflows.code_audit import CodeAuditWorkflow
 from autopatch_j.cli.workflows.patch_review import PatchReviewWorkflow
-from autopatch_j.core.models import ConversationRoute, IntentType, PatchReviewItem
+from autopatch_j.core.domain import ConversationRoute, IntentType, ReviewPatchItem
 
 
 class UserInputRouter:
@@ -23,7 +23,7 @@ class UserInputRouter:
         self.chat_workflow = ChatWorkflow(services)
         self.patch_review_workflow = PatchReviewWorkflow(services)
 
-    def handle_review_input(self, user_input: str, current_item: PatchReviewItem) -> None:
+    def handle_review_input(self, user_input: str, current_item: ReviewPatchItem) -> None:
         if self.patch_review_workflow.handle_review_action(user_input, current_item):
             return
         self.handle_chat(user_input)
@@ -45,11 +45,11 @@ class UserInputRouter:
 
     def classify_chat_input(self, text: str) -> InputRouteDecision:
         runtime = self.services.runtime
-        workspace = runtime.workspace_manager.load_workspace()
+        workspace = runtime.workspace_manager.load()
         has_pending_review = workspace.has_pending_patch()
-        requested_scope = runtime.scope_service.fetch_scope(text, default_to_project=False)
-        current_item = workspace.get_current_patch() if has_pending_review else None
-        route = runtime.conversation_router.determine_route(
+        requested_scope = runtime.scope_service.resolve(text, default_to_project=False)
+        current_item = workspace.current_patch() if has_pending_review else None
+        route = runtime.conversation_router.classify_route(
             user_text=text,
             has_pending_review=has_pending_review,
             requested_scope=requested_scope,
@@ -62,9 +62,9 @@ class UserInputRouter:
 
         if route is ConversationRoute.NEW_TASK:
             self.switch_to_new_task_if_needed(has_pending_review)
-            intent = runtime.intent_detector.detect_intent(text, has_pending_review=False)
+            intent = runtime.intent_detector.classify(text, has_pending_review=False)
         else:
-            intent = runtime.intent_detector.detect_intent(text, has_pending_review=True)
+            intent = runtime.intent_detector.classify(text, has_pending_review=True)
             if intent is IntentType.CODE_EXPLAIN and has_pending_review and "@" not in text:
                 intent = IntentType.PATCH_EXPLAIN
         return InputRouteDecision(route=route, intent=intent)
@@ -73,7 +73,7 @@ class UserInputRouter:
         runtime = self.services.runtime
         runtime.agent.reset_history()
         if has_pending_review:
-            runtime.workspace_manager.clear_workspace()
+            runtime.workspace_manager.clear()
             self.services.renderer.print_agent_text("已切换到新任务")
 
     def dispatch_chat_intent(self, text: str, intent: IntentType) -> None:

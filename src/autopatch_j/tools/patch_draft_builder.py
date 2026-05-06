@@ -3,10 +3,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from autopatch_j.core.patch_engine import (
+from autopatch_j.core.patching import (
     OldStringNotFoundError,
     OldStringNotUniqueError,
-    PatchDraft,
+    SearchReplacePatchDraft,
     TargetFileNotFoundError,
 )
 from autopatch_j.tools.base import ToolContext, ToolResult
@@ -22,7 +22,7 @@ def build_patch_draft(
     *,
     action_label: str,
     focus_verb: str,
-) -> PatchDraft | ToolResult:
+) -> SearchReplacePatchDraft | ToolResult:
     if not context.is_path_in_focus(file_path):
         allowed = ", ".join(context.focus_paths)
         return ToolResult(
@@ -100,7 +100,7 @@ def build_patch_draft(
         status = "invalid"
 
     message_status = "补丁起草成功并已通过语法校验。" if status == "ok" else validation_result.message
-    return PatchDraft(
+    return SearchReplacePatchDraft(
         file_path=file_path,
         old_string=old_string,
         new_string=new_string,

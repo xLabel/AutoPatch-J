@@ -3,31 +3,31 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from autopatch_j.core.models import (
-    AuditAttemptDecision,
+from autopatch_j.core.domain.audit import (
     AuditAttemptOutcome,
-    AuditFindingItem,
     AuditFindingStatus,
+    FindingAttemptDecision,
+    FindingTask,
 )
 from autopatch_j.scanners.base import ScanResult
 
 
 @dataclass(slots=True)
-class BacklogManager:
+class FindingBacklog:
     """
     本轮审计 finding 队列的状态机。
 
     职责边界：
-    1. 将 ScanResult 展开为 F1/F2 这类可逐个推进的 AuditFindingItem。
+    1. 将 ScanResult 展开为 F1/F2 这类可逐个推进的 FindingTask。
     2. 根据 propose_patch 的工具消息推断补丁已就绪、可重试或失败。
-    3. 不生成补丁、不调用 Agent，也不写 workspace；这些由 WorkflowController 协调。
+    3. 不生成补丁、不调用 Agent，也不写 workspace；这些由 CLI workflow 协调。
     """
 
-    def fetch_backlog(self, scan_result: ScanResult) -> list[AuditFindingItem]:
-        backlog: list[AuditFindingItem] = []
+    def build_from_scan_result(self, scan_result: ScanResult) -> list[FindingTask]:
+        backlog: list[FindingTask] = []
         for index, finding in enumerate(scan_result.findings, start=1):
             backlog.append(
-                AuditFindingItem(
+                FindingTask(
                     finding_id=f"F{index}",
                     file_path=finding.path,
                     check_id=finding.check_id,
@@ -39,13 +39,13 @@ class BacklogManager:
             )
         return backlog
 
-    def fetch_current_finding(self, backlog: list[AuditFindingItem]) -> AuditFindingItem | None:
+    def current(self, backlog: list[FindingTask]) -> FindingTask | None:
         for item in backlog:
             if item.is_pending():
                 return item
         return None
 
-    def mark_patch_ready(self, backlog: list[AuditFindingItem], finding_id: str) -> None:
+    def mark_patch_ready(self, backlog: list[FindingTask], finding_id: str) -> None:
         item = self._fetch_item(backlog, finding_id)
         if item is None:
             return
@@ -55,7 +55,7 @@ class BacklogManager:
 
     def record_retry(
         self,
-        backlog: list[AuditFindingItem],
+        backlog: list[FindingTask],
         finding_id: str,
         error_code: str | None,
         error_message: str | None,
@@ -69,7 +69,7 @@ class BacklogManager:
 
     def mark_failed(
         self,
-        backlog: list[AuditFindingItem],
+        backlog: list[FindingTask],
         finding_id: str,
         error_code: str | None,
         error_message: str | None,
@@ -83,9 +83,9 @@ class BacklogManager:
 
     def infer_attempt_decision(
         self,
-        current_item: AuditFindingItem,
+        current_item: FindingTask,
         messages: list[dict[str, Any]],
-    ) -> AuditAttemptDecision:
+    ) -> FindingAttemptDecision:
         propose_messages = [
             message
             for message in messages
@@ -105,25 +105,25 @@ class BacklogManager:
 
             status = str(message.get("tool_status", ""))
             if status in {"ok", "invalid"}:
-                return AuditAttemptDecision(outcome=AuditAttemptOutcome.PATCH_READY)
+                return FindingAttemptDecision(outcome=AuditAttemptOutcome.PATCH_READY)
 
             error_code = self._fetch_error_code(payload=payload, message=message)
             error_message = self._fetch_error_message(payload=payload, message=message)
             if error_code == "OLD_STRING_NOT_FOUND":
-                return AuditAttemptDecision(
+                return FindingAttemptDecision(
                     outcome=AuditAttemptOutcome.RETRYABLE_ERROR,
                     error_code=error_code,
                     error_message=error_message,
                 )
-            return AuditAttemptDecision(
+            return FindingAttemptDecision(
                 outcome=AuditAttemptOutcome.NO_PATCH,
                 error_code=error_code,
                 error_message=error_message,
             )
 
-        return AuditAttemptDecision(outcome=AuditAttemptOutcome.NO_PATCH)
+        return FindingAttemptDecision(outcome=AuditAttemptOutcome.NO_PATCH)
 
-    def _fetch_item(self, backlog: list[AuditFindingItem], finding_id: str) -> AuditFindingItem | None:
+    def _fetch_item(self, backlog: list[FindingTask], finding_id: str) -> FindingTask | None:
         for item in backlog:
             if item.finding_id == finding_id:
                 return item

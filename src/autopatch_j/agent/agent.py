@@ -9,7 +9,7 @@ from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.task_executor import AgentTaskExecutor, build_agent_callbacks
 from autopatch_j.agent.tool_executor import ToolExecutor
 from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
-from autopatch_j.core.models import AuditFindingItem, CodeScope, PatchReviewItem
+from autopatch_j.core.domain import FindingTask, CodeScope, ReviewPatchItem
 from autopatch_j.llm.client import LLMClient, build_default_llm_client
 from autopatch_j.tools.base import Tool
 
@@ -72,7 +72,7 @@ class Agent:
     def perform_code_audit(
         self,
         raw_user_text: str,
-        current_finding: AuditFindingItem,
+        current_finding: FindingTask,
         force_reread: bool,
         on_token: TextCallback | None = None,
         on_reasoning: TextCallback | None = None,
@@ -136,7 +136,7 @@ class Agent:
     def perform_patch_explain(
         self,
         raw_user_text: str,
-        current_item: PatchReviewItem,
+        current_item: ReviewPatchItem,
         on_token: TextCallback | None = None,
         on_reasoning: TextCallback | None = None,
         on_observation: ObservationCallback | None = None,
@@ -151,7 +151,7 @@ class Agent:
     def perform_patch_revise(
         self,
         raw_user_text: str,
-        current_item: PatchReviewItem,
+        current_item: ReviewPatchItem,
         on_token: TextCallback | None = None,
         on_reasoning: TextCallback | None = None,
         on_observation: ObservationCallback | None = None,

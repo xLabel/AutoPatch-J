@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from autopatch_j.core.path_guard import (
+from autopatch_j.core.project import (
     UnsafeRepoPathError,
     normalize_repo_path,
     resolve_repo_path,
@@ -12,14 +12,14 @@ from autopatch_j.core.path_guard import (
 )
 
 if TYPE_CHECKING:
-    from autopatch_j.core.artifact_manager import ArtifactManager
-    from autopatch_j.core.code_fetcher import CodeFetcher
-    from autopatch_j.core.models import IntentType
+    from autopatch_j.core.review import ProjectArtifactStore
+    from autopatch_j.core.project import SourceReader
+    from autopatch_j.core.domain import IntentType
     from autopatch_j.core.memory import MemoryManager
-    from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
-    from autopatch_j.core.patch_verifier import PatchVerifier
-    from autopatch_j.core.symbol_indexer import SymbolIndexer
-    from autopatch_j.core.workspace_manager import WorkspaceManager
+    from autopatch_j.core.patching import SearchReplacePatchDraft, SearchReplacePatchEngine
+    from autopatch_j.core.patching import PatchQualityVerifier
+    from autopatch_j.core.project import SymbolIndex
+    from autopatch_j.core.review import ReviewWorkspaceManager
     from autopatch_j.tools.base import ToolResult
 
 
@@ -29,24 +29,24 @@ class AgentSession:
     Agent 与 Tool 共享的运行上下文。
 
     这里保存的是一次 CLI 会话内需要共享的执行依赖和短期状态。长期状态
-    由专门的 core service 负责，例如 workspace 由 WorkspaceManager 管理，
+    由专门的 core service 负责，例如 workspace 由 ReviewWorkspaceManager 管理，
     普通问答记忆由 MemoryManager 管理。
     """
 
     repo_root: Path
-    artifact_manager: ArtifactManager
-    workspace_manager: WorkspaceManager
-    symbol_indexer: SymbolIndexer
-    patch_engine: PatchEngine
-    code_fetcher: CodeFetcher
-    patch_verifier: PatchVerifier | None = None
+    artifact_manager: ProjectArtifactStore
+    workspace_manager: ReviewWorkspaceManager
+    symbol_indexer: SymbolIndex
+    patch_engine: SearchReplacePatchEngine
+    code_fetcher: SourceReader
+    patch_verifier: PatchQualityVerifier | None = None
     memory_manager: MemoryManager | None = None
 
     focus_paths: list[str] = field(default_factory=list)
     source_read_cache: dict[tuple[str, str | None, int | None], ToolResult] = field(default_factory=dict)
     patch_source_hint: str | None = None
-    proposed_patch_draft: PatchDraft | None = None
-    revised_patch_draft: PatchDraft | None = None
+    proposed_patch_draft: SearchReplacePatchDraft | None = None
+    revised_patch_draft: SearchReplacePatchDraft | None = None
     code_explain_allow_symbol_search: bool = True
 
     def set_focus_paths(self, paths: list[str] | None) -> None:
@@ -83,21 +83,21 @@ class AgentSession:
         key = (self.normalize_repo_path(path), symbol, line)
         self.source_read_cache[key] = result
 
-    def set_proposed_patch_draft(self, draft: PatchDraft) -> None:
+    def set_proposed_patch_draft(self, draft: SearchReplacePatchDraft) -> None:
         self.proposed_patch_draft = draft
 
     def clear_proposed_patch_draft(self) -> None:
         self.proposed_patch_draft = None
 
-    def pop_proposed_patch_draft(self) -> PatchDraft | None:
+    def pop_proposed_patch_draft(self) -> SearchReplacePatchDraft | None:
         draft = self.proposed_patch_draft
         self.proposed_patch_draft = None
         return draft
 
-    def set_revised_patch_draft(self, draft: PatchDraft) -> None:
+    def set_revised_patch_draft(self, draft: SearchReplacePatchDraft) -> None:
         self.revised_patch_draft = draft
 
-    def pop_revised_patch_draft(self) -> PatchDraft | None:
+    def pop_revised_patch_draft(self) -> SearchReplacePatchDraft | None:
         draft = self.revised_patch_draft
         self.revised_patch_draft = None
         return draft

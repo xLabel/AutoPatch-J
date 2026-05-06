@@ -4,7 +4,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.domain import IntentType
 
 from .delta import MemoryDeltaApplier
 from .prompt_context import MemoryPromptContextBuilder

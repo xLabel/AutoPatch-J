@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from autopatch_j.agent.agent import Agent
-from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.models import CodeScope, PatchReviewItem
-from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.core.review import ProjectArtifactStore
+from autopatch_j.core.domain import CodeScope, ReviewPatchItem
+from autopatch_j.core.review import ReviewWorkspaceManager
 
 
 @dataclass(slots=True)
@@ -21,12 +21,12 @@ class CliSummaryProvider:
     """
 
     repo_root: Path
-    artifact_manager: ArtifactManager
-    workspace_manager: WorkspaceManager
+    artifact_manager: ProjectArtifactStore
+    workspace_manager: ReviewWorkspaceManager
     agent: Agent
 
-    def fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
-        workspace = self.workspace_manager.load_workspace()
+    def fetch_review_scope_paths(self, current_item: ReviewPatchItem) -> list[str]:
+        workspace = self.workspace_manager.load()
         if workspace.scope is not None and workspace.scope.focus_files:
             return list(workspace.scope.focus_files)
         return [current_item.file_path]
@@ -39,7 +39,7 @@ class CliSummaryProvider:
         return ["当前范围"]
 
     def describe_current_scope_paths(self) -> list[str]:
-        workspace = self.workspace_manager.load_workspace()
+        workspace = self.workspace_manager.load()
         if workspace.scope is not None and workspace.scope.focus_files:
             return list(workspace.scope.focus_files)
         scan_paths = self._collect_latest_scan_paths()

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autopatch_j.core.path_guard import UnsafeRepoPathError, resolve_repo_path, to_repo_relative_path
-from autopatch_j.core.symbol_indexer import IndexEntry
+from autopatch_j.core.project import UnsafeRepoPathError, resolve_repo_path, to_repo_relative_path
+from autopatch_j.core.project import SymbolIndexEntry
 from autopatch_j.tools.base import Tool, ToolResult
 
 
@@ -66,14 +66,14 @@ class SourceReaderTool(Tool):
             return cached_result
 
         if line:
-            entry = IndexEntry(
+            entry = SymbolIndexEntry(
                 path=path,
                 name=symbol or "targeted_code",
                 kind="method" if symbol else "file",
                 line=line,
             )
         else:
-            entry = IndexEntry(path=path, name=path, kind="file", line=0)
+            entry = SymbolIndexEntry(path=path, name=path, kind="file", line=0)
         code = code_fetcher.fetch_entry_source(entry)
 
         if code.startswith("错误"):

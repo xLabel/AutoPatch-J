@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from autopatch_j.cli.workflow_context import WorkflowServices
-from autopatch_j.core.models import IntentType, PatchReviewItem
+from autopatch_j.core.domain import IntentType, ReviewPatchItem
 
 
 class PatchReviewWorkflow:
@@ -15,15 +15,15 @@ class PatchReviewWorkflow:
     def __init__(self, services: WorkflowServices) -> None:
         self.services = services
 
-    def handle_review_action(self, user_input: str, current_item: PatchReviewItem) -> bool:
+    def handle_review_action(self, user_input: str, current_item: ReviewPatchItem) -> bool:
         runtime = self.services.runtime
-        current_draft = current_item.draft.fetch_patch_draft()
+        current_draft = current_item.draft.to_patch_draft()
         normalized = user_input.lower()
 
         if normalized == "apply":
             self.services.command_handlers.handle_apply(current_draft)
             with runtime.workspace_manager.edit() as workspace:
-                workspace.mark_applied()
+                workspace.mark_current_patch_applied()
                 if not workspace.has_pending_patch():
                     self.services.renderer.print_agent_text("补丁队列已清空")
             return True
@@ -31,13 +31,13 @@ class PatchReviewWorkflow:
         if normalized == "discard":
             self.services.command_handlers.handle_discard()
             with runtime.workspace_manager.edit() as workspace:
-                workspace.mark_discarded()
+                workspace.mark_current_patch_discarded()
                 if not workspace.has_pending_patch():
                     self.services.renderer.print_agent_text("补丁队列已清空")
             return True
 
         if normalized == "abort":
-            runtime.workspace_manager.clear_workspace()
+            runtime.workspace_manager.clear()
             runtime.agent.reset_history()
             self.services.renderer.print_agent_text("已中止审核流程，丢弃所有剩余补丁草案。")
             return True
@@ -46,7 +46,7 @@ class PatchReviewWorkflow:
 
     def handle_patch_explain(self, text: str) -> None:
         runtime = self.services.runtime
-        current_item = runtime.workspace_manager.load_workspace().get_current_patch()
+        current_item = runtime.workspace_manager.load().current_patch()
         if current_item is None:
             self.services.renderer.print_error("当前没有待确认补丁")
             return
@@ -66,7 +66,7 @@ class PatchReviewWorkflow:
 
     def handle_patch_revise(self, text: str) -> None:
         runtime = self.services.runtime
-        current_item = runtime.workspace_manager.load_workspace().get_current_patch()
+        current_item = runtime.workspace_manager.load().current_patch()
         if current_item is None:
             self.services.renderer.print_error("当前没有待确认补丁")
             return

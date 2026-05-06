@@ -21,7 +21,7 @@ from autopatch_j.agent.task_profile import (
     fetch_task_profile,
 )
 from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
-from autopatch_j.core.models import AuditFindingItem, CodeScope, CodeScopeKind, IntentType, PatchReviewItem
+from autopatch_j.core.domain import FindingTask, CodeScope, CodeScopeKind, IntentType, ReviewPatchItem
 
 
 class AgentTaskExecutor:
@@ -45,7 +45,7 @@ class AgentTaskExecutor:
     def perform_code_audit(
         self,
         raw_user_text: str,
-        current_finding: AuditFindingItem,
+        current_finding: FindingTask,
         force_reread: bool,
         callbacks: AgentCallbacks,
     ) -> str:
@@ -108,7 +108,7 @@ class AgentTaskExecutor:
     def perform_patch_explain(
         self,
         raw_user_text: str,
-        current_item: PatchReviewItem,
+        current_item: ReviewPatchItem,
         callbacks: AgentCallbacks,
     ) -> str:
         prompt = build_patch_explain_user_prompt(current_item, raw_user_text)
@@ -117,7 +117,7 @@ class AgentTaskExecutor:
     def perform_patch_revise(
         self,
         raw_user_text: str,
-        current_item: PatchReviewItem,
+        current_item: ReviewPatchItem,
         callbacks: AgentCallbacks,
     ) -> str:
         prompt = build_patch_revise_user_prompt(current_item, raw_user_text)
@@ -132,7 +132,7 @@ class AgentTaskExecutor:
         )
 
     def _build_task_system_prompt(self, intent: IntentType, current_user_text: str) -> str:
-        pending = self.session.workspace_manager.load_pending_patch()
+        pending = self.session.workspace_manager.load_current_patch_draft()
         return build_task_system_prompt(
             intent=intent,
             pending_file=pending.file_path if pending else None,

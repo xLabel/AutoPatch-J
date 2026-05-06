@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.tools.base import Tool, ToolResult
 from autopatch_j.tools.patch_draft_builder import build_patch_draft
 
@@ -9,7 +9,7 @@ class PatchProposalTool(Tool):
     """
     新补丁起草工具。
 
-    用 search-replace 输入生成单个 PatchDraft，并暂存在本轮 AgentSession；
+    用 search-replace 输入生成单个 SearchReplacePatchDraft，并暂存在本轮 AgentSession；
     ReAct 成功结束后由 workflow 统一确认入队，工具本身不写磁盘、不直接改队列。
     """
 
@@ -57,7 +57,7 @@ class PatchProposalTool(Tool):
             context.clear_proposed_patch_draft()
             return draft_result
 
-        draft: PatchDraft = draft_result
+        draft: SearchReplacePatchDraft = draft_result
         context.set_proposed_patch_draft(draft)
         message = f"补丁草案已生成，等待流程确认入队。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.domain import IntentType
 
 
 class ChatFilter:

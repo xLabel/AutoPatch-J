@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.core.models import IntentType, AuditFindingItem, CodeScope, CodeScopeKind, PatchReviewItem
+from autopatch_j.core.domain import IntentType, FindingTask, CodeScope, CodeScopeKind, ReviewPatchItem
 
 BASE_SYSTEM_PROMPT = """你是 AutoPatch-J 的代码修复智能体。
 你的首要目标是做出可验证、最小化、工程化的判断与补丁提案。
@@ -108,7 +108,7 @@ def build_zero_finding_review_system_prompt(
 
 def build_code_audit_user_prompt(
     text: str,
-    current_finding: AuditFindingItem,
+    current_finding: FindingTask,
     force_reread: bool,
 ) -> str:
     lines = [
@@ -190,7 +190,7 @@ def build_code_explain_user_prompt(
         f"用户问题:\n{text}"
     )
 
-def build_patch_explain_user_prompt(current_item: PatchReviewItem, user_text: str) -> str:
+def build_patch_explain_user_prompt(current_item: ReviewPatchItem, user_text: str) -> str:
     draft = current_item.draft
     return (
         f"当前待确认补丁文件: {current_item.file_path}\n"
@@ -205,7 +205,7 @@ def build_patch_explain_user_prompt(current_item: PatchReviewItem, user_text: st
     )
 
 def build_patch_revise_user_prompt(
-    current_item: PatchReviewItem,
+    current_item: ReviewPatchItem,
     user_text: str,
 ) -> str:
     draft = current_item.draft

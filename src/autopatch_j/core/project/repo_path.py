@@ -22,6 +22,7 @@ def resolve_repo_path(repo_root: Path, path: str) -> Path:
     只接受相对路径，并在 resolve 后确认目标仍位于 repo_root 内，防止 ../、
     绝对路径或软链接把读取/扫描/补丁操作带出当前仓库。
     """
+
     normalized = normalize_repo_path(path)
     candidate = Path(normalized)
     if candidate.is_absolute() or "\x00" in normalized:

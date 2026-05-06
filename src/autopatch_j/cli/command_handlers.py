@@ -9,7 +9,7 @@ from rich.text import Text
 from autopatch_j.cli.render import BODY_STYLE, DECISION_STYLE, MUTED_STYLE, SYSTEM_STYLE
 from autopatch_j.cli.runtime import CliRuntime
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.scanners import ALL_SCANNERS
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 
@@ -98,7 +98,7 @@ class CommandHandlers:
         runtime = self._require_runtime()
         if runtime is None:
             return
-        runtime.workspace_manager.clear_workspace()
+        runtime.workspace_manager.clear()
 
         status, _ = install_managed_semgrep_runtime()
         self.host.renderer.print_step(f"扫描器运行时自检: {status}")
@@ -127,8 +127,8 @@ class CommandHandlers:
         table.add_row(self._status_label("LLM 模型"), self._status_value(GlobalConfig.llm_model))
         table.add_row(self._status_label("调试模式"), self._status_value("开启" if GlobalConfig.debug_mode else "关闭"))
 
-        workspace = runtime.workspace_manager.load_workspace()
-        pending = workspace.get_current_patch()
+        workspace = runtime.workspace_manager.load()
+        pending = workspace.current_patch()
         buffer_status = (
             Text.assemble(
                 ("存在待确认补丁", DECISION_STYLE),
@@ -166,7 +166,7 @@ class CommandHandlers:
         stats = runtime.symbol_indexer.rebuild_index()
         self.host.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
 
-    def handle_apply(self, pending: PatchDraft) -> None:
+    def handle_apply(self, pending: SearchReplacePatchDraft) -> None:
         runtime = self._require_runtime()
         if runtime is None:
             return

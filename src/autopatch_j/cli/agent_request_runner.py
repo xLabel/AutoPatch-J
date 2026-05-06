@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from autopatch_j.cli.agent_stream_presenter import AgentStreamPresenter
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.domain import IntentType
 
 
 class AgentRequestRunner:

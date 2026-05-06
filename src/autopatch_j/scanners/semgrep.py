@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.path_guard import UnsafeRepoPathError, resolve_repo_path, to_repo_relative_path
+from autopatch_j.core.project import UnsafeRepoPathError, resolve_repo_path, to_repo_relative_path
 from autopatch_j.scanners.base import ScannerMeta, ScannerName, ScanResult
 from autopatch_j.scanners.semgrep_result import (
     extract_rule,

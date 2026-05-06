@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.domain import IntentType
 
 from .schema import (
     LONG_TERM_SIGNALS,

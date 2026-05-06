@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from autopatch_j.cli.workflow_context import WorkflowServices
-from autopatch_j.core.models import AuditAttemptOutcome, AuditFindingItem, CodeScope
+from autopatch_j.core.domain import AuditAttemptOutcome, FindingTask, CodeScope
 
 
 class CodeAuditWorkflow:
@@ -23,15 +23,15 @@ class CodeAuditWorkflow:
             return
 
         runtime = self.services.runtime
-        while finding := runtime.backlog_manager.fetch_current_finding(backlog):
+        while finding := runtime.backlog_manager.current(backlog):
             self._process_single_finding(finding, text, backlog)
 
-        if not runtime.workspace_manager.load_workspace().has_pending_patch():
-            runtime.workspace_manager.clear_workspace()
+        if not runtime.workspace_manager.load().has_pending_patch():
+            runtime.workspace_manager.clear()
 
-    def _prepare_audit_workspace(self, text: str) -> list[AuditFindingItem] | None:
+    def _prepare_audit_workspace(self, text: str) -> list[FindingTask] | None:
         runtime = self.services.runtime
-        scope = runtime.scope_service.fetch_scope(text, default_to_project=True)
+        scope = runtime.scope_service.resolve(text, default_to_project=True)
         if scope is None:
             self.services.renderer.print_error("未解析到可检查范围")
             return None
@@ -44,21 +44,21 @@ class CodeAuditWorkflow:
             self.services.renderer.print_error(str(exc))
             return None
 
-        runtime.workspace_manager.initialize_review_workspace(scope=scope, latest_scan_id=scan_id, patch_items=[])
-        backlog = runtime.backlog_manager.fetch_backlog(scan_result)
+        runtime.workspace_manager.initialize_review(scope=scope, latest_scan_id=scan_id, patch_items=[])
+        backlog = runtime.backlog_manager.build_from_scan_result(scan_result)
         if not backlog:
             self._handle_zero_finding_review(text=text, scope=scope)
-            if not runtime.workspace_manager.load_workspace().has_pending_patch():
-                runtime.workspace_manager.clear_workspace()
+            if not runtime.workspace_manager.load().has_pending_patch():
+                runtime.workspace_manager.clear()
             return None
 
         return backlog
 
     def _process_single_finding(
         self,
-        finding: AuditFindingItem,
+        finding: FindingTask,
         text: str,
-        backlog: list[AuditFindingItem],
+        backlog: list[FindingTask],
     ) -> None:
         self._handle_finding_attempt(
             finding=finding,
@@ -70,9 +70,9 @@ class CodeAuditWorkflow:
 
     def _handle_finding_retry(
         self,
-        finding: AuditFindingItem,
+        finding: FindingTask,
         text: str,
-        backlog: list[AuditFindingItem],
+        backlog: list[FindingTask],
     ) -> None:
         self._handle_finding_attempt(
             finding=finding,
@@ -84,9 +84,9 @@ class CodeAuditWorkflow:
 
     def _handle_finding_attempt(
         self,
-        finding: AuditFindingItem,
+        finding: FindingTask,
         text: str,
-        backlog: list[AuditFindingItem],
+        backlog: list[FindingTask],
         *,
         force_reread: bool,
         allow_retry: bool,
@@ -118,7 +118,7 @@ class CodeAuditWorkflow:
 
     def _run_finding_agent_attempt(
         self,
-        finding: AuditFindingItem,
+        finding: FindingTask,
         text: str,
         *,
         force_reread: bool,
@@ -141,7 +141,7 @@ class CodeAuditWorkflow:
             runtime.agent.session.clear_proposed_patch_draft()
             raise
 
-    def _commit_or_mark_failed(self, backlog: list[AuditFindingItem], finding: AuditFindingItem) -> None:
+    def _commit_or_mark_failed(self, backlog: list[FindingTask], finding: FindingTask) -> None:
         if self._commit_proposed_patch():
             self.services.runtime.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
         else:
@@ -155,8 +155,8 @@ class CodeAuditWorkflow:
     def _mark_finding_failed(
         self,
         *,
-        backlog: list[AuditFindingItem],
-        finding: AuditFindingItem,
+        backlog: list[FindingTask],
+        finding: FindingTask,
         error_code: str | None,
         error_message: str | None,
     ) -> None:
@@ -174,7 +174,7 @@ class CodeAuditWorkflow:
         draft = runtime.agent.session.pop_proposed_patch_draft()
         if draft is None:
             return False
-        runtime.workspace_manager.add_pending_patch(draft)
+        runtime.workspace_manager.add_patch(draft)
         return True
 
     def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
