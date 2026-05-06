@@ -4,6 +4,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from autopatch_j.agent.agent import Agent
+from autopatch_j.agent.task_profile import (
+    ZERO_FINDING_REVIEW_PROFILE,
+    fetch_code_explain_profile,
+    fetch_task_profile,
+)
 from autopatch_j.llm.client import LLMClient, LLMResponse
 from autopatch_j.llm.dialect import ToolCall
 from autopatch_j.agent.prompts import (
@@ -77,6 +82,20 @@ def test_task_system_prompt_declares_java_context() -> None:
 
     assert "当前目标代码默认是 Java" in prompt
     assert "JDK 标准库行为" in prompt
+
+
+def test_task_profiles_define_tool_boundaries() -> None:
+    assert fetch_task_profile(IntentType.CODE_AUDIT).tool_names == (
+        "get_finding_detail",
+        "read_source_code",
+        "propose_patch",
+    )
+    assert fetch_code_explain_profile(allow_symbol_search=True).tool_names == (
+        "search_symbols",
+        "read_source_code",
+    )
+    assert fetch_code_explain_profile(allow_symbol_search=False).tool_names == ("read_source_code",)
+    assert ZERO_FINDING_REVIEW_PROFILE.tool_names == ("read_source_code", "propose_patch")
 
 
 def test_perform_code_explain_disables_symbol_search_in_single_file_mode(tmp_path: Path) -> None:
@@ -262,6 +281,48 @@ def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:
     assert _fetch_tool_names(mock_llm) == []
 
 
+def test_tool_executor_rejects_tools_outside_task_profile(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    agent = _build_agent(tmp_path, mock_llm)
+    call = ToolCall(
+        name="read_source_code",
+        arguments={"path": "src/main/java/demo/User.java"},
+        call_id="call-1",
+    )
+
+    result = agent.tool_executor.execute(call, allowed_tool_names=set())
+
+    assert result.status == "error"
+    assert "当前任务未开放工具" in result.message
+
+
+def test_tool_executor_reports_unknown_tool(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    agent = _build_agent(tmp_path, mock_llm)
+    call = ToolCall(name="missing_tool", arguments={}, call_id="call-1")
+
+    result = agent.tool_executor.execute(call, allowed_tool_names={"missing_tool"})
+
+    assert result.status == "error"
+    assert "未找到工具" in result.message
+
+
+def test_tool_executor_normalizes_tool_exceptions(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    agent = _build_agent(tmp_path, mock_llm)
+    agent.available_tools["read_source_code"].execute = MagicMock(side_effect=RuntimeError("boom"))
+    call = ToolCall(
+        name="read_source_code",
+        arguments={"path": "src/main/java/demo/User.java"},
+        call_id="call-1",
+    )
+
+    result = agent.tool_executor.execute(call, allowed_tool_names={"read_source_code"})
+
+    assert result.status == "error"
+    assert "执行异常：boom" in result.message
+
+
 def test_react_loop_blocks_repeated_no_progress_tool_calls(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     mock_llm.chat.side_effect = [
@@ -337,7 +398,7 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
         {"role": "user", "content": "second"},
     ]
 
-    dehydrated = agent._dehydrate_history("system prompt")
+    dehydrated = agent.message_adapter.dehydrate_history(agent.messages, "system prompt")
 
     assert [message["role"] for message in dehydrated] == [
         "system",
