@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 from autopatch_j.cli.agent_stream_presenter import AgentStreamPresenter
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.domain import IntentType
 
 
 class _Workspace:
@@ -18,7 +18,7 @@ class _WorkspaceManager:
     def __init__(self, has_pending_patch: bool = False) -> None:
         self.workspace = _Workspace(has_pending_patch)
 
-    def load_workspace(self) -> _Workspace:
+    def load(self) -> _Workspace:
         return self.workspace
 
 

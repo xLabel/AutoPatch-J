@@ -17,32 +17,32 @@ from autopatch_j.agent.prompts import (
     build_task_system_prompt,
 )
 from autopatch_j.agent.session import AgentSession
-from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.models import (
+from autopatch_j.core.review import ProjectArtifactStore
+from autopatch_j.core.project import SourceReader
+from autopatch_j.core.domain import (
     CodeScope,
     CodeScopeKind,
     IntentType,
-    PatchDraftData,
-    PatchReviewItem,
+    PatchDraftSnapshot,
+    ReviewPatchItem,
     PatchReviewStatus,
 )
 from autopatch_j.core.memory import MemoryManager
-from autopatch_j.core.patch_engine import PatchEngine
-from autopatch_j.core.symbol_indexer import SymbolIndexer
-from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.core.patching import SearchReplacePatchEngine
+from autopatch_j.core.project import SymbolIndex
+from autopatch_j.core.review import ReviewWorkspaceManager
 from autopatch_j.tools.base import ToolResult
 
 
 def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
     repo_root = tmp_path
     (repo_root / "src" / "main" / "java" / "demo").mkdir(parents=True)
-    artifact_manager = ArtifactManager(repo_root)
-    workspace_manager = WorkspaceManager(artifact_manager)
+    artifact_manager = ProjectArtifactStore(repo_root)
+    workspace_manager = ReviewWorkspaceManager(artifact_manager)
     memory_manager = MemoryManager(artifact_manager.state_dir / "memory.json")
-    symbol_indexer = SymbolIndexer(repo_root)
-    patch_engine = PatchEngine(repo_root)
-    code_fetcher = CodeFetcher(repo_root)
+    symbol_indexer = SymbolIndex(repo_root)
+    patch_engine = SearchReplacePatchEngine(repo_root)
+    code_fetcher = SourceReader(repo_root)
     symbol_indexer.rebuild_index()
     session = AgentSession(
         repo_root=repo_root,
@@ -212,12 +212,12 @@ def test_perform_patch_explain_keeps_read_only_tool_profile(tmp_path: Path) -> N
 
 
 def test_patch_explain_prompt_keeps_cli_answer_compact() -> None:
-    item = PatchReviewItem(
+    item = ReviewPatchItem(
         item_id="p1",
         file_path="src/main/java/demo/LegacyConfig.java",
         finding_ids=["F1"],
         status=PatchReviewStatus.PENDING,
-        draft=PatchDraftData(
+        draft=PatchDraftSnapshot(
             file_path="src/main/java/demo/LegacyConfig.java",
             old_string='MessageDigest.getInstance("MD5")',
             new_string='MessageDigest.getInstance("SHA-256")',

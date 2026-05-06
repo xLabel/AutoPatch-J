@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
-from autopatch_j.core.patch_verifier import PatchVerifier, SyntaxCheckResult
-from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.core.review import ProjectArtifactStore
+from autopatch_j.core.patching import SearchReplacePatchDraft, SearchReplacePatchEngine
+from autopatch_j.core.patching import PatchQualityVerifier, SyntaxCheckResult
+from autopatch_j.core.review import ReviewWorkspaceManager
 from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
 from autopatch_j.tools.patch_revision_tool import PatchRevisionTool
 
@@ -13,12 +13,12 @@ from autopatch_j.tools.patch_revision_tool import PatchRevisionTool
 class _FakeAgentSession:
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root
-        self.patch_engine = PatchEngine(repo_root)
-        self.artifact_manager = ArtifactManager(repo_root)
-        self.workspace_manager = WorkspaceManager(self.artifact_manager)
+        self.patch_engine = SearchReplacePatchEngine(repo_root)
+        self.artifact_manager = ProjectArtifactStore(repo_root)
+        self.workspace_manager = ReviewWorkspaceManager(self.artifact_manager)
         self.focus_paths = ["src/main/java/demo/UserService.java"]
         self.patch_source_hint = None
-        self.patch_verifier = PatchVerifier(repo_root, None)
+        self.patch_verifier = PatchQualityVerifier(repo_root, None)
         self.proposed_patch_draft = None
         self.revised_patch_draft = None
 
@@ -35,8 +35,8 @@ class _FakeAgentSession:
         self.revised_patch_draft = draft
 
 
-def _draft(file_path: str = "src/main/java/demo/UserService.java") -> PatchDraft:
-    return PatchDraft(
+def _draft(file_path: str = "src/main/java/demo/UserService.java") -> SearchReplacePatchDraft:
+    return SearchReplacePatchDraft(
         file_path=file_path,
         old_string="old",
         new_string="new",
@@ -96,7 +96,7 @@ def test_patch_proposal_tool_stashes_draft_without_appending_workspace(tmp_path:
     assert result.status in {"ok", "unavailable"}
     assert session.proposed_patch_draft is not None
     assert session.proposed_patch_draft.new_string == 'return user != null && user.getName().equals("admin");'
-    assert session.workspace_manager.load_workspace().patch_items == []
+    assert session.workspace_manager.load().patch_items == []
 
 
 def test_patch_revision_tool_stashes_draft_without_appending_workspace(tmp_path: Path) -> None:
@@ -120,4 +120,4 @@ def test_patch_revision_tool_stashes_draft_without_appending_workspace(tmp_path:
     assert result.status in {"ok", "unavailable"}
     assert session.revised_patch_draft is not None
     assert session.revised_patch_draft.new_string == 'return user != null && user.getName().equals("admin");'
-    assert session.workspace_manager.load_workspace().patch_items == []
+    assert session.workspace_manager.load().patch_items == []

@@ -7,17 +7,17 @@ import pytest
 
 from autopatch_j.cli.app import AutoPatchCli
 from autopatch_j.cli.command_router import CommandRouter
-from autopatch_j.core.patch_engine import PatchDraft
-from autopatch_j.core.patch_verifier import SyntaxCheckResult
-from autopatch_j.core.models import (
-    ActiveWorkspace,
-    AuditFindingItem,
+from autopatch_j.core.patching import SearchReplacePatchDraft
+from autopatch_j.core.patching import SyntaxCheckResult
+from autopatch_j.core.domain import (
+    ReviewWorkspace,
+    FindingTask,
     CodeScope,
     CodeScopeKind,
     ConversationRoute,
     IntentType,
-    PatchDraftData,
-    PatchReviewItem,
+    PatchDraftSnapshot,
+    ReviewPatchItem,
     PatchReviewStatus,
     WorkspaceStatus,
 )
@@ -37,13 +37,13 @@ def _item(
     item_id: str,
     file_path: str = "src/main/java/demo/User.java",
     finding_id: str = "F1",
-) -> PatchReviewItem:
-    return PatchReviewItem(
+) -> ReviewPatchItem:
+    return ReviewPatchItem(
         item_id=item_id,
         file_path=file_path,
         finding_ids=[finding_id],
         status=PatchReviewStatus.PENDING,
-        draft=PatchDraftData(
+        draft=PatchDraftSnapshot(
             file_path=file_path,
             old_string="old",
             new_string="new",
@@ -57,8 +57,8 @@ def _item(
     )
 
 
-def _patch_draft(new_string: str, finding_id: str = "F1") -> PatchDraft:
-    return PatchDraft(
+def _patch_draft(new_string: str, finding_id: str = "F1") -> SearchReplacePatchDraft:
+    return SearchReplacePatchDraft(
         file_path="src/main/java/demo/User.java",
         old_string="old",
         new_string=new_string,
@@ -71,8 +71,8 @@ def _patch_draft(new_string: str, finding_id: str = "F1") -> PatchDraft:
     )
 
 
-def _finding(finding_id: str = "F1") -> AuditFindingItem:
-    return AuditFindingItem(
+def _finding(finding_id: str = "F1") -> FindingTask:
+    return FindingTask(
         finding_id=finding_id,
         file_path="src/main/java/demo/User.java",
         check_id="demo.rule",
@@ -97,7 +97,7 @@ def _tool_message(status: str = "ok", finding_id: str = "F1") -> dict:
 
 def test_handle_status_does_not_crash_with_pending_patch(cli: AutoPatchCli) -> None:
     # Setup workspace with a pending patch
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=CodeScope(
             kind=CodeScopeKind.PROJECT,
@@ -109,7 +109,7 @@ def test_handle_status_does_not_crash_with_pending_patch(cli: AutoPatchCli) -> N
         patch_items=[_item("item-1")],
         current_patch_index=0,
     )
-    cli.runtime.workspace_manager.save_workspace(workspace)
+    cli.runtime.workspace_manager.save(workspace)
 
     # This should not raise AttributeError
     cli.command_handlers.handle_status()
@@ -132,7 +132,7 @@ def test_handle_status_includes_output_mode(cli: AutoPatchCli) -> None:
 
 def test_handle_patch_explain_does_not_crash(cli: AutoPatchCli) -> None:
     # Setup workspace with a pending patch
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=CodeScope(
             kind=CodeScopeKind.PROJECT,
@@ -144,7 +144,7 @@ def test_handle_patch_explain_does_not_crash(cli: AutoPatchCli) -> None:
         patch_items=[_item("item-1")],
         current_patch_index=0,
     )
-    cli.runtime.workspace_manager.save_workspace(workspace)
+    cli.runtime.workspace_manager.save(workspace)
     cli.runtime.agent.perform_patch_explain = MagicMock(return_value="")
 
     # This should not raise AttributeError
@@ -154,7 +154,7 @@ def test_handle_patch_explain_does_not_crash(cli: AutoPatchCli) -> None:
 
 
 def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> None:
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=CodeScope(
             kind=CodeScopeKind.PROJECT,
@@ -172,8 +172,8 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> N
         ],
         current_patch_index=0,
     )
-    cli.runtime.workspace_manager.save_workspace(workspace)
-    replacement = PatchDraft(
+    cli.runtime.workspace_manager.save(workspace)
+    replacement = SearchReplacePatchDraft(
         file_path="src/main/java/demo/User.java",
         old_string="old",
         new_string="better",
@@ -193,7 +193,7 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> N
 
     cli.input_router.handle_patch_revise("rewrite current")
 
-    updated = cli.runtime.workspace_manager.load_workspace()
+    updated = cli.runtime.workspace_manager.load()
     assert [item.item_id for item in updated.patch_items] == ["item-1", "item-2"]
     assert updated.current_patch_index == 0
     assert updated.patch_items[0].draft.new_string == "better"
@@ -203,7 +203,7 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> N
 
 
 def test_handle_patch_revise_keeps_queue_when_no_revision_created(cli: AutoPatchCli) -> None:
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=CodeScope(
             kind=CodeScopeKind.PROJECT,
@@ -218,12 +218,12 @@ def test_handle_patch_revise_keeps_queue_when_no_revision_created(cli: AutoPatch
         ],
         current_patch_index=0,
     )
-    cli.runtime.workspace_manager.save_workspace(workspace)
+    cli.runtime.workspace_manager.save(workspace)
     cli.runtime.agent.perform_patch_revise = MagicMock(return_value="no revision")
 
     cli.input_router.handle_patch_revise("explain only")
 
-    updated = cli.runtime.workspace_manager.load_workspace()
+    updated = cli.runtime.workspace_manager.load()
     assert [item.item_id for item in updated.patch_items] == ["item-1", "item-2"]
     assert updated.patch_items[0].draft.rationale == "fix F1"
     assert updated.patch_items[1].draft.rationale == "fix F2"
@@ -242,7 +242,7 @@ def test_process_single_finding_commits_staged_patch_after_success(cli: AutoPatc
 
     cli.input_router.code_audit_workflow._process_single_finding(finding, "audit", backlog)
 
-    workspace = cli.runtime.workspace_manager.load_workspace()
+    workspace = cli.runtime.workspace_manager.load()
     assert len(workspace.patch_items) == 1
     assert workspace.patch_items[0].draft.new_string == "better"
     assert finding.status.value == "patch_ready"
@@ -257,7 +257,7 @@ def test_process_single_finding_does_not_commit_without_staged_patch(cli: AutoPa
 
     cli.input_router.code_audit_workflow._process_single_finding(finding, "audit", backlog)
 
-    workspace = cli.runtime.workspace_manager.load_workspace()
+    workspace = cli.runtime.workspace_manager.load()
     assert workspace.patch_items == []
     assert finding.status.value == "failed"
     assert finding.last_error_code == "NO_PROPOSED_PATCH_DRAFT"
@@ -278,7 +278,7 @@ def test_finding_retry_commits_only_retry_patch(cli: AutoPatchCli) -> None:
 
     cli.input_router.code_audit_workflow._handle_finding_retry(finding, "audit", backlog)
 
-    workspace = cli.runtime.workspace_manager.load_workspace()
+    workspace = cli.runtime.workspace_manager.load()
     assert len(workspace.patch_items) == 1
     assert workspace.patch_items[0].draft.new_string == "retry-fix"
     assert finding.status.value == "patch_ready"
@@ -297,7 +297,7 @@ def test_finding_retry_failure_does_not_commit_patch(cli: AutoPatchCli) -> None:
 
     cli.input_router.code_audit_workflow._handle_finding_retry(finding, "audit", backlog)
 
-    workspace = cli.runtime.workspace_manager.load_workspace()
+    workspace = cli.runtime.workspace_manager.load()
     assert workspace.patch_items == []
     assert finding.status.value == "failed"
 
@@ -318,7 +318,7 @@ def test_zero_finding_review_commits_staged_patch(cli: AutoPatchCli) -> None:
 
     cli.input_router.code_audit_workflow._handle_zero_finding_review("audit", scope)
 
-    workspace = cli.runtime.workspace_manager.load_workspace()
+    workspace = cli.runtime.workspace_manager.load()
     assert len(workspace.patch_items) == 1
     assert workspace.patch_items[0].draft.new_string == "zero-fix"
     cli.renderer.print_no_issue_panel.assert_not_called()
@@ -339,7 +339,7 @@ def test_cli_wires_llm_intent_classifier(tmp_path: Path, monkeypatch: pytest.Mon
 
     assert cli_obj.runtime.intent_detector is not None
     assert cli_obj.runtime.intent_detector.classify_with_llm is not None
-    assert cli_obj.runtime.intent_detector.detect_intent("@Foo.java check code", False) is IntentType.CODE_AUDIT
+    assert cli_obj.runtime.intent_detector.classify("@Foo.java check code", False) is IntentType.CODE_AUDIT
 
 
 def test_handle_chat_routes_llm_code_audit_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -388,7 +388,7 @@ def test_handle_chat_filters_patch_intent_without_pending_review(
 
 
 def test_handle_chat_switches_new_task_with_pending_review(cli: AutoPatchCli) -> None:
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=CodeScope(
             kind=CodeScopeKind.PROJECT,
@@ -400,16 +400,16 @@ def test_handle_chat_switches_new_task_with_pending_review(cli: AutoPatchCli) ->
         patch_items=[_item("item-1")],
         current_patch_index=0,
     )
-    cli.runtime.workspace_manager.save_workspace(workspace)
+    cli.runtime.workspace_manager.save(workspace)
     cli.runtime.conversation_router = MagicMock()
-    cli.runtime.conversation_router.determine_route.return_value = ConversationRoute.NEW_TASK
+    cli.runtime.conversation_router.classify_route.return_value = ConversationRoute.NEW_TASK
     cli.runtime.intent_detector = MagicMock()
-    cli.runtime.intent_detector.detect_intent.return_value = IntentType.GENERAL_CHAT
+    cli.runtime.intent_detector.classify.return_value = IntentType.GENERAL_CHAT
     cli.input_router.handle_general_chat = MagicMock()
 
     cli.input_router.handle_chat("@Foo.java explain code")
 
-    assert cli.runtime.workspace_manager.load_workspace().has_pending_patch() is False
+    assert cli.runtime.workspace_manager.load().has_pending_patch() is False
     cli.renderer.print_agent_text.assert_any_call("已切换到新任务")
     cli.input_router.handle_general_chat.assert_called_once_with("@Foo.java explain code")
 
@@ -479,7 +479,7 @@ def test_reset_clears_project_state_and_requires_reinit(cli: AutoPatchCli) -> No
 
 
 def test_handle_chat_maps_pending_code_explain_without_scope_to_patch_explain(cli: AutoPatchCli) -> None:
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=CodeScope(
             kind=CodeScopeKind.PROJECT,
@@ -491,11 +491,11 @@ def test_handle_chat_maps_pending_code_explain_without_scope_to_patch_explain(cl
         patch_items=[_item("item-1")],
         current_patch_index=0,
     )
-    cli.runtime.workspace_manager.save_workspace(workspace)
+    cli.runtime.workspace_manager.save(workspace)
     cli.runtime.conversation_router = MagicMock()
-    cli.runtime.conversation_router.determine_route.return_value = ConversationRoute.REVIEW_CONTINUE
+    cli.runtime.conversation_router.classify_route.return_value = ConversationRoute.REVIEW_CONTINUE
     cli.runtime.intent_detector = MagicMock()
-    cli.runtime.intent_detector.detect_intent.return_value = IntentType.CODE_EXPLAIN
+    cli.runtime.intent_detector.classify.return_value = IntentType.CODE_EXPLAIN
     cli.input_router.handle_patch_explain = MagicMock()
     cli.input_router.handle_code_explain = MagicMock()
 
@@ -506,7 +506,7 @@ def test_handle_chat_maps_pending_code_explain_without_scope_to_patch_explain(cl
 
 
 def test_handle_chat_keeps_pending_patch_revise_route(cli: AutoPatchCli) -> None:
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=CodeScope(
             kind=CodeScopeKind.PROJECT,
@@ -518,11 +518,11 @@ def test_handle_chat_keeps_pending_patch_revise_route(cli: AutoPatchCli) -> None
         patch_items=[_item("item-1")],
         current_patch_index=0,
     )
-    cli.runtime.workspace_manager.save_workspace(workspace)
+    cli.runtime.workspace_manager.save(workspace)
     cli.runtime.conversation_router = MagicMock()
-    cli.runtime.conversation_router.determine_route.return_value = ConversationRoute.REVIEW_CONTINUE
+    cli.runtime.conversation_router.classify_route.return_value = ConversationRoute.REVIEW_CONTINUE
     cli.runtime.intent_detector = MagicMock()
-    cli.runtime.intent_detector.detect_intent.return_value = IntentType.PATCH_REVISE
+    cli.runtime.intent_detector.classify.return_value = IntentType.PATCH_REVISE
     cli.input_router.handle_patch_revise = MagicMock()
 
     cli.input_router.handle_chat("重新写这个补丁")

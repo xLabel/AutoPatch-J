@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-from autopatch_j.core.models import (
-    ActiveWorkspace,
+from autopatch_j.core.domain import (
+    ReviewWorkspace,
     CodeScope,
     CodeScopeKind,
-    PatchDraftData,
-    PatchReviewItem,
+    PatchDraftSnapshot,
+    ReviewPatchItem,
     PatchReviewStatus,
     WorkspaceStatus,
 )
 
 
 def test_active_workspace_round_trip_preserves_nested_models() -> None:
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=CodeScope(
             kind=CodeScopeKind.MULTI_FILE,
@@ -25,12 +25,12 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
         ),
         latest_scan_id="scan-1",
         patch_items=[
-            PatchReviewItem(
+            ReviewPatchItem(
                 item_id="item-1",
                 file_path="src/main/java/demo/User.java",
                 finding_ids=["F1"],
                 status=PatchReviewStatus.PENDING,
-                draft=PatchDraftData(
+                draft=PatchDraftSnapshot(
                     file_path="src/main/java/demo/User.java",
                     old_string="old",
                     new_string="new",
@@ -48,7 +48,7 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
         current_patch_index=0,
     )
 
-    restored = ActiveWorkspace.from_dict(workspace.to_dict())
+    restored = ReviewWorkspace.from_dict(workspace.to_dict())
 
     assert restored.mode is WorkspaceStatus.REVIEWING
     assert restored.scope is not None
@@ -57,7 +57,7 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
         "src/main/java/demo/User.java",
         "src/main/java/demo/UserService.java",
     ]
-    current = restored.get_current_patch()
+    current = restored.current_patch()
     assert current is not None
     assert current.status is PatchReviewStatus.PENDING
     assert current.draft.source_hint == "LLM 二次复核（静态扫描未报出问题）"
@@ -65,7 +65,7 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
 
 
 def test_fetch_current_patch_item_returns_none_for_out_of_bounds_cursor() -> None:
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=None,
         latest_scan_id=None,
@@ -73,21 +73,21 @@ def test_fetch_current_patch_item_returns_none_for_out_of_bounds_cursor() -> Non
         current_patch_index=2,
     )
 
-    assert workspace.get_current_patch() is None
+    assert workspace.current_patch() is None
 
 
 def test_fetch_review_progress_uses_absolute_patch_index() -> None:
-    workspace = ActiveWorkspace(
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=None,
         latest_scan_id="scan-1",
         patch_items=[
-            PatchReviewItem(
+            ReviewPatchItem(
                 item_id="item-1",
                 file_path="src/main/java/demo/User.java",
                 finding_ids=["F1"],
                 status=PatchReviewStatus.APPLIED,
-                draft=PatchDraftData(
+                draft=PatchDraftSnapshot(
                     file_path="src/main/java/demo/User.java",
                     old_string="old-1",
                     new_string="new-1",
@@ -97,12 +97,12 @@ def test_fetch_review_progress_uses_absolute_patch_index() -> None:
                     validation_errors=[],
                 ),
             ),
-            PatchReviewItem(
+            ReviewPatchItem(
                 item_id="item-2",
                 file_path="src/main/java/demo/UserService.java",
                 finding_ids=["F2"],
                 status=PatchReviewStatus.PENDING,
-                draft=PatchDraftData(
+                draft=PatchDraftSnapshot(
                     file_path="src/main/java/demo/UserService.java",
                     old_string="old-2",
                     new_string="new-2",
@@ -112,12 +112,12 @@ def test_fetch_review_progress_uses_absolute_patch_index() -> None:
                     validation_errors=[],
                 ),
             ),
-            PatchReviewItem(
+            ReviewPatchItem(
                 item_id="item-3",
                 file_path="src/main/java/demo/AppConfig.java",
                 finding_ids=["F3"],
                 status=PatchReviewStatus.PENDING,
-                draft=PatchDraftData(
+                draft=PatchDraftSnapshot(
                     file_path="src/main/java/demo/AppConfig.java",
                     old_string="old-3",
                     new_string="new-3",
@@ -131,4 +131,4 @@ def test_fetch_review_progress_uses_absolute_patch_index() -> None:
         current_patch_index=1,
     )
 
-    assert workspace.get_review_progress() == (2, 3)
+    assert workspace.review_progress() == (2, 3)

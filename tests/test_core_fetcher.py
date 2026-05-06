@@ -4,8 +4,9 @@ import sys
 import types
 from pathlib import Path
 
-from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.symbol_indexer import IndexEntry
+from autopatch_j.core.project import SourceReader
+from autopatch_j.core.project.java_blocks import JavaBlockExtractor
+from autopatch_j.core.project import SymbolIndexEntry
 
 
 def test_fetch_logic(tmp_path: Path):
@@ -20,14 +21,14 @@ def test_fetch_logic(tmp_path: Path):
     file_path = "Demo.java"
     (tmp_path / file_path).write_text(java_code, encoding="utf-8")
     
-    fetcher = CodeFetcher(tmp_path)
+    fetcher = SourceReader(tmp_path)
     
     # 1. 测试全文提取
-    full_entry = IndexEntry(path=file_path, name="Demo.java", kind="file", line=0)
+    full_entry = SymbolIndexEntry(path=file_path, name="Demo.java", kind="file", line=0)
     assert fetcher.fetch_entry_source(full_entry) == java_code
     
     # 2. 测试智能块提取 (行号 2 开始)
-    method_entry = IndexEntry(path=file_path, name="run", kind="method", line=2)
+    method_entry = SymbolIndexEntry(path=file_path, name="run", kind="method", line=2)
     snippet = fetcher.fetch_entry_source(method_entry)
     assert "public void run()" in snippet
     assert "// Line 3" in snippet
@@ -36,7 +37,7 @@ def test_fetch_logic(tmp_path: Path):
 def test_fetch_range(tmp_path: Path):
     """验证物理行号区间提取"""
     (tmp_path / "L.txt").write_text("1\n2\n3\n4\n5", encoding="utf-8")
-    fetcher = CodeFetcher(tmp_path)
+    fetcher = SourceReader(tmp_path)
     assert fetcher.fetch_lines("L.txt", 2, 4) == "2\n3\n4"
 
 
@@ -69,9 +70,9 @@ def test_fetcher_marks_full_when_ast_extract_succeeds(tmp_path: Path, monkeypatc
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
-    fetcher = CodeFetcher(tmp_path)
-    monkeypatch.setattr(fetcher, "_find_node_at_line", lambda node, line: FakeNode())
-    snippet = fetcher.fetch_entry_source(IndexEntry(path=file_path, name="run", kind="method", line=2))
+    fetcher = SourceReader(tmp_path)
+    monkeypatch.setattr(JavaBlockExtractor, "_find_node_at_line", lambda self, node, line: FakeNode())
+    snippet = fetcher.fetch_entry_source(SymbolIndexEntry(path=file_path, name="run", kind="method", line=2))
 
     assert "public void run()" in snippet
     assert fetcher.last_extract_mode == "full"
@@ -97,8 +98,8 @@ def test_fetcher_marks_fallback_when_ast_extract_fails(tmp_path: Path, monkeypat
 
     monkeypatch.setattr("builtins.__import__", fake_import)
 
-    fetcher = CodeFetcher(tmp_path)
-    snippet = fetcher.fetch_entry_source(IndexEntry(path=file_path, name="run", kind="method", line=2))
+    fetcher = SourceReader(tmp_path)
+    snippet = fetcher.fetch_entry_source(SymbolIndexEntry(path=file_path, name="run", kind="method", line=2))
 
     assert "public void run()" in snippet
     assert fetcher.last_extract_mode == "fallback"

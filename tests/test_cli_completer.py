@@ -3,7 +3,7 @@ from __future__ import annotations
 from prompt_toolkit.document import Document
 
 from autopatch_j.cli.completer import AutoPatchCompleter
-from autopatch_j.core.symbol_indexer import IndexEntry
+from autopatch_j.core.project import SymbolIndexEntry
 
 
 def _apply_completion(text: str, completion_text: str, start_position: int) -> str:
@@ -30,10 +30,10 @@ def test_command_completion_replaces_only_command_body() -> None:
 def test_mention_completion_only_exposes_files_and_directories() -> None:
     completer = AutoPatchCompleter(
         lambda _: [
-            IndexEntry(path="src/main/java/demo", name="demo", kind="dir"),
-            IndexEntry(path="src/main/java/demo/UserService.java", name="UserService.java", kind="file"),
-            IndexEntry(path="src/main/java/demo/UserService.java", name="UserService", kind="class", line=3),
-            IndexEntry(path="src/main/java/demo/UserService.java", name="isAdmin", kind="method", line=4),
+            SymbolIndexEntry(path="src/main/java/demo", name="demo", kind="dir"),
+            SymbolIndexEntry(path="src/main/java/demo/UserService.java", name="UserService.java", kind="file"),
+            SymbolIndexEntry(path="src/main/java/demo/UserService.java", name="UserService", kind="class", line=3),
+            SymbolIndexEntry(path="src/main/java/demo/UserService.java", name="isAdmin", kind="method", line=4),
         ]
     )
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from autopatch_j.core.backlog_manager import BacklogManager
-from autopatch_j.core.models import AuditAttemptOutcome, AuditFindingStatus
+from autopatch_j.core.review import FindingBacklog
+from autopatch_j.core.domain import AuditAttemptOutcome, AuditFindingStatus
 from autopatch_j.scanners.base import Finding, ScanResult
 
 
@@ -36,18 +36,18 @@ def _scan_result() -> ScanResult:
 
 
 def test_backlog_manager_builds_logical_finding_queue() -> None:
-    service = BacklogManager()
+    service = FindingBacklog()
 
-    backlog = service.fetch_backlog(_scan_result())
+    backlog = service.build_from_scan_result(_scan_result())
 
     assert [item.finding_id for item in backlog] == ["F1", "F2"]
-    assert service.fetch_current_finding(backlog) is not None
-    assert service.fetch_current_finding(backlog).file_path == "src/main/java/demo/AppConfig.java"
+    assert service.current(backlog) is not None
+    assert service.current(backlog).file_path == "src/main/java/demo/AppConfig.java"
 
 
 def test_backlog_manager_detects_retryable_old_string_error() -> None:
-    service = BacklogManager()
-    current_item = service.fetch_backlog(_scan_result())[0]
+    service = FindingBacklog()
+    current_item = service.build_from_scan_result(_scan_result())[0]
 
     decision = service.infer_attempt_decision(
         current_item=current_item,
@@ -72,8 +72,8 @@ def test_backlog_manager_detects_retryable_old_string_error() -> None:
 
 
 def test_backlog_manager_marks_patch_ready_and_failure() -> None:
-    service = BacklogManager()
-    backlog = service.fetch_backlog(_scan_result())
+    service = FindingBacklog()
+    backlog = service.build_from_scan_result(_scan_result())
 
     service.mark_patch_ready(backlog, "F1")
     service.record_retry(backlog, "F2", "OLD_STRING_NOT_FOUND", "retry")
@@ -82,4 +82,4 @@ def test_backlog_manager_marks_patch_ready_and_failure() -> None:
     assert backlog[0].status is AuditFindingStatus.PATCH_READY
     assert backlog[1].retry_count == 1
     assert backlog[1].status is AuditFindingStatus.FAILED
-    assert service.fetch_current_finding(backlog) is None
+    assert service.current(backlog) is None

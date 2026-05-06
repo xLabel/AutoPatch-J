@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from autopatch_j.core.patch_verifier import PatchVerifier
+from autopatch_j.core.patching import PatchQualityVerifier
 
 
 def test_java_syntax_validator_returns_ok_when_tree_sitter_accepts_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -30,7 +30,7 @@ def test_java_syntax_validator_returns_ok_when_tree_sitter_accepts_code(monkeypa
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
-    validator = PatchVerifier(Path("."), None)
+    validator = PatchQualityVerifier(Path("."), None)
     result = validator.verify_syntax("Demo.java", "class Demo {}")
 
     assert result.status == "ok"
@@ -58,7 +58,7 @@ def test_java_syntax_validator_returns_error_when_tree_has_errors(monkeypatch: p
     monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
     monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
 
-    validator = PatchVerifier(Path("."), None)
+    validator = PatchQualityVerifier(Path("."), None)
     result = validator.verify_syntax("Demo.java", "class Demo {")
 
     assert result.status == "error"
@@ -75,7 +75,7 @@ def test_java_syntax_validator_returns_unavailable_when_dependency_missing(monke
 
     monkeypatch.setattr("builtins.__import__", fake_import)
 
-    validator = PatchVerifier(Path("."), None)
+    validator = PatchQualityVerifier(Path("."), None)
     result = validator.verify_syntax("Demo.java", "class Demo {}")
 
     assert result.status == "unavailable"

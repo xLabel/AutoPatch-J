@@ -4,19 +4,19 @@ from pathlib import Path
 
 import pytest
 
-from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.models import (
-    ActiveWorkspace,
+from autopatch_j.core.review import ProjectArtifactStore
+from autopatch_j.core.domain import (
+    ReviewWorkspace,
     CodeScope,
     CodeScopeKind,
-    PatchDraftData,
-    PatchReviewItem,
+    PatchDraftSnapshot,
+    ReviewPatchItem,
     PatchReviewStatus,
     WorkspaceStatus,
 )
-from autopatch_j.core.patch_engine import PatchDraft
-from autopatch_j.core.patch_verifier import SyntaxCheckResult
-from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.core.patching import SearchReplacePatchDraft
+from autopatch_j.core.patching import SyntaxCheckResult
+from autopatch_j.core.review import ReviewWorkspaceManager
 
 
 def _scope() -> CodeScope:
@@ -31,13 +31,13 @@ def _scope() -> CodeScope:
     )
 
 
-def _item(item_id: str, file_path: str, finding_id: str) -> PatchReviewItem:
-    return PatchReviewItem(
+def _item(item_id: str, file_path: str, finding_id: str) -> ReviewPatchItem:
+    return ReviewPatchItem(
         item_id=item_id,
         file_path=file_path,
         finding_ids=[finding_id],
         status=PatchReviewStatus.PENDING,
-        draft=PatchDraftData(
+        draft=PatchDraftSnapshot(
             file_path=file_path,
             old_string="old",
             new_string="new",
@@ -53,8 +53,8 @@ def _item(item_id: str, file_path: str, finding_id: str) -> PatchReviewItem:
 
 
 def test_artifact_manager_persists_workspace_round_trip(tmp_path: Path) -> None:
-    artifacts = ArtifactManager(tmp_path)
-    workspace = ActiveWorkspace(
+    artifacts = ProjectArtifactStore(tmp_path)
+    workspace = ReviewWorkspace(
         mode=WorkspaceStatus.REVIEWING,
         scope=_scope(),
         latest_scan_id="scan-1",
@@ -62,21 +62,21 @@ def test_artifact_manager_persists_workspace_round_trip(tmp_path: Path) -> None:
         current_patch_index=0,
     )
 
-    artifacts.save_workspace(workspace)
-    restored = artifacts.load_workspace()
+    artifacts.save_review_workspace(workspace)
+    restored = artifacts.load_review_workspace()
 
     assert restored is not None
     assert restored.mode is WorkspaceStatus.REVIEWING
     assert restored.scope is not None
     assert restored.scope.focus_files == workspace.scope.focus_files
-    assert restored.get_current_patch() is not None
-    assert restored.get_current_patch().item_id == "item-1"
+    assert restored.current_patch() is not None
+    assert restored.current_patch().item_id == "item-1"
 
 
 def test_workspace_manager_persist_review_workspace_starts_review_mode(tmp_path: Path) -> None:
-    service = WorkspaceManager(ArtifactManager(tmp_path))
+    service = ReviewWorkspaceManager(ProjectArtifactStore(tmp_path))
 
-    workspace = service.initialize_review_workspace(
+    workspace = service.initialize_review(
         scope=_scope(),
         latest_scan_id="scan-2",
         patch_items=[
@@ -87,14 +87,14 @@ def test_workspace_manager_persist_review_workspace_starts_review_mode(tmp_path:
 
     assert workspace.mode is WorkspaceStatus.REVIEWING
     assert workspace.current_patch_index == 0
-    assert service.load_workspace().has_pending_patch() is True
-    assert workspace.get_current_patch() is not None
-    assert workspace.get_current_patch().item_id == "item-1"
+    assert service.load().has_pending_patch() is True
+    assert workspace.current_patch() is not None
+    assert workspace.current_patch().item_id == "item-1"
 
 
 def test_workspace_manager_persist_applied_current_patch_advances_until_idle(tmp_path: Path) -> None:
-    service = WorkspaceManager(ArtifactManager(tmp_path))
-    service.initialize_review_workspace(
+    service = ReviewWorkspaceManager(ProjectArtifactStore(tmp_path))
+    service.initialize_review(
         scope=_scope(),
         latest_scan_id="scan-3",
         patch_items=[
@@ -104,14 +104,14 @@ def test_workspace_manager_persist_applied_current_patch_advances_until_idle(tmp
     )
 
     with service.edit() as workspace:
-        workspace.mark_applied()
+        workspace.mark_current_patch_applied()
     
-    first_pass = service.load_workspace()
+    first_pass = service.load()
     
     with service.edit() as workspace:
-        workspace.mark_applied()
+        workspace.mark_current_patch_applied()
         
-    second_pass = service.load_workspace()
+    second_pass = service.load()
 
     assert first_pass.patch_items[0].status is PatchReviewStatus.APPLIED
     assert first_pass.current_patch_index == 1
@@ -122,8 +122,8 @@ def test_workspace_manager_persist_applied_current_patch_advances_until_idle(tmp
 
 
 def test_workspace_edit_does_not_save_when_block_raises(tmp_path: Path) -> None:
-    service = WorkspaceManager(ArtifactManager(tmp_path))
-    service.initialize_review_workspace(
+    service = ReviewWorkspaceManager(ProjectArtifactStore(tmp_path))
+    service.initialize_review(
         scope=_scope(),
         latest_scan_id="scan-4",
         patch_items=[_item("item-1", "src/main/java/demo/User.java", "F1")],
@@ -131,18 +131,18 @@ def test_workspace_edit_does_not_save_when_block_raises(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError):
         with service.edit() as workspace:
-            workspace.mark_applied()
+            workspace.mark_current_patch_applied()
             raise RuntimeError("abort save")
 
-    restored = service.load_workspace()
+    restored = service.load()
     assert restored.patch_items[0].status is PatchReviewStatus.PENDING
     assert restored.current_patch_index == 0
     assert restored.mode is WorkspaceStatus.REVIEWING
 
 
 def test_workspace_manager_replace_current_patch_keeps_queue_order(tmp_path: Path) -> None:
-    service = WorkspaceManager(ArtifactManager(tmp_path))
-    service.initialize_review_workspace(
+    service = ReviewWorkspaceManager(ProjectArtifactStore(tmp_path))
+    service.initialize_review(
         scope=_scope(),
         latest_scan_id="scan-5",
         patch_items=[
@@ -150,7 +150,7 @@ def test_workspace_manager_replace_current_patch_keeps_queue_order(tmp_path: Pat
             _item("item-2", "src/main/java/demo/UserService.java", "F2"),
         ],
     )
-    replacement = PatchDraft(
+    replacement = SearchReplacePatchDraft(
         file_path="src/main/java/demo/User.java",
         old_string="old",
         new_string="better",
@@ -163,7 +163,7 @@ def test_workspace_manager_replace_current_patch_keeps_queue_order(tmp_path: Pat
     )
 
     replaced = service.replace_current_patch(replacement)
-    workspace = service.load_workspace()
+    workspace = service.load()
 
     assert replaced is True
     assert workspace.current_patch_index == 0

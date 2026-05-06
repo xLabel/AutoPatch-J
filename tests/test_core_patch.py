@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import pytest
 from pathlib import Path
-from autopatch_j.core.patch_engine import PatchEngine, TargetFileNotFoundError, OldStringNotFoundError, OldStringNotUniqueError
-from autopatch_j.core.patch_engine import PatchDraft
-from autopatch_j.core.patch_verifier import SyntaxCheckResult
+from autopatch_j.core.patching import SearchReplacePatchEngine, TargetFileNotFoundError, OldStringNotFoundError, OldStringNotUniqueError
+from autopatch_j.core.patching import SearchReplacePatchDraft
+from autopatch_j.core.patching import SyntaxCheckResult
 
 def test_patch_lifecycle(tmp_path: Path):
     """验证补丁的完整生命周期：起草 -> 验证 -> 应用"""
     java_file = tmp_path / "App.java"
     java_file.write_text("public class App {\n    void run() { System.out.println(\"old\"); }\n}", encoding="utf-8")
     
-    engine = PatchEngine(tmp_path)
+    engine = SearchReplacePatchEngine(tmp_path)
     old = "System.out.println(\"old\");"
     new = "System.out.println(\"new\");"
     
@@ -21,7 +21,7 @@ def test_patch_lifecycle(tmp_path: Path):
     assert diff_c is not None
     
     # 2. 测试应用 (Apply)
-    draft = PatchDraft(
+    draft = SearchReplacePatchDraft(
         file_path="App.java",
         old_string=old,
         new_string=new,
@@ -46,7 +46,7 @@ def test_windows_crlf_matching(tmp_path: Path):
     content = "public class Win {\r\n    public void test() {\r\n        return;\r\n    }\r\n}"
     java_file.write_bytes(content.encode("utf-8"))
     
-    engine = PatchEngine(tmp_path)
+    engine = SearchReplacePatchEngine(tmp_path)
     # LLM 生成的 old_string 只有 LF
     old_code = "    public void test() {\n        return;\n    }"
     new_code = "    public void test() {\n        // Fixed\n        return;\n    }"
@@ -56,7 +56,7 @@ def test_windows_crlf_matching(tmp_path: Path):
     assert new_c is not None
     assert "Fixed" in diff_c
     
-    draft = PatchDraft(
+    draft = SearchReplacePatchDraft(
         file_path="Win.java",
         old_string=old_code,
         new_string=new_code,
@@ -76,7 +76,7 @@ def test_create_draft_failures(tmp_path: Path):
     java_file = tmp_path / "Test.java"
     java_file.write_text("code();\ncode();", encoding="utf-8")
     
-    engine = PatchEngine(tmp_path)
+    engine = SearchReplacePatchEngine(tmp_path)
     
     # 匹配不到
     with pytest.raises(OldStringNotFoundError):
@@ -88,7 +88,7 @@ def test_create_draft_failures(tmp_path: Path):
 
 def test_path_traversal_defense(tmp_path: Path):
     """验证安全底线：拦截路径穿越攻击"""
-    engine = PatchEngine(tmp_path)
+    engine = SearchReplacePatchEngine(tmp_path)
     with pytest.raises(PermissionError) as excinfo:
         engine.create_draft("../../../etc/passwd", "any", "any")
     assert "安全风险拦截" in str(excinfo.value)

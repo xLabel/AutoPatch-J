@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from autopatch_j.core.chat_filter import ChatFilter
-from autopatch_j.core.models import IntentType
+from autopatch_j.core.domain import IntentType
 
 
 def test_chat_filter_basic_markdown_stripping() -> None:

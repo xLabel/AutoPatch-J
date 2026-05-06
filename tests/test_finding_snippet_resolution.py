@@ -4,12 +4,12 @@ from pathlib import Path
 
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import Agent
-from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.code_fetcher import CodeFetcher
-from autopatch_j.core.symbol_indexer import SymbolIndexer
-from autopatch_j.core.patch_engine import PatchEngine
-from autopatch_j.core.patch_verifier import PatchVerifier
-from autopatch_j.core.workspace_manager import WorkspaceManager
+from autopatch_j.core.review import ProjectArtifactStore
+from autopatch_j.core.project import SourceReader
+from autopatch_j.core.project import SymbolIndex
+from autopatch_j.core.patching import SearchReplacePatchEngine
+from autopatch_j.core.patching import PatchQualityVerifier
+from autopatch_j.core.review import ReviewWorkspaceManager
 from autopatch_j.scanners.base import Finding, ScanResult
 from autopatch_j.scanners.semgrep import normalize_semgrep_payload
 from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
@@ -17,13 +17,13 @@ from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
 
 
 def _build_agent(repo_root: Path) -> Agent:
-    artifact_manager = ArtifactManager(repo_root)
-    workspace_manager = WorkspaceManager(artifact_manager)
-    symbol_indexer = SymbolIndexer(repo_root)
-    patch_engine = PatchEngine(repo_root)
-    code_fetcher = CodeFetcher(repo_root)
+    artifact_manager = ProjectArtifactStore(repo_root)
+    workspace_manager = ReviewWorkspaceManager(artifact_manager)
+    symbol_indexer = SymbolIndex(repo_root)
+    patch_engine = SearchReplacePatchEngine(repo_root)
+    code_fetcher = SourceReader(repo_root)
     symbol_indexer.rebuild_index()
-    patch_verifier = PatchVerifier(repo_root, None)
+    patch_verifier = PatchQualityVerifier(repo_root, None)
     session = AgentSession(
         repo_root=repo_root,
         artifact_manager=artifact_manager,

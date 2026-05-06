@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock
-from autopatch_j.core.patch_verifier import PatchVerifier, SyntaxCheckResult
-from autopatch_j.core.patch_engine import PatchDraft
+from autopatch_j.core.patching import PatchQualityVerifier, SyntaxCheckResult
+from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.scanners.base import ScanResult, Finding
 
 
@@ -12,10 +12,10 @@ def test_verify_fix_logic():
     """验证指纹比对算法的准确性"""
     repo_root = Path("/tmp/mock-repo")
     mock_scanner = MagicMock()
-    validator = PatchVerifier(repo_root, mock_scanner)
+    validator = PatchQualityVerifier(repo_root, mock_scanner)
     
     # 准备补丁草案快照 (修复目标代码: old_snippet)
-    draft = PatchDraft(
+    draft = SearchReplacePatchDraft(
         file_path="Auth.java",
         old_string="MD5",
         new_string="SHA256",

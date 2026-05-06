@@ -4,12 +4,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from autopatch_j.cli.app import AutoPatchCli
-from autopatch_j.core.models import (
-    ActiveWorkspace,
+from autopatch_j.core.domain import (
+    ReviewWorkspace,
     CodeScope,
     CodeScopeKind,
-    PatchDraftData,
-    PatchReviewItem,
+    PatchDraftSnapshot,
+    ReviewPatchItem,
     PatchReviewStatus,
     WorkspaceStatus,
 )
@@ -39,13 +39,13 @@ def _item(
     status: PatchReviewStatus,
     rationale: str,
     source_hint: str | None = None,
-) -> PatchReviewItem:
-    return PatchReviewItem(
+) -> ReviewPatchItem:
+    return ReviewPatchItem(
         item_id=item_id,
         file_path=file_path,
         finding_ids=["F1"],
         status=status,
-        draft=PatchDraftData(
+        draft=PatchDraftSnapshot(
             file_path=file_path,
             old_string="old",
             new_string="new",
@@ -63,8 +63,8 @@ def test_run_renders_pending_patch_with_absolute_progress(tmp_path: Path) -> Non
     cli = _make_cli(tmp_path)
     assert cli.runtime is not None
 
-    cli.runtime.workspace_manager.save_workspace(
-        ActiveWorkspace(
+    cli.runtime.workspace_manager.save(
+        ReviewWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
             latest_scan_id="scan-1",
@@ -112,8 +112,8 @@ def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
     assert cli.runtime is not None
 
-    cli.runtime.workspace_manager.save_workspace(
-        ActiveWorkspace(
+    cli.runtime.workspace_manager.save(
+        ReviewWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
             latest_scan_id="scan-1",
@@ -149,8 +149,8 @@ def test_run_retains_pending_patch_on_session_reset(tmp_path: Path) -> None:
     cli = _make_cli(tmp_path)
     assert cli.runtime is not None
 
-    cli.runtime.workspace_manager.save_workspace(
-        ActiveWorkspace(
+    cli.runtime.workspace_manager.save(
+        ReviewWorkspace(
             mode=WorkspaceStatus.REVIEWING,
             scope=_scope(),
             latest_scan_id="scan-1",
@@ -180,6 +180,6 @@ def test_run_retains_pending_patch_on_session_reset(tmp_path: Path) -> None:
 
     assert cli.reset_agent_session.call_count == 2
     # The workspace should NOT be cleared anymore (Session Persistence)
-    assert cli.runtime.workspace_manager.load_pending_patch() is not None
+    assert cli.runtime.workspace_manager.load_current_patch_draft() is not None
     # Agent history is still reset
     assert cli.runtime.agent.messages == []

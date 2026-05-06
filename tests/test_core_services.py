@@ -4,33 +4,33 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from autopatch_j.llm.client import LLMCallPurpose
-from autopatch_j.core.artifact_manager import ArtifactManager
-from autopatch_j.core.symbol_indexer import SymbolIndexer
-from autopatch_j.core.input_classifier import (
-    IntentDetector,
-    build_llm_intent_classifier,
-    parse_llm_intent,
+from autopatch_j.core.review import ProjectArtifactStore
+from autopatch_j.core.project import SymbolIndex
+from autopatch_j.core.user_input import (
+    UserIntentClassifier,
+    build_llm_user_intent_classifier,
+    parse_intent_label,
 )
-from autopatch_j.core.models import CodeScopeKind, IntentType
-from autopatch_j.core.scanner_runner import ScannerRunner
-from autopatch_j.core.scope_service import ScopeService
+from autopatch_j.core.domain import CodeScopeKind, IntentType
+from autopatch_j.core.review import StaticScanRunner
+from autopatch_j.core.project import ScopeResolver
 from autopatch_j.scanners import semgrep as semgrep_module
 from autopatch_j.scanners.semgrep import SemgrepScanner, select_targets
 
 
 def test_intent_detector_relies_entirely_on_llm_classifier() -> None:
-    service = IntentDetector(
+    service = UserIntentClassifier(
         classify_with_llm=lambda text, has_pending_review: (
             IntentType.GENERAL_CHAT if not has_pending_review else IntentType.PATCH_EXPLAIN
         )
     )
 
-    assert service.detect_intent("@A.java 看看这个", has_pending_review=False) is IntentType.GENERAL_CHAT
-    assert service.detect_intent("@A.java 这个咋样", has_pending_review=True) is IntentType.PATCH_EXPLAIN
+    assert service.classify("@A.java 看看这个", has_pending_review=False) is IntentType.GENERAL_CHAT
+    assert service.classify("@A.java 这个咋样", has_pending_review=True) is IntentType.PATCH_EXPLAIN
 
-    service_fallback = IntentDetector()
-    assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=False) is IntentType.GENERAL_CHAT
-    assert service_fallback.detect_intent("没有LLM时的兜底", has_pending_review=True) is IntentType.PATCH_EXPLAIN
+    service_fallback = UserIntentClassifier()
+    assert service_fallback.classify("没有LLM时的兜底", has_pending_review=False) is IntentType.GENERAL_CHAT
+    assert service_fallback.classify("没有LLM时的兜底", has_pending_review=True) is IntentType.PATCH_EXPLAIN
 
 
 def test_intent_detector_passes_raw_text_to_llm_classifier() -> None:
@@ -40,38 +40,38 @@ def test_intent_detector_passes_raw_text_to_llm_classifier() -> None:
         seen["text"] = text
         return IntentType.CODE_AUDIT
 
-    service = IntentDetector(classify_with_llm=classify)
+    service = UserIntentClassifier(classify_with_llm=classify)
 
-    assert service.detect_intent("@Foo.java check code", has_pending_review=False) is IntentType.CODE_AUDIT
+    assert service.classify("@Foo.java check code", has_pending_review=False) is IntentType.CODE_AUDIT
     assert seen["text"] == "@Foo.java check code"
 
 
 def test_intent_detector_rejects_patch_only_intents_without_pending_review() -> None:
-    service = IntentDetector(classify_with_llm=lambda text, has_pending_review: IntentType.PATCH_REVISE)
+    service = UserIntentClassifier(classify_with_llm=lambda text, has_pending_review: IntentType.PATCH_REVISE)
 
-    assert service.detect_intent("revise this patch", has_pending_review=False) is IntentType.GENERAL_CHAT
-    assert service.detect_intent("revise this patch", has_pending_review=True) is IntentType.PATCH_REVISE
+    assert service.classify("revise this patch", has_pending_review=False) is IntentType.GENERAL_CHAT
+    assert service.classify("revise this patch", has_pending_review=True) is IntentType.PATCH_REVISE
 
 
 def test_intent_detector_falls_back_when_llm_classifier_fails() -> None:
     def fail(text: str, has_pending_review: bool) -> IntentType | None:
         raise RuntimeError("classifier unavailable")
 
-    service = IntentDetector(classify_with_llm=fail)
+    service = UserIntentClassifier(classify_with_llm=fail)
 
-    assert service.detect_intent("扫描代码", has_pending_review=False) is IntentType.GENERAL_CHAT
-    assert service.detect_intent("解释一下", has_pending_review=True) is IntentType.PATCH_EXPLAIN
+    assert service.classify("扫描代码", has_pending_review=False) is IntentType.GENERAL_CHAT
+    assert service.classify("解释一下", has_pending_review=True) is IntentType.PATCH_EXPLAIN
 
 
 def test_parse_llm_intent_accepts_single_valid_label() -> None:
-    assert parse_llm_intent("code_audit") is IntentType.CODE_AUDIT
-    assert parse_llm_intent("intent: code_explain") is IntentType.CODE_EXPLAIN
-    assert parse_llm_intent("```text\npatch_explain\n```") is IntentType.PATCH_EXPLAIN
+    assert parse_intent_label("code_audit") is IntentType.CODE_AUDIT
+    assert parse_intent_label("intent: code_explain") is IntentType.CODE_EXPLAIN
+    assert parse_intent_label("```text\npatch_explain\n```") is IntentType.PATCH_EXPLAIN
 
 
 def test_parse_llm_intent_rejects_invalid_or_ambiguous_output() -> None:
-    assert parse_llm_intent("not sure") is None
-    assert parse_llm_intent("code_audit or code_explain") is None
+    assert parse_intent_label("not sure") is None
+    assert parse_intent_label("code_audit or code_explain") is None
 
 
 def test_llm_intent_classifier_maps_response_to_intent() -> None:
@@ -89,7 +89,7 @@ def test_llm_intent_classifier_maps_response_to_intent() -> None:
             return FakeResponse()
 
     llm = FakeLLM()
-    classifier = build_llm_intent_classifier(llm)
+    classifier = build_llm_user_intent_classifier(llm)
 
     assert classifier is not None
     assert classifier("change this patch", True) is IntentType.PATCH_REVISE
@@ -120,7 +120,7 @@ def test_llm_intent_classifier_falls_back_to_react_when_fast_path_is_empty() -> 
             return FakeResponse("code_audit")
 
     llm = FakeLLM()
-    classifier = build_llm_intent_classifier(llm)
+    classifier = build_llm_user_intent_classifier(llm)
 
     assert classifier is not None
     assert classifier("@LegacyConfig.java 检查代码", False) is IntentType.CODE_AUDIT
@@ -135,16 +135,16 @@ def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> No
     (demo_dir / "UserService.java").write_text("class UserService {}", encoding="utf-8")
     (repo_root / "README.md").write_text("hello", encoding="utf-8")
 
-    symbol_indexer = SymbolIndexer(repo_root)
+    symbol_indexer = SymbolIndex(repo_root)
     symbol_indexer.rebuild_index()
-    service = ScopeService(repo_root, symbol_indexer, ignored_dirs={".git", ".autopatch-j"})
+    service = ScopeResolver(repo_root, symbol_indexer, ignored_dirs={".git", ".autopatch-j"})
 
-    file_scope = service.fetch_scope("@User.java 检查代码")
+    file_scope = service.resolve("@User.java 检查代码")
     assert file_scope is not None
     assert file_scope.kind is CodeScopeKind.SINGLE_FILE
     assert file_scope.focus_files == ["src/main/java/demo/User.java"]
 
-    dir_scope = service.fetch_scope("@src/main/java/demo 检查代码")
+    dir_scope = service.resolve("@src/main/java/demo 检查代码")
     assert dir_scope is not None
     assert dir_scope.kind is CodeScopeKind.MULTI_FILE
     assert dir_scope.focus_files == [
@@ -152,7 +152,7 @@ def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> No
         "src/main/java/demo/UserService.java",
     ]
 
-    project_scope = service.fetch_scope("检查代码", default_to_project=True)
+    project_scope = service.resolve("检查代码", default_to_project=True)
     assert project_scope is not None
     assert project_scope.kind is CodeScopeKind.PROJECT
     assert project_scope.focus_files == [
@@ -173,21 +173,21 @@ def test_scope_service_rejects_class_and_method_mentions(tmp_path: Path) -> None
         encoding="utf-8",
     )
 
-    symbol_indexer = SymbolIndexer(repo_root)
+    symbol_indexer = SymbolIndex(repo_root)
     symbol_indexer.rebuild_index()
-    service = ScopeService(repo_root, symbol_indexer, ignored_dirs={".git", ".autopatch-j"})
+    service = ScopeResolver(repo_root, symbol_indexer, ignored_dirs={".git", ".autopatch-j"})
 
-    assert service.fetch_scope("@UserService 检查代码") is None
-    assert service.fetch_scope("@isAdmin 检查代码") is None
+    assert service.resolve("@UserService 检查代码") is None
+    assert service.resolve("@isAdmin 检查代码") is None
 
 
 def test_scope_service_rejects_paths_outside_repo(tmp_path: Path) -> None:
     outside_file = tmp_path.parent / "Outside.java"
     outside_file.write_text("class Outside {}", encoding="utf-8")
 
-    service = ScopeService(tmp_path, SymbolIndexer(tmp_path))
+    service = ScopeResolver(tmp_path, SymbolIndex(tmp_path))
 
-    assert service.fetch_scope("@../Outside.java 检查代码") is None
+    assert service.resolve("@../Outside.java 检查代码") is None
 
 
 def test_semgrep_target_selection_rejects_paths_outside_repo(tmp_path: Path) -> None:
@@ -221,14 +221,14 @@ def test_scanner_runner_persists_scan_result(tmp_path: Path) -> None:
     java_file = repo_root / "Demo.java"
     java_file.write_text("class Demo {}", encoding="utf-8")
 
-    artifacts = ArtifactManager(repo_root)
-    symbol_indexer = SymbolIndexer(repo_root)
+    artifacts = ProjectArtifactStore(repo_root)
+    symbol_indexer = SymbolIndex(repo_root)
     symbol_indexer.rebuild_index()
-    scope_service = ScopeService(repo_root, symbol_indexer)
-    scope = scope_service.fetch_scope("@Demo.java 检查代码")
+    scope_service = ScopeResolver(repo_root, symbol_indexer)
+    scope = scope_service.resolve("@Demo.java 检查代码")
     assert scope is not None
 
-    scanner_runner = ScannerRunner(repo_root, artifacts)
+    scanner_runner = StaticScanRunner(repo_root, artifacts)
     artifact_id, result = scanner_runner.run_scan_and_save(scope)
 
     restored = artifacts.load_scan_result(artifact_id)
