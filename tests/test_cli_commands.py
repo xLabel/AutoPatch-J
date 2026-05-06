@@ -237,7 +237,7 @@ def test_process_single_finding_commits_staged_patch_after_success(cli: CLI) -> 
 
     cli._run_agent_request = MagicMock(side_effect=run_agent)
 
-    cli.workflow_controller._process_single_finding(finding, "audit", backlog)
+    cli.workflow_controller.audit_workflow._process_single_finding(finding, "audit", backlog)
 
     workspace = cli.workspace_manager.load_workspace()
     assert len(workspace.patch_items) == 1
@@ -252,7 +252,7 @@ def test_process_single_finding_does_not_commit_without_staged_patch(cli: CLI) -
     backlog = [finding]
     cli._run_agent_request = MagicMock(return_value=[_tool_message("ok", "F1")])
 
-    cli.workflow_controller._process_single_finding(finding, "audit", backlog)
+    cli.workflow_controller.audit_workflow._process_single_finding(finding, "audit", backlog)
 
     workspace = cli.workspace_manager.load_workspace()
     assert workspace.patch_items == []
@@ -273,7 +273,7 @@ def test_finding_retry_commits_only_retry_patch(cli: CLI) -> None:
 
     cli._run_agent_request = MagicMock(side_effect=run_retry)
 
-    cli.workflow_controller._handle_finding_retry(finding, "audit", backlog)
+    cli.workflow_controller.audit_workflow._handle_finding_retry(finding, "audit", backlog)
 
     workspace = cli.workspace_manager.load_workspace()
     assert len(workspace.patch_items) == 1
@@ -292,7 +292,7 @@ def test_finding_retry_failure_does_not_commit_patch(cli: CLI) -> None:
 
     cli._run_agent_request = MagicMock(side_effect=run_retry)
 
-    cli.workflow_controller._handle_finding_retry(finding, "audit", backlog)
+    cli.workflow_controller.audit_workflow._handle_finding_retry(finding, "audit", backlog)
 
     workspace = cli.workspace_manager.load_workspace()
     assert workspace.patch_items == []
@@ -313,7 +313,7 @@ def test_zero_finding_review_commits_staged_patch(cli: CLI) -> None:
 
     cli._run_agent_request = MagicMock(side_effect=run_agent)
 
-    cli.workflow_controller._handle_zero_finding_review("audit", scope)
+    cli.workflow_controller.audit_workflow._handle_zero_finding_review("audit", scope)
 
     workspace = cli.workspace_manager.load_workspace()
     assert len(workspace.patch_items) == 1
