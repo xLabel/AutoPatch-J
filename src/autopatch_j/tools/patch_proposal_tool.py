@@ -42,9 +42,9 @@ class PatchProposalTool(Tool):
         rationale: str,
         associated_finding_id: str | None = None,
     ) -> ToolResult:
-        assert self.context is not None
+        context = self.require_context()
         draft_result = build_patch_draft(
-            context=self.context,
+            context=context,
             file_path=file_path,
             old_string=old_string,
             new_string=new_string,
@@ -54,11 +54,11 @@ class PatchProposalTool(Tool):
             focus_verb="修复",
         )
         if isinstance(draft_result, ToolResult):
-            self.context.clear_proposed_patch_draft()
+            context.clear_proposed_patch_draft()
             return draft_result
 
         draft: PatchDraft = draft_result
-        self.context.set_proposed_patch_draft(draft)
+        context.set_proposed_patch_draft(draft)
         message = f"补丁草案已生成，等待流程确认入队。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"
         message += f"差异预览：\n{draft.diff}\n\n"

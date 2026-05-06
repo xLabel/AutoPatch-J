@@ -126,7 +126,9 @@ class CliCommandController:
         status, _ = install_managed_semgrep_runtime()
         self.context.renderer.print_step(f"扫描器运行时自检: {status}")
 
-        assert self.context.symbol_indexer is not None
+        if self.context.symbol_indexer is None:
+            self.context.renderer.print_error("系统初始化失败：符号索引服务不可用。")
+            return
         stats = self.context.symbol_indexer.rebuild_index()
         self.context.renderer.print_success(f"初始化完成，索引 {stats.get('total', 0)} 项")
         
@@ -196,7 +198,9 @@ class CliCommandController:
         self.context.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
 
     def handle_apply(self, pending: PatchDraft) -> None:
-        assert self.context.patch_engine is not None
+        if self.context.patch_engine is None:
+            self.context.renderer.print_error("系统未初始化，请先执行 /init")
+            return
         self.context.renderer.print_step(f"正在应用补丁至 {pending.file_path}...")
         if not self.context.patch_engine.apply_patch(pending):
             self.context.renderer.print_error("应用失败。")

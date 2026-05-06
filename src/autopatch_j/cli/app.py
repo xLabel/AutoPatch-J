@@ -248,29 +248,28 @@ class CLI:
             suppress_answer_output=suppress_answer_output,
         )
 
+    def _require_context_summary(self) -> CliContextSummary:
+        if self.context_summary is None:
+            raise RuntimeError("系统未初始化，请先执行 /init")
+        return self.context_summary
+
     def _build_local_no_issue_summary(self) -> str:
-        assert self.context_summary is not None
-        return self.context_summary.build_local_no_issue_summary()
+        return self._require_context_summary().build_local_no_issue_summary()
 
     def _build_static_scan_summary(self) -> str:
-        assert self.context_summary is not None
-        return self.context_summary.build_static_scan_summary()
+        return self._require_context_summary().build_static_scan_summary()
 
     def _build_project_explain_context(self, scope: CodeScope) -> str:
-        assert self.context_summary is not None
-        return self.context_summary.build_project_explain_context(scope)
+        return self._require_context_summary().build_project_explain_context(scope)
 
     def _fetch_review_scope_paths(self, current_item: PatchReviewItem) -> list[str]:
-        assert self.context_summary is not None
-        return self.context_summary.fetch_review_scope_paths(current_item)
+        return self._require_context_summary().fetch_review_scope_paths(current_item)
 
     def _describe_scope_paths(self, scope: CodeScope) -> list[str]:
-        assert self.context_summary is not None
-        return self.context_summary.describe_scope_paths(scope)
+        return self._require_context_summary().describe_scope_paths(scope)
 
     def _describe_current_scope_paths(self) -> list[str]:
-        assert self.context_summary is not None
-        return self.context_summary.describe_current_scope_paths()
+        return self._require_context_summary().describe_current_scope_paths()
 
     def _ensure_prompt_session(self) -> bool:
         if self.prompt_session is not None:

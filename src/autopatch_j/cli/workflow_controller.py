@@ -105,9 +105,9 @@ class CliWorkflowController:
         self.audit_workflow.handle_code_audit(text)
 
     def handle_code_explain(self, text: str) -> None:
-        assert self.context.scope_service is not None
-        assert self.context.agent is not None
-        assert self.context.chat_filter is not None
+        if self.context.scope_service is None or self.context.agent is None or self.context.chat_filter is None:
+            self.context.renderer.print_error("系统未初始化，请先执行 /init")
+            return
 
         scope = self.context.scope_service.fetch_scope(text, default_to_project=True)
         compact_observation = not GlobalConfig.debug_mode
@@ -156,8 +156,9 @@ class CliWorkflowController:
         )
 
     def handle_general_chat(self, text: str) -> None:
-        assert self.context.agent is not None
-        assert self.context.chat_filter is not None
+        if self.context.agent is None or self.context.chat_filter is None:
+            self.context.renderer.print_error("系统未初始化，请先执行 /init")
+            return
 
         self.context.agent.session.set_focus_paths([])
         self.context._run_agent_request(

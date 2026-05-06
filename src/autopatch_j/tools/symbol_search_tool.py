@@ -22,11 +22,11 @@ class SymbolSearchTool(Tool):
     }
 
     def execute(self, query: str) -> ToolResult:
-        assert self.context is not None
-        symbol_indexer = self.context.symbol_indexer
+        context = self.require_context()
+        symbol_indexer = context.symbol_indexer
         results = symbol_indexer.search(query, limit=10)
-        if self.context.is_focus_locked():
-            results = [entry for entry in results if self.context.is_path_in_focus(entry.path)]
+        if context.is_focus_locked():
+            results = [entry for entry in results if context.is_path_in_focus(entry.path)]
 
         if not results:
             return ToolResult(

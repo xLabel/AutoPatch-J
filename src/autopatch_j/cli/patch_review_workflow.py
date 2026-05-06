@@ -20,7 +20,9 @@ class CliPatchReviewWorkflow:
 
     def handle_review_input(self, user_input: str, current_item: PatchReviewItem) -> None:
         current_draft = current_item.draft.fetch_patch_draft()
-        assert self.context.workspace_manager is not None
+        if self.context.workspace_manager is None:
+            self.context.renderer.print_error("系统未初始化，请先执行 /init")
+            return
 
         if user_input.lower() == "apply":
             self.context.command_controller.handle_apply(current_draft)
@@ -40,15 +42,17 @@ class CliPatchReviewWorkflow:
 
         if user_input.lower() == "abort":
             self.context.workspace_manager.clear_workspace()
-            self.context.agent.reset_history()
+            if self.context.agent is not None:
+                self.context.agent.reset_history()
             self.context.renderer.print_agent_text("已中止审核流程，丢弃所有剩余补丁草案。")
             return
 
         self._route_chat(user_input)
 
     def handle_patch_explain(self, text: str) -> None:
-        assert self.context.workspace_manager is not None
-        assert self.context.agent is not None
+        if self.context.workspace_manager is None or self.context.agent is None:
+            self.context.renderer.print_error("系统未初始化，请先执行 /init")
+            return
 
         current_item = self.context.workspace_manager.load_workspace().get_current_patch()
         if current_item is None:
@@ -69,8 +73,9 @@ class CliPatchReviewWorkflow:
         )
 
     def handle_patch_revise(self, text: str) -> None:
-        assert self.context.workspace_manager is not None
-        assert self.context.agent is not None
+        if self.context.workspace_manager is None or self.context.agent is None:
+            self.context.renderer.print_error("系统未初始化，请先执行 /init")
+            return
 
         current_item = self.context.workspace_manager.load_workspace().get_current_patch()
         if current_item is None:

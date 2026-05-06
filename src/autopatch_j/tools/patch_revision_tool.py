@@ -41,10 +41,10 @@ class PatchRevisionTool(Tool):
         rationale: str,
         associated_finding_id: str | None = None,
     ) -> ToolResult:
-        assert self.context is not None
+        context = self.require_context()
 
         draft_result = build_patch_draft(
-            context=self.context,
+            context=context,
             file_path=file_path,
             old_string=old_string,
             new_string=new_string,
@@ -57,7 +57,7 @@ class PatchRevisionTool(Tool):
             return draft_result
 
         draft: PatchDraft = draft_result
-        self.context.set_revised_patch_draft(draft)
+        context.set_revised_patch_draft(draft)
         message = f"当前补丁修订草案已生成。目标文件：{file_path}。\n"
         message += f"语法校验：{draft.validation.status}。\n"
         message += f"差异预览：\n{draft.diff}\n\n"

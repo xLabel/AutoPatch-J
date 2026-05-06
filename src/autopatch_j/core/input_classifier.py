@@ -228,7 +228,8 @@ class ConversationRouter:
         messages: list[dict[str, str]],
         purpose: LLMCallPurpose,
     ) -> ConversationRoute | None:
-        assert self.llm is not None
+        if self.llm is None:
+            return None
         try:
             response = self.llm.chat(
                 messages=messages,

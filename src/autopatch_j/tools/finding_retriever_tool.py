@@ -27,8 +27,8 @@ class FindingRetrieverTool(Tool):
     }
 
     def execute(self, finding_id: str) -> ToolResult:
-        assert self.context is not None
-        artifact_manager = self.context.artifact_manager
+        context = self.require_context()
+        artifact_manager = context.artifact_manager
 
         match = re.match(r"[Ff](\d+)", finding_id)
         if not match:
@@ -56,15 +56,15 @@ class FindingRetrieverTool(Tool):
                 summary=f"获取失败: 未找到漏洞 {finding_id}",
             )
 
-        if not self.context.is_path_in_focus(finding.path):
-            allowed = ", ".join(self.context.focus_paths)
+        if not context.is_path_in_focus(finding.path):
+            allowed = ", ".join(context.focus_paths)
             return ToolResult(
                 status="error",
                 message=f"焦点约束阻止越界取证：{finding.path} 不在当前允许范围内。允许路径：{allowed}",
                 summary=f"取证越界: {finding.path}",
             )
 
-        finding.snippet = self.context.code_fetcher.fetch_resolved_snippet(
+        finding.snippet = context.code_fetcher.fetch_resolved_snippet(
             file_path=finding.path,
             start_line=finding.start_line,
             end_line=finding.end_line,

@@ -31,11 +31,17 @@ class CliAuditWorkflow:
             self.context.workspace_manager.clear_workspace()
 
     def _prepare_audit_workspace(self, text: str) -> list[AuditFindingItem] | None:
-        assert self.context.scope_service is not None
-        assert self.context.scanner_runner is not None
-        assert self.context.workspace_manager is not None
-        assert self.context.agent is not None
-        assert self.context.backlog_manager is not None
+        if not all(
+            [
+                self.context.scope_service,
+                self.context.scanner_runner,
+                self.context.workspace_manager,
+                self.context.agent,
+                self.context.backlog_manager,
+            ]
+        ):
+            self.context.renderer.print_error("系统未初始化，请先执行 /init")
+            return None
 
         scope = self.context.scope_service.fetch_scope(text, default_to_project=True)
         if scope is None:
@@ -180,8 +186,9 @@ class CliAuditWorkflow:
         return True
 
     def _handle_zero_finding_review(self, text: str, scope: CodeScope) -> None:
-        assert self.context.agent is not None
-        assert self.context.workspace_manager is not None
+        if self.context.agent is None or self.context.workspace_manager is None:
+            self.context.renderer.print_error("系统未初始化，请先执行 /init")
+            return
 
         for file_path in scope.focus_files:
             self.context.agent.reset_history()

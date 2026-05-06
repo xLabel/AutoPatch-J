@@ -131,9 +131,12 @@ class StreamAdapter:
         plain_answer: bool = False,
         suppress_answer_output: bool = False,
     ) -> list[dict[str, Any]]:
-        assert self.agent is not None
-        assert self.workspace_manager is not None
-        assert self.chat_filter is not None
+        if self.agent is None or self.workspace_manager is None or self.chat_filter is None:
+            self.renderer.print_error("系统未初始化，请先执行 /init")
+            return []
+        agent = self.agent
+        workspace_manager = self.workspace_manager
+        chat_filter = self.chat_filter
 
         policy = ReActDisplayPolicy(
             debug_mode=self._debug_mode(),
@@ -141,7 +144,7 @@ class StreamAdapter:
         )
         
         execution = _StreamExecution(self, policy)
-        start_index = len(self.agent.messages)
+        start_index = len(agent.messages)
 
         final_answer = agent_call(
             prompt,
@@ -150,7 +153,7 @@ class StreamAdapter:
             on_observation=execution.on_observation,
             on_tool_start=execution.on_tool_start,
         )
-        new_messages = list(self.agent.messages[start_index:])
+        new_messages = list(agent.messages[start_index:])
         execution.finish_reasoning_status_if_visible()
 
         if render_no_issue_panel:
@@ -164,7 +167,7 @@ class StreamAdapter:
         if suppress_answer_output:
             return new_messages
 
-        has_pending_patches = self.workspace_manager.load_workspace().has_pending_patch()
+        has_pending_patches = workspace_manager.load_workspace().has_pending_patch()
         answer_allowed_with_pending_patch = {
             IntentType.PATCH_EXPLAIN,
             IntentType.CODE_EXPLAIN,
@@ -175,7 +178,7 @@ class StreamAdapter:
 
         buffered_answer = "".join(execution.buffered_answer_parts)
         if buffered_answer:
-            rendered_answer = self.chat_filter.build_display_answer(
+            rendered_answer = chat_filter.build_display_answer(
                 user_text=raw_user_text or "",
                 answer=buffered_answer,
                 intent=answer_intent,
@@ -189,7 +192,7 @@ class StreamAdapter:
         else:
             sanitized_final_answer = final_answer or ""
             if sanitized_final_answer:
-                rendered_answer = self.chat_filter.build_display_answer(
+                rendered_answer = chat_filter.build_display_answer(
                     user_text=raw_user_text or "",
                     answer=sanitized_final_answer,
                     intent=answer_intent,
