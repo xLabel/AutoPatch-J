@@ -278,10 +278,11 @@ docs/                 # 架构设计文档
 如果想快速理解主流程，建议按这个顺序读：
 
 1. `src/autopatch_j/cli/app.py`
-2. `src/autopatch_j/cli/workflow_controller.py`
-3. `src/autopatch_j/agent/agent.py`
-4. `src/autopatch_j/core/input_classifier.py`
-5. `src/autopatch_j/core/workspace_manager.py`
-6. `src/autopatch_j/core/memory/`
+2. `src/autopatch_j/cli/input_router.py`
+3. `src/autopatch_j/cli/workflows/`
+4. `src/autopatch_j/agent/agent.py`
+5. `src/autopatch_j/core/input_classifier.py`
+6. `src/autopatch_j/core/workspace_manager.py`
+7. `src/autopatch_j/core/memory/`
 
 如果想理解普通问答记忆的设计边界，直接看 [Agent Memory 设计说明](docs/memory_design.md)。
