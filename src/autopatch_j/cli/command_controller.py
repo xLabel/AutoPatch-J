@@ -3,8 +3,9 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from rich.table import Table
+from rich.text import Text
 
-from autopatch_j.cli.render import DECISION_STYLE, SYSTEM_STYLE
+from autopatch_j.cli.render import BODY_STYLE, DECISION_STYLE, MUTED_STYLE, SYSTEM_STYLE
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.symbol_indexer import SymbolIndexer
 from autopatch_j.core.patch_engine import PatchDraft, PatchEngine
@@ -143,40 +144,49 @@ class CliCommandController:
             return
 
         table = Table(box=None, show_header=False, padding=(0, 2))
-        table.add_column("Key", style=SYSTEM_STYLE, width=15)
-        table.add_column("Value")
+        table.add_column("Key", width=15)
+        table.add_column("Value", style=BODY_STYLE)
 
-        table.add_row("[bold]项目根目录[/]", str(self.context.repo_root))
-        table.add_row("[bold]LLM 模型[/]", GlobalConfig.llm_model)
-        table.add_row("[bold]调试模式[/]", "开启" if GlobalConfig.debug_mode else "关闭")
+        table.add_row(self._status_label("项目根目录"), self._status_value(str(self.context.repo_root)))
+        table.add_row(self._status_label("LLM 模型"), self._status_value(GlobalConfig.llm_model))
+        table.add_row(self._status_label("调试模式"), self._status_value("开启" if GlobalConfig.debug_mode else "关闭"))
 
         workspace = self.context.workspace_manager.load_workspace()
         pending = workspace.get_current_patch()
         buffer_status = (
-            f"[bold yellow]存在待确认补丁 ({pending.file_path})[/]"
+            Text.assemble(
+                ("存在待确认补丁", DECISION_STYLE),
+                (f" ({pending.file_path})", MUTED_STYLE),
+            )
             if pending
-            else "[dim]空闲[/]"
+            else self._status_value("空闲")
         )
-        table.add_row("[bold]补丁缓冲区[/]", buffer_status)
+        table.add_row(self._status_label("补丁缓冲区"), buffer_status)
 
         stats = self.context.symbol_indexer.get_stats()
         stats_str = (
             f"文件:{stats.get('file', 0)} | 类:{stats.get('class', 0)} | "
             f"方法:{stats.get('method', 0)} (总计:{stats.get('total', 0)})"
         )
-        table.add_row("[bold]符号索引[/]", stats_str)
+        table.add_row(self._status_label("符号索引"), self._status_value(stats_str))
         symbol_status = self.context.symbol_indexer.fetch_symbol_extract_status()
         symbol_mode = str(symbol_status.get("mode", "full"))
         if symbol_mode == "degraded":
-            status_text = "[yellow]已降级[/]"
+            status_text = Text("已降级", style=DECISION_STYLE)
             last_error = str(symbol_status.get("last_error") or "")
             if last_error:
-                status_text += f" [dim]({last_error})[/]"
+                status_text.append(f" ({last_error})", style=MUTED_STYLE)
         else:
-            status_text = "[green]正常[/]"
-        table.add_row("[bold]符号提取[/]", status_text)
+            status_text = self._status_value("正常")
+        table.add_row(self._status_label("符号提取"), status_text)
 
-        self.context.renderer.print_panel(table, title="[bold] 项目状态 [/]", style=SYSTEM_STYLE)
+        self.context.renderer.print_panel(table, title=f"[bold {SYSTEM_STYLE}] 项目状态 [/]", style=SYSTEM_STYLE)
+
+    def _status_label(self, text: str) -> Text:
+        return Text(text, style=f"bold {SYSTEM_STYLE}")
+
+    def _status_value(self, text: str, style: str = BODY_STYLE) -> Text:
+        return Text(text, style=style)
 
     def handle_reindex(self) -> None:
         if not self.context.symbol_indexer:

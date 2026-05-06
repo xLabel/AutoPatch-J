@@ -120,11 +120,11 @@ def test_handle_status_includes_output_mode(cli: CLI) -> None:
     table = cli.renderer.print_panel.call_args.args[0]
     cells = [str(cell) for column in table.columns for cell in column._cells]
 
-    assert "[bold]调试模式[/]" in cells
+    assert "调试模式" in cells
     assert "关闭" in cells
-    assert "[bold]日志模式[/]" not in cells
-    assert "[bold]输出模式[/]" not in cells
-    assert "[bold]静态扫描器[/]" not in cells
+    assert "日志模式" not in cells
+    assert "输出模式" not in cells
+    assert "静态扫描器" not in cells
 
 
 def test_handle_patch_explain_does_not_crash(cli: CLI) -> None:
