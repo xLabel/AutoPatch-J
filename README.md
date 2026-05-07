@@ -85,61 +85,49 @@ autopatch-j> 这个异常一般怎么排查？
 
 ## 架构取舍
 
-### Workflow owns state, Agent owns reasoning
+- **workflow owns state, agent owns reasoning**
 
-> Workflow 管状态，Agent 管推理。
+  Workflow 负责意图、scope、扫描、finding 队列、补丁队列和人工确认。
+  Agent 负责解释问题、读取证据、调用工具、生成或重写补丁草案。
 
-Workflow 负责意图、scope、扫描、finding 队列、补丁队列和人工确认。Agent 负责解释问题、读取证据、调用工具、生成或重写补丁草案。
+  这个分工避免把系统状态交给 LLM 自行维护。LLM 可以推理，但不能越过 Workflow 定义的任务边界。
 
-这个分工避免把系统状态交给 LLM 自行维护。LLM 可以推理，但不能越过 Workflow 定义的任务边界。
+- **scanner provides evidence, llm performs triage**
 
-### Scanner provides evidence, LLM performs triage
+  默认扫描器是 Semgrep。扫描器负责给出可定位 finding，
+  LLM 基于 finding、源码片段和当前 scope 做取证、解释和最小修复。
 
-> 扫描器提供证据，LLM 负责判断。
+  PMD、SpotBugs、Checkstyle 当前作为 planned scanner 展示，后续可以按相同接口接入。
 
-默认扫描器是 Semgrep。扫描器负责给出可定位 finding，LLM 基于 finding、源码片段和当前 scope 做取证、解释和最小修复。
+- **function tools are gated by intent**
 
-PMD、SpotBugs、Checkstyle 当前作为 planned scanner 展示，后续可以按相同接口接入。
+  不同 `IntentType` 对应不同工具白名单。
+  比如代码审计可以读取 finding、源码并提交补丁草案；
+  补丁解释不能调用修订工具；普通聊天默认不拿代码修改工具。
 
-### Function tools are gated by intent
+  这让模型能使用工具，但不能把一个聊天问题扩展成任意文件读取或补丁修改。
 
-> function call 工具按任务开放，不给模型全量权限。
+- **patch is a review item, not a chat reply**
 
-不同 `IntentType` 对应不同工具白名单。比如代码审计可以读取 finding、源码并提交补丁草案；补丁解释不能调用修订工具；普通聊天默认不拿代码修改工具。
+  每个补丁都会进入人工确认队列，包含目标文件、关联 finding、unified diff、修复理由和校验状态。
 
-这让模型能使用工具，但不能把一个聊天问题扩展成任意文件读取或补丁修改。
+  用户可以执行 `apply / discard / abort`，也可以继续要求解释或重写当前补丁。
+  默认只重写当前补丁，不自动改动后续补丁队列。
 
-### Patch is a review item, not a chat reply
+- **memory helps chat, not repair**
 
-> 补丁是待确认对象，不是聊天回复里的临时文本。
+  AutoPatch-J 的项目级记忆只服务 `code_explain` 和 `general_chat`，
+  不会进入 `code_audit`、`patch_explain`、`patch_revise`。
 
-每个补丁都会进入人工确认队列，包含目标文件、关联 finding、unified diff、修复理由和校验状态。
+  这样牺牲了一点全局个性化，但能保证修复链路始终以当前 finding、当前源码和当前补丁为准。
+  详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
 
-用户可以执行 `apply / discard / abort`，也可以继续要求解释或重写当前补丁。
+- **llm calls are purpose driven**
 
-默认只重写当前补丁，不自动改动后续补丁队列。
+  LLM 层使用 `LLMCallPurpose` 区分 `REACT`、`CLASSIFIER` 和 `MEMORY_SUMMARY`。
+  主 Agent 推理支持流式输出；意图识别和记忆摘要关闭 reasoning，优先降低延迟和控制输出形态。
 
-### Memory helps chat, not repair
-
-> 记忆服务普通问答，不进入补丁修复链路。
-
-AutoPatch-J 的项目级记忆只服务 `code_explain` 和 `general_chat`。
-
-它不会进入 `code_audit`、`patch_explain`、`patch_revise`。
-
-这样牺牲了一点全局个性化，但能保证修复链路始终以当前 finding、当前源码和当前补丁为准。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
-
-### LLM calls are purpose driven
-
-> 业务只声明调用意图，底层策略由 LLM 层统一决定。
-
-LLM 层使用 `LLMCallPurpose` 区分调用场景：
-
-- `REACT`：主 Agent 推理调用，支持流式输出，可继承供应商 reasoning 配置。
-- `CLASSIFIER`：意图识别调用，非流式，关闭 reasoning，低温度，小 token，优先降低延迟。
-- `MEMORY_SUMMARY`：记忆摘要调用，非流式，关闭 reasoning，输出受约束的 memory delta。
-
-业务层不直接散落供应商私有参数，减少 DeepSeek、百炼 DSML、OpenAI 兼容接口之间的耦合。
+  业务层不直接散落供应商私有参数，减少 DeepSeek、百炼 DSML、OpenAI 兼容接口之间的耦合。
 
 ## 五类任务边界
 
