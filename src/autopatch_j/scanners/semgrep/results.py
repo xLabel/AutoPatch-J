@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from autopatch_j.core.project import UnsafeRepoPathError, to_repo_relative_path
 from autopatch_j.core.project import SourceReader
 from autopatch_j.scanners.models import Finding, ScanResult
 
@@ -24,7 +25,7 @@ def build_semgrep_scan_result(
             extra = {}
         severity = str(extra.get("severity", "unknown")).lower()
 
-        finding_path = str(item.get("path", "")).replace("\\", "/")
+        finding_path = normalize_result_path(repo_root, str(item.get("path", "")))
         start_line = int(_nested_number(item, "start", "line"))
         end_line = int(_nested_number(item, "end", "line"))
         fallback_snippet = str(extra.get("lines", "")).strip()
@@ -77,6 +78,17 @@ def normalize_check_id(raw_check_id: str) -> str:
         if marker_index >= 0:
             return raw_check_id[marker_index:]
     return raw_check_id
+
+
+def normalize_result_path(repo_root: Path, raw_path: str) -> str:
+    path_text = raw_path.replace("\\", "/")
+    path = Path(path_text)
+    if not path.is_absolute():
+        return path_text
+    try:
+        return to_repo_relative_path(repo_root, path)
+    except UnsafeRepoPathError:
+        return path_text
 
 
 def _nested_number(payload: dict[str, object], *keys: str) -> int:

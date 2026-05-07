@@ -52,7 +52,14 @@ class SemgrepScanner(StaticScanner):
         if resolved_binary is None:
             return self.missing_binary_result(scope=list(scope), targets=targets)
 
-        command = [resolved_binary, "scan", "--json", "--config", self.config, *targets]
+        command = [
+            resolved_binary,
+            "scan",
+            "--json",
+            "--config",
+            self.config,
+            *self._command_targets(repo_root, targets),
+        ]
         try:
             completed = subprocess.run(
                 command,
@@ -153,6 +160,16 @@ class SemgrepScanner(StaticScanner):
         message = (
             "AutoPatch-J 管理的 Semgrep 缺失或不可执行。请执行 /init 初始化 scanner runtime。"
         )
+
+    def _command_targets(self, repo_root: Path, targets: list[str]) -> list[str]:
+        normalized_repo_root = repo_root.resolve()
+        command_targets: list[str] = []
+        for target in targets:
+            if target == ".":
+                command_targets.append(str(normalized_repo_root))
+            else:
+                command_targets.append(str((normalized_repo_root / target).resolve()))
+        return command_targets
         return ScanResult(
             engine="semgrep",
             scope=scope,
