@@ -249,7 +249,7 @@ set AUTOPATCH_LLM_STREAM_DIALECT=standard
 |---|---|---|
 | `AUTOPATCH_LLM_API_KEY` | 空 | 关键配置。缺失时无法创建可用 LLM 客户端 |
 | `AUTOPATCH_LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容接口地址 |
-| `AUTOPATCH_LLM_MODEL` | `deepseek-v4-flash` | 模型名 |
+| `AUTOPATCH_LLM_MODEL` | `deepseek-v4-flash` | 国产 V4 模型已足够兼顾准确率和速度；也可替换为供应商支持的其他 OpenAI 兼容模型名 |
 | `AUTOPATCH_DEBUG` | `false` | 仅设置为 `true` 时展示完整思考链和工具输出详情 |
 | `AUTOPATCH_LLM_STREAM_DIALECT` | `standard` | 可选 `standard`、`bailian-dsml` |
 | `AUTOPATCH_LLM_REASONING_EFFORT` | 空 | 透传给支持该参数的供应商 |
@@ -293,19 +293,4 @@ python -m autopatch_j
 apply       应用当前补丁
 discard     丢弃当前补丁
 abort       中止审核并丢弃剩余补丁
-```
-
-## 开发验证
-
-常用检查：
-
-```bash
-python -m compileall -q src tests
-pytest -q
-```
-
-文档修改一般不需要跑全量测试，但提交前建议至少执行：
-
-```bash
-git diff --check
 ```
