@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from autopatch_j.core.patching import PatchQualityVerifier, SyntaxCheckResult
 from autopatch_j.core.patching import SearchReplacePatchDraft
-from autopatch_j.scanners.base import ScanResult, Finding
+from autopatch_j.scanners.models import Finding, ScanResult
 
 
 def test_verify_fix_logic():

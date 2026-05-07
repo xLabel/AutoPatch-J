@@ -6,7 +6,7 @@ from autopatch_j.core.review import ProjectArtifactStore
 from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.core.patching import SyntaxCheckResult
 from autopatch_j.core.review import ReviewWorkspaceManager
-from autopatch_j.scanners.base import ScanResult
+from autopatch_j.scanners.models import ScanResult
 
 
 def _draft(file_path: str, rationale: str) -> SearchReplacePatchDraft:

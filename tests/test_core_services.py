@@ -14,8 +14,11 @@ from autopatch_j.core.user_input import (
 from autopatch_j.core.domain import CodeScopeKind, IntentType
 from autopatch_j.core.review import StaticScanRunner
 from autopatch_j.core.project import ScopeResolver
-from autopatch_j.scanners import semgrep as semgrep_module
-from autopatch_j.scanners.semgrep import SemgrepScanner, select_targets
+from autopatch_j.scanners.catalog import DEFAULT_SCANNER_NAME, ScannerCatalog
+from autopatch_j.scanners.models import ScannerName
+from autopatch_j.scanners.planned import PlannedScanner
+from autopatch_j.scanners.semgrep import SemgrepScanner, select_semgrep_targets
+from autopatch_j.scanners.semgrep import scanner as semgrep_scanner_module
 
 
 def test_intent_detector_relies_entirely_on_llm_classifier() -> None:
@@ -196,7 +199,7 @@ def test_semgrep_target_selection_rejects_paths_outside_repo(tmp_path: Path) -> 
     java_file.write_text("class Demo {}", encoding="utf-8")
     outside_file.write_text("class Outside {}", encoding="utf-8")
 
-    assert select_targets(tmp_path, ["Demo.java", "../Outside.java"]) == ["Demo.java"]
+    assert select_semgrep_targets(tmp_path, ["Demo.java", "../Outside.java"]) == ["Demo.java"]
 
 
 def test_semgrep_scanner_reports_invalid_json_output(tmp_path: Path, monkeypatch) -> None:
@@ -205,7 +208,7 @@ def test_semgrep_scanner_reports_invalid_json_output(tmp_path: Path, monkeypatch
     scanner = SemgrepScanner()
     monkeypatch.setattr(scanner, "resolve_binary", lambda repo_root: "semgrep")
     monkeypatch.setattr(
-        semgrep_module.subprocess,
+        semgrep_scanner_module.subprocess,
         "run",
         lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="not json", stderr=""),
     )
@@ -214,6 +217,17 @@ def test_semgrep_scanner_reports_invalid_json_output(tmp_path: Path, monkeypatch
 
     assert result.status == "error"
     assert "不是有效 JSON" in result.message
+
+
+def test_scanner_catalog_exposes_default_and_planned_scanners() -> None:
+    catalog = ScannerCatalog.default()
+
+    assert catalog.get(DEFAULT_SCANNER_NAME).__class__ is SemgrepScanner
+
+    planned = catalog.get(ScannerName.PMD)
+    assert isinstance(planned, PlannedScanner)
+    assert planned.get_meta().is_implemented is False
+    assert planned.scan(Path("."), []).status == "error"
 
 
 def test_scanner_runner_persists_scan_result(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from autopatch_j.core.review import FindingBacklog
 from autopatch_j.core.domain import AuditAttemptOutcome, AuditFindingStatus
-from autopatch_j.scanners.base import Finding, ScanResult
+from autopatch_j.scanners.models import Finding, ScanResult
 
 
 def _scan_result() -> ScanResult:

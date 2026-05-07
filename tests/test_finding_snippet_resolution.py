@@ -10,8 +10,8 @@ from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.patching import SearchReplacePatchEngine
 from autopatch_j.core.patching import PatchQualityVerifier
 from autopatch_j.core.review import ReviewWorkspaceManager
-from autopatch_j.scanners.base import Finding, ScanResult
-from autopatch_j.scanners.semgrep import normalize_semgrep_payload
+from autopatch_j.scanners.models import Finding, ScanResult
+from autopatch_j.scanners.semgrep import build_semgrep_scan_result
 from autopatch_j.tools.function_calls.get_finding_detail import GetFindingDetailTool
 from autopatch_j.tools.function_calls.propose_patch import ProposePatchTool
 
@@ -36,7 +36,7 @@ def _build_agent(repo_root: Path) -> Agent:
     return Agent(session=session, llm=None)
 
 
-def test_normalize_semgrep_payload_prefers_source_lines_over_dirty_extra_lines(tmp_path: Path) -> None:
+def test_build_semgrep_scan_result_prefers_source_lines_over_dirty_extra_lines(tmp_path: Path) -> None:
     java_file = tmp_path / "src" / "main" / "java" / "demo" / "UserService.java"
     java_file.parent.mkdir(parents=True)
     java_file.write_text(
@@ -65,7 +65,7 @@ def test_normalize_semgrep_payload_prefers_source_lines_over_dirty_extra_lines(t
         ]
     }
 
-    result = normalize_semgrep_payload(
+    result = build_semgrep_scan_result(
         payload=payload,
         repo_root=tmp_path,
         scope=["src/main/java/demo/UserService.java"],
