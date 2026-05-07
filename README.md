@@ -93,7 +93,7 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 
 **隔离的上下文能力**：项目级 Memory 只服务 `code_explain` 和 `general_chat`，用于记住用户关注的项目事实和工程偏好，不进入 `code_audit`、`patch_explain`、`patch_revise`，避免历史偏好污染修复证据链。业务代码只声明 `LLMCallPurpose`，是否关闭 reasoning、是否流式输出、如何适配 DeepSeek、百炼、OpenAI 兼容接口，统一由 LLM 层处理。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。原则：`Memory helps chat, not repair` / `LLM calls are purpose driven`
 
-## 五类任务边界
+## 5 种任务边界
 
 | IntentType | 场景 | 可用工具 | Memory | 关键边界 |
 |---|---|---|---:|---|
