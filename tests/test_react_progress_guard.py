@@ -7,7 +7,7 @@ from autopatch_j.agent.progress_guard import (
     normalize_tool_arguments,
 )
 from autopatch_j.llm.dialect import ToolCall
-from autopatch_j.tools.base import ToolResult
+from autopatch_j.tools.contract import ToolExecutionResult
 
 
 def _trace(
@@ -18,7 +18,7 @@ def _trace(
 ):
     return build_react_step_trace(
         ToolCall(name=tool_name, arguments=arguments, call_id="call-1"),
-        ToolResult(status=status, message="message", summary=summary),
+        ToolExecutionResult(status=status, message="message", summary=summary),
     )
 
 

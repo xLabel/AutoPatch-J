@@ -12,8 +12,8 @@ from autopatch_j.core.patching import PatchQualityVerifier
 from autopatch_j.core.review import ReviewWorkspaceManager
 from autopatch_j.scanners.base import Finding, ScanResult
 from autopatch_j.scanners.semgrep import normalize_semgrep_payload
-from autopatch_j.tools.finding_retriever_tool import FindingRetrieverTool
-from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
+from autopatch_j.tools.function_calls.get_finding_detail import GetFindingDetailTool
+from autopatch_j.tools.function_calls.propose_patch import ProposePatchTool
 
 
 def _build_agent(repo_root: Path) -> Agent:
@@ -112,7 +112,7 @@ def test_get_finding_detail_repairs_legacy_bad_snippet_from_snapshot(tmp_path: P
         )
     )
 
-    result = FindingRetrieverTool(agent.session).execute("F1")
+    result = GetFindingDetailTool(agent.session).execute("F1")
 
     assert result.status == "ok"
     assert 'return user.getName().equals("admin");' in result.message
@@ -155,7 +155,7 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
         )
     )
 
-    result = PatchProposalTool(agent.session).execute(
+    result = ProposePatchTool(agent.session).execute(
         file_path="src/main/java/demo/UserService.java",
         old_string='return user.getName().equals("admin");',
         new_string='return "admin".equals(user.getName());',

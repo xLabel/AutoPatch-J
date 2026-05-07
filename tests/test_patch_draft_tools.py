@@ -6,8 +6,8 @@ from autopatch_j.core.review import ProjectArtifactStore
 from autopatch_j.core.patching import SearchReplacePatchDraft, SearchReplacePatchEngine
 from autopatch_j.core.patching import PatchQualityVerifier, SyntaxCheckResult
 from autopatch_j.core.review import ReviewWorkspaceManager
-from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
-from autopatch_j.tools.patch_revision_tool import PatchRevisionTool
+from autopatch_j.tools.function_calls.propose_patch import ProposePatchTool
+from autopatch_j.tools.function_calls.revise_patch import RevisePatchTool
 
 
 class _FakeAgentSession:
@@ -48,7 +48,7 @@ def _draft(file_path: str = "src/main/java/demo/UserService.java") -> SearchRepl
     )
 
 
-def test_patch_proposal_tool_returns_structured_old_string_error(tmp_path: Path) -> None:
+def test_propose_patch_returns_structured_old_string_error(tmp_path: Path) -> None:
     java_dir = tmp_path / "src" / "main" / "java" / "demo"
     java_dir.mkdir(parents=True)
     (java_dir / "UserService.java").write_text(
@@ -58,7 +58,7 @@ def test_patch_proposal_tool_returns_structured_old_string_error(tmp_path: Path)
 
     session = _FakeAgentSession(tmp_path)
     session.set_proposed_patch_draft(_draft())
-    tool = PatchProposalTool(session)
+    tool = ProposePatchTool(session)
     result = tool.execute(
         file_path="src/main/java/demo/UserService.java",
         old_string='return "admin".equals(user.getName());',
@@ -75,7 +75,7 @@ def test_patch_proposal_tool_returns_structured_old_string_error(tmp_path: Path)
     assert session.proposed_patch_draft is None
 
 
-def test_patch_proposal_tool_stashes_draft_without_appending_workspace(tmp_path: Path) -> None:
+def test_propose_patch_stashes_draft_without_appending_workspace(tmp_path: Path) -> None:
     java_dir = tmp_path / "src" / "main" / "java" / "demo"
     java_dir.mkdir(parents=True)
     (java_dir / "UserService.java").write_text(
@@ -83,7 +83,7 @@ def test_patch_proposal_tool_stashes_draft_without_appending_workspace(tmp_path:
         encoding="utf-8",
     )
     session = _FakeAgentSession(tmp_path)
-    tool = PatchProposalTool(session)
+    tool = ProposePatchTool(session)
 
     result = tool.execute(
         file_path="src/main/java/demo/UserService.java",
@@ -99,7 +99,7 @@ def test_patch_proposal_tool_stashes_draft_without_appending_workspace(tmp_path:
     assert session.workspace_manager.load().patch_items == []
 
 
-def test_patch_revision_tool_stashes_draft_without_appending_workspace(tmp_path: Path) -> None:
+def test_revise_patch_stashes_draft_without_appending_workspace(tmp_path: Path) -> None:
     java_dir = tmp_path / "src" / "main" / "java" / "demo"
     java_dir.mkdir(parents=True)
     (java_dir / "UserService.java").write_text(
@@ -107,7 +107,7 @@ def test_patch_revision_tool_stashes_draft_without_appending_workspace(tmp_path:
         encoding="utf-8",
     )
     session = _FakeAgentSession(tmp_path)
-    tool = PatchRevisionTool(session)
+    tool = RevisePatchTool(session)
 
     result = tool.execute(
         file_path="src/main/java/demo/UserService.java",

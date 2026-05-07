@@ -31,7 +31,8 @@ from autopatch_j.core.memory import MemoryManager
 from autopatch_j.core.patching import SearchReplacePatchEngine
 from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.review import ReviewWorkspaceManager
-from autopatch_j.tools.base import ToolResult
+from autopatch_j.tools.contract import ToolExecutionResult
+from autopatch_j.tools.names import FunctionToolName
 
 
 def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
@@ -86,16 +87,19 @@ def test_task_system_prompt_declares_java_context() -> None:
 
 def test_task_profiles_define_tool_boundaries() -> None:
     assert fetch_task_profile(IntentType.CODE_AUDIT).tool_names == (
-        "get_finding_detail",
-        "read_source_code",
-        "propose_patch",
+        FunctionToolName.GET_FINDING_DETAIL,
+        FunctionToolName.READ_SOURCE_CODE,
+        FunctionToolName.PROPOSE_PATCH,
     )
     assert fetch_code_explain_profile(allow_symbol_search=True).tool_names == (
-        "search_symbols",
-        "read_source_code",
+        FunctionToolName.SEARCH_SYMBOLS,
+        FunctionToolName.READ_SOURCE_CODE,
     )
-    assert fetch_code_explain_profile(allow_symbol_search=False).tool_names == ("read_source_code",)
-    assert ZERO_FINDING_REVIEW_PROFILE.tool_names == ("read_source_code", "propose_patch")
+    assert fetch_code_explain_profile(allow_symbol_search=False).tool_names == (FunctionToolName.READ_SOURCE_CODE,)
+    assert ZERO_FINDING_REVIEW_PROFILE.tool_names == (
+        FunctionToolName.READ_SOURCE_CODE,
+        FunctionToolName.PROPOSE_PATCH,
+    )
 
 
 def test_perform_code_explain_disables_symbol_search_in_single_file_mode(tmp_path: Path) -> None:
@@ -340,7 +344,7 @@ def test_react_loop_blocks_repeated_no_progress_tool_calls(tmp_path: Path) -> No
     ]
     agent = _build_agent(tmp_path, mock_llm)
     agent.available_tools["read_source_code"].execute = MagicMock(
-        return_value=ToolResult(
+        return_value=ToolExecutionResult(
             status="ok",
             message="源码内容",
             summary="已读取源代码: src/main/java/demo/User.java",

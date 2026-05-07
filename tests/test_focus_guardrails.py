@@ -10,9 +10,9 @@ from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.patching import SearchReplacePatchEngine
 from autopatch_j.core.patching import PatchQualityVerifier
 from autopatch_j.core.review import ReviewWorkspaceManager
-from autopatch_j.tools.patch_proposal_tool import PatchProposalTool
-from autopatch_j.tools.source_reader_tool import SourceReaderTool
-from autopatch_j.tools.symbol_search_tool import SymbolSearchTool
+from autopatch_j.tools.function_calls.propose_patch import ProposePatchTool
+from autopatch_j.tools.function_calls.read_source_code import ReadSourceCodeTool
+from autopatch_j.tools.function_calls.search_symbols import SearchSymbolsTool
 
 
 def _build_agent(repo_root: Path) -> Agent:
@@ -48,11 +48,11 @@ def test_focus_lock_blocks_unrelated_read_and_patch(tmp_path: Path) -> None:
 
     agent = _build_agent(tmp_path)
     agent.session.set_focus_paths(["src/main/java/demo/LegacyConfig.java"])
-    read_result = SourceReaderTool(agent.session).execute("src/main/java/demo/UserService.java")
+    read_result = ReadSourceCodeTool(agent.session).execute("src/main/java/demo/UserService.java")
     assert read_result.status == "error"
     assert "焦点约束阻止越界读取" in read_result.message
 
-    patch_result = PatchProposalTool(agent.session).execute(
+    patch_result = ProposePatchTool(agent.session).execute(
         file_path="src/main/java/demo/UserService.java",
         old_string='user.getName().equals("admin")',
         new_string='"admin".equals(user.getName())',
@@ -68,11 +68,11 @@ def test_tools_reject_paths_outside_repo_even_without_focus_lock(tmp_path: Path)
     outside_file.write_text("public class Outside {}", encoding="utf-8")
 
     agent = _build_agent(tmp_path)
-    read_result = SourceReaderTool(agent.session).execute("../Outside.java")
+    read_result = ReadSourceCodeTool(agent.session).execute("../Outside.java")
     assert read_result.status == "error"
     assert "路径超出项目根目录范围" in read_result.message
 
-    patch_result = PatchProposalTool(agent.session).execute(
+    patch_result = ProposePatchTool(agent.session).execute(
         file_path="../Outside.java",
         old_string="Outside",
         new_string="Inside",
@@ -92,11 +92,11 @@ def test_focus_lock_filters_symbol_search_results(tmp_path: Path) -> None:
 
     agent = _build_agent(tmp_path)
     agent.session.set_focus_paths(["src/main/java/demo/LegacyConfig.java"])
-    blocked = SymbolSearchTool(agent.session).execute("AppConfig")
+    blocked = SearchSymbolsTool(agent.session).execute("AppConfig")
     assert blocked.status == "ok"
     assert "未找到与 'AppConfig' 相关的符号。" in blocked.message
 
-    allowed = SymbolSearchTool(agent.session).execute("LegacyConfig")
+    allowed = SearchSymbolsTool(agent.session).execute("LegacyConfig")
     assert allowed.status == "ok"
     assert "LegacyConfig.java" in allowed.message
     assert "AppConfig.java" not in allowed.message
@@ -116,7 +116,7 @@ def test_source_reader_uses_same_turn_cache(tmp_path: Path) -> None:
         return "public class LegacyConfig {}"
 
     agent.session.code_fetcher.fetch_entry_source = fake_fetch_entry_source  # type: ignore[method-assign]
-    tool = SourceReaderTool(agent.session)
+    tool = ReadSourceCodeTool(agent.session)
 
     first = tool.execute("src/main/java/demo/LegacyConfig.java")
     second = tool.execute("src/main/java/demo/LegacyConfig.java")
