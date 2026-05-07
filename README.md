@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>面向 Java 仓库的 AI 代码修复 Agent</strong><br/>
-  Workflow 负责边界与状态，Agent 负责推理与工具调用，让代码检查、补丁生成和人工确认进入一条可复核的工程链路。
+  用静态扫描建立证据，用 LLM 完成推理，用人工确认守住最后一道补丁边界。
 </p>
 
 <p align="center">
@@ -14,95 +14,23 @@
   <img src="https://img.shields.io/badge/CLI-Rich%20%2B%20prompt--toolkit-F59E0B?style=flat-square" alt="Rich + prompt-toolkit" />
 </p>
 
-## 为什么不是又一个 AI Coding Bot
+## 项目定位
 
-纯 Agent 很容易看起来聪明，但工程上经常失控：它可能乱扫全库、跨范围读文件、把旧上下文当成当前事实、重复调用工具，最后给出一段无法复核的补丁文本。
+AutoPatch-J 是一个面向 Java 仓库的命令行修复 Agent。它不是通用聊天机器人，也不是让大模型自由改代码的 AI Coding Bot。
 
-AutoPatch-J 的设计答案是把 LLM 放进一条受控链路里：
+它的核心目标是把代码检查、证据读取、补丁生成、补丁解释、补丁重写和人工确认放进一条可复核的工程链路里：
 
-- 用户输入先做意图识别和范围解析。
-- 代码检查优先建立在静态扫描 finding 和源码证据之上。
-- Agent 只在当前任务开放的工具白名单内行动。
-- 补丁先成为待确认对象，再由用户决定是否应用。
-- 普通问答可以有记忆，但不会进入补丁修复链路。
+- 用户输入先进入意图识别，而不是直接交给 Agent 发散执行。
+- 审计任务优先依赖静态扫描 finding 和源码证据。
+- Agent 只能调用当前任务允许的 function call 工具。
+- 补丁先进入待确认队列，由用户决定应用、丢弃、中止或要求重写。
+- 普通问答可以有记忆，但不会污染代码审计和补丁修复。
 
-目标不是让模型自由发挥，而是让 Java 代码修复更稳定、更可验证、更可回看。
+## 运行效果
 
-## 核心架构取舍
+![AutoPatch-J CLI 审计与补丁确认](docs/assets/autopatch-j-cli-review.png)
 
-### Workflow owns state, Agent owns reasoning
-
-> Workflow 管状态，Agent 管推理。
-
-`Workflow` 负责状态和边界：意图、scope、扫描、finding 队列、补丁队列和人工确认。
-
-`Agent` 负责推理和执行：解释代码、判断 finding、调用工具、生成补丁草案、按反馈重写当前补丁。
-
-这个分工让 Agent 保留智能，同时避免把系统状态交给 LLM 自行维护。
-
-### Scanner provides evidence, LLM performs triage
-
-> 扫描器提供证据，LLM 负责判断。
-
-默认扫描器是 **Semgrep**。扫描器负责提供可定位的 finding，LLM 负责基于 finding、源码片段和当前 scope 做取证、解释和最小修复。
-
-其余扫描器适配位已预留：
-
-- PMD（Planned）
-- SpotBugs（Planned）
-- Checkstyle（Planned）
-
-AutoPatch-J 不鼓励 LLM “凭感觉修代码”。在 `code_audit` 中，LLM 应该围绕证据工作。
-
-### Patch is a review item, not a chat reply
-
-> 补丁是待确认对象，不是聊天回复。
-
-补丁不是聊天回复里的临时文本。每个补丁都会进入人工确认队列，包含：
-
-- 目标文件
-- 关联 finding
-- unified diff
-- 修复理由
-- 语法校验结果
-
-用户可以 `apply / discard / abort`，也可以继续要求解释或重写当前补丁。
-
-### Memory helps chat, not repair
-
-> 记忆服务问答，不污染修复。
-
-AutoPatch-J 有项目级普通问答记忆，但它只服务 `code_explain` 和 `general_chat`。
-
-它不会进入：
-
-- `code_audit`
-- `patch_explain`
-- `patch_revise`
-
-原因很直接：修复链路必须以当前 finding、当前源码和当前补丁队列为准，不能被历史聊天、旧偏好或算法题讨论污染。
-
-详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
-
-### Tool access is asymmetric by intent
-
-> 工具权限按任务非对称开放。
-
-不同任务开放不同工具。模型不是拿到所有能力后自由探索，而是在当前 intent 允许的边界内行动。
-
-这种非对称权限设计让系统既能利用 LLM 的推理能力，也能避免工具调用失控。
-
-## 五类任务边界
-
-| IntentType | 场景 | 主要工具能力 | 使用 Memory | 说明 |
-|---|---|---|---:|---|
-| `code_audit` | 检查代码并生成补丁 | `get_finding_detail` / `read_source_code` / `propose_patch` | 否 | 以当前 scope、finding 和源码证据为准 |
-| `code_explain` | 解释项目、目录、文件或代码 | `read_source_code` / `search_symbols` | 是 | 可继承用户对项目的关注点 |
-| `general_chat` | Java、算法、调试、架构和工程常识问答 | 无工具或轻量上下文 | 是 | 可继承用户偏好和近期话题 |
-| `patch_explain` | 解释当前待确认补丁 | `search_symbols` / `read_source_code` | 否 | 只解释当前补丁，不生成新补丁 |
-| `patch_revise` | 按反馈重写当前补丁 | `search_symbols` / `read_source_code` / `get_finding_detail` / `revise_patch` | 否 | 只替换当前补丁，不修改后续队列 |
-
-`UserIntentClassifier` 使用短 LLM 判断用户输入属于哪类 intent，但程序会做状态兜底。例如没有待确认补丁时，即使 LLM 返回 `patch_explain` 或 `patch_revise`，程序也会拒绝这些补丁态意图。
+上图展示了在演示仓库中执行 `@LegacyConfig.java 检查代码` 后，AutoPatch-J 通过工具调用生成补丁草案，并进入人工确认队列的真实 CLI 流程。
 
 ## 能做什么
 
@@ -114,10 +42,10 @@ autopatch-j> @src/main/java/demo 扫描这个目录
 autopatch-j> 看一下这个项目里有没有空指针风险
 ```
 
-- 本地静态扫描优先。
-- finding 按队列逐项推进。
-- 静态扫描无结果时，可对焦点文件执行轻量 LLM 复核。
-- 候选补丁先暂存，Workflow 判定成功后才进入人工确认队列。
+- 优先执行本地静态扫描。
+- finding 进入队列后逐项推进。
+- Agent 基于 finding 和源码证据生成最小补丁。
+- 候选补丁先由 Workflow 接收，再进入人工确认队列。
 
 ### 代码讲解
 
@@ -127,10 +55,10 @@ autopatch-j> @src/main/java/demo 解释一下这个目录
 autopatch-j> 这个项目是干什么的
 ```
 
-- 不触发扫描。
-- 单文件讲解默认不越界追踪。
-- 多文件或项目级讲解允许受控符号导航。
-- 可使用普通问答记忆继承用户近期关注点。
+- 不触发审计扫描。
+- 单文件解释默认不越界追踪。
+- 项目级或目录级解释允许受控符号导航。
+- 可读取普通问答 memory，让跨轮项目讨论更连续。
 
 ### 补丁解释与重写
 
@@ -141,22 +69,147 @@ autopatch-j> 改成 Objects.equals 的写法
 autopatch-j> 加一行注释说明原因
 ```
 
-- `patch_explain` 只解释当前补丁。
-- `patch_revise` 只重写当前补丁。
-- 后续补丁队列不会被自动修改。
+- `patch_explain` 只解释当前待确认补丁。
+- `patch_revise` 只重写当前待确认补丁。
+- 如果用户只是问含义、原因、影响或风险，不会误调用修订工具。
 
 ### 工程相关聊天
 
-`general_chat` 被限制在工程相关范围：
+```text
+autopatch-j> Java Optional 怎么用？
+autopatch-j> leetcode 第一题怎么解？
+autopatch-j> 这个异常一般怎么排查？
+```
 
-- Java 语法
-- 算法题
-- 调试方法
-- 架构建议
-- 工具使用
-- 当前项目相关问题
+`general_chat` 面向 Java、算法、调试、架构、工具使用和当前项目相关问题，不作为泛生活问答入口。
 
-它不是泛生活问答入口。
+## 架构取舍
+
+### Workflow owns state, Agent owns reasoning
+
+> Workflow 管状态，Agent 管推理。
+
+Workflow 负责意图、scope、扫描、finding 队列、补丁队列和人工确认。Agent 负责解释问题、读取证据、调用工具、生成或重写补丁草案。
+
+这个分工避免把系统状态交给 LLM 自行维护。LLM 可以推理，但不能越过 Workflow 定义的任务边界。
+
+### Scanner provides evidence, LLM performs triage
+
+> 扫描器提供证据，LLM 负责判断。
+
+默认扫描器是 Semgrep。扫描器负责给出可定位 finding，LLM 基于 finding、源码片段和当前 scope 做取证、解释和最小修复。
+
+PMD、SpotBugs、Checkstyle 当前作为 planned scanner 展示，后续可以按相同接口接入。
+
+### Function tools are gated by intent
+
+> function call 工具按任务开放，不给模型全量权限。
+
+不同 `IntentType` 对应不同工具白名单。比如代码审计可以读取 finding、源码并提交补丁草案；补丁解释不能调用修订工具；普通聊天默认不拿代码修改工具。
+
+这让模型能使用工具，但不能把一个聊天问题扩展成任意文件读取或补丁修改。
+
+### Patch is a review item, not a chat reply
+
+> 补丁是待确认对象，不是聊天回复里的临时文本。
+
+每个补丁都会进入人工确认队列，包含目标文件、关联 finding、unified diff、修复理由和校验状态。用户可以执行 `apply / discard / abort`，也可以继续要求解释或重写当前补丁。
+
+默认只重写当前补丁，不自动改动后续补丁队列。
+
+### Memory helps chat, not repair
+
+> 记忆服务普通问答，不进入补丁修复链路。
+
+AutoPatch-J 的项目级记忆只服务 `code_explain` 和 `general_chat`。它不会进入 `code_audit`、`patch_explain`、`patch_revise`。
+
+这样牺牲了一点全局个性化，但能保证修复链路始终以当前 finding、当前源码和当前补丁为准。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
+
+### LLM calls are purpose driven
+
+> 业务只声明调用意图，底层策略由 LLM 层统一决定。
+
+LLM 层使用 `LLMCallPurpose` 区分调用场景：
+
+- `REACT`：主 Agent 推理调用，支持流式输出，可继承供应商 reasoning 配置。
+- `CLASSIFIER`：意图识别调用，非流式，关闭 reasoning，低温度，小 token，优先降低延迟。
+- `MEMORY_SUMMARY`：记忆摘要调用，非流式，关闭 reasoning，输出受约束的 memory delta。
+
+业务层不直接散落供应商私有参数，减少 DeepSeek、百炼 DSML、OpenAI 兼容接口之间的耦合。
+
+## 五类任务边界
+
+| IntentType | 场景 | 可用工具 | Memory | 关键边界 |
+|---|---|---|---:|---|
+| `code_audit` | 检查代码并生成补丁 | `get_finding_detail` / `read_source_code` / `propose_patch` | 否 | 以当前 scope、finding 和源码证据为准 |
+| `code_explain` | 解释项目、目录、文件或代码 | `search_symbols` / `read_source_code` | 是 | 可继承用户对项目的关注点 |
+| `general_chat` | Java、算法、调试、架构和工程常识问答 | 默认无 function call 工具 | 是 | 只回答工程相关问题 |
+| `patch_explain` | 解释当前待确认补丁 | `search_symbols` / `read_source_code` | 否 | 只解释当前补丁，不生成新补丁 |
+| `patch_revise` | 按反馈重写当前补丁 | `search_symbols` / `read_source_code` / `get_finding_detail` / `revise_patch` | 否 | 只替换当前补丁，不改后续队列 |
+
+意图识别由短 LLM 完成，但程序会做硬约束。例如没有待确认补丁时，即使分类器返回 `patch_explain` 或 `patch_revise`，程序也会拒绝补丁态意图，避免输入被误路由到无法工作的流程。
+
+## 系统如何运转
+
+一次 `code_audit` 的主链路通常是：
+
+```text
+用户输入
+-> UserIntentClassifier 判断 IntentType
+-> ScopeResolver 解析 @mention 或当前项目范围
+-> StaticScanRunner 执行 Semgrep 扫描
+-> FindingBacklog 按 finding 逐项推进
+-> Agent 在当前 TaskProfile 的工具白名单内执行 ReAct
+-> function call 读取 finding 和源码
+-> propose_patch 提交候选补丁草案
+-> Workflow 判断本轮 finding 是否完成
+-> ReviewWorkspaceManager 写入待确认补丁队列
+-> 用户 apply / discard / abort / explain / revise
+-> SearchReplacePatchEngine + PatchQualityVerifier 应用和复核
+```
+
+普通问答 memory 的主链路是：
+
+```text
+code_explain/general_chat 完成
+-> 写入 recent_turn，summary_status=pending
+-> 满足触发条件后提交后台摘要任务
+-> 短 LLM 输出 memory delta
+-> 程序校验并写入 active_topics / long_term_memory
+-> 下一轮普通问答只注入少量相关摘要
+```
+
+## 目录结构
+
+```text
+src/autopatch_j/
+├─ cli/       # prompt-toolkit + Rich 交互层、命令路由、Workflow 编排、流式展示
+├─ agent/     # ReAct 运行器、任务配置、工具执行、进度保护、消息适配
+├─ llm/       # OpenAI 兼容客户端、调用意图策略、供应商流式方言
+├─ tools/     # 暴露给 Agent 的 function call 工具和工具目录
+├─ scanners/  # Semgrep 扫描器、planned scanner、扫描器目录
+└─ core/      # 领域模型、意图、范围、扫描、review、patching、memory、项目索引
+
+examples/demo-repo/   # 内置演示仓库
+tests/                # 回归测试
+docs/                 # 架构设计文档
+```
+
+## 代码阅读入口
+
+建议按主流程阅读：
+
+1. `src/autopatch_j/cli/app.py`
+2. `src/autopatch_j/cli/input_router.py`
+3. `src/autopatch_j/cli/workflows/`
+4. `src/autopatch_j/agent/agent.py`
+5. `src/autopatch_j/agent/react_runner.py`
+6. `src/autopatch_j/core/user_input/`
+7. `src/autopatch_j/core/review/`
+8. `src/autopatch_j/core/patching/`
+9. `src/autopatch_j/core/memory/`
+
+如果只关心 function call 工具，从 `src/autopatch_j/tools/function_calls/` 开始读。如果只关心普通问答记忆，直接看 [Agent Memory 设计说明](docs/memory_design.md)。
 
 ## 快速开始
 
@@ -173,17 +226,17 @@ pip install -e .[test]
 
 ### 环境变量
 
-当前配置读取系统环境变量，不会自动加载 `.env` 文件。
+AutoPatch-J 读取系统环境变量，不会自动加载 `.env` 文件。
 
-至少需要配置：
+最少需要配置：
 
-```bash
+```bat
 set AUTOPATCH_LLM_API_KEY=your_api_key
 ```
 
 常用配置：
 
-```bash
+```bat
 set AUTOPATCH_LLM_BASE_URL=https://api.deepseek.com
 set AUTOPATCH_LLM_MODEL=deepseek-v4-flash
 set AUTOPATCH_DEBUG=true
@@ -192,19 +245,21 @@ set AUTOPATCH_LLM_STREAM_DIALECT=standard
 
 说明：
 
-- `AUTOPATCH_LLM_API_KEY`：必填；缺失时不会创建 LLM 客户端。
-- `AUTOPATCH_LLM_BASE_URL`：OpenAI 兼容地址，默认 `https://api.deepseek.com`。
-- `AUTOPATCH_LLM_MODEL`：模型名，默认 `deepseek-v4-flash`。
-- `AUTOPATCH_DEBUG`：仅设置为 `true` 时开启完整调试输出。
-- `AUTOPATCH_LLM_STREAM_DIALECT`：支持 `standard`、`bailian-dsml`。
-- `AUTOPATCH_LLM_REASONING_EFFORT`：透传给支持该参数的供应商。
-- `AUTOPATCH_LLM_EXTRA_BODY`：供应商私有扩展参数，必须是 JSON 字符串，默认 `{}`。
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `AUTOPATCH_LLM_API_KEY` | 空 | 关键配置。缺失时无法创建可用 LLM 客户端 |
+| `AUTOPATCH_LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容接口地址 |
+| `AUTOPATCH_LLM_MODEL` | `deepseek-v4-flash` | 模型名 |
+| `AUTOPATCH_DEBUG` | `false` | 仅设置为 `true` 时展示完整思考链和工具输出详情 |
+| `AUTOPATCH_LLM_STREAM_DIALECT` | `standard` | 可选 `standard`、`bailian-dsml` |
+| `AUTOPATCH_LLM_REASONING_EFFORT` | 空 | 透传给支持该参数的供应商 |
+| `AUTOPATCH_LLM_EXTRA_BODY` | `{}` | 供应商私有扩展参数，必须是 JSON object 字符串 |
 
 ### 启动
 
-Windows 推荐直接执行：
+Windows 测试入口：
 
-```bash
+```bat
 run_on_windows.bat
 ```
 
@@ -223,8 +278,8 @@ python -m autopatch_j
 ### 常用命令
 
 ```text
-/init       初始化当前项目并建立索引
-/status     查看项目状态、LLM 模型、调试模式、补丁缓冲区和符号索引
+/init       初始化当前目录为 Java 项目并建立索引
+/status     查看当前项目状态、LLM 模型、调试模式、补丁缓冲区和符号索引
 /scanner    查看扫描器状态、版本和说明
 /reindex    重建本地代码符号索引
 /reset      清空工作台状态、Agent 对话历史和普通问答记忆
@@ -232,58 +287,25 @@ python -m autopatch_j
 /quit       退出程序
 ```
 
-`AUTOPATCH_DEBUG` 控制 CLI 输出详细程度：
-
-- 默认关闭：折叠思考链和工具输出详情，只显示 `思考中...`、工具名和简短摘要。
-- 开启后：展示完整思考链与工具输出详情。
-
-## 系统如何运转
-
-一次 `code_audit` 通常按下面的路径推进：
+补丁待确认阶段可直接输入：
 
 ```text
-用户输入
--> UserIntentClassifier 判断任务类型
--> ScopeResolver 解析 @mention 或当前项目范围
--> StaticScanRunner 执行 Semgrep 扫描
--> FindingBacklog 按 finding 逐项推进
--> Agent 调用工具读取 finding 与源码
--> propose_patch 生成候选补丁
--> Workflow 判断本轮 finding 是否完成
--> ReviewWorkspaceManager 写入待确认补丁队列
--> 用户 apply / discard / abort / 反馈重写
--> SearchReplacePatchEngine + PatchQualityVerifier 执行应用和复核
+apply       应用当前补丁
+discard     丢弃当前补丁
+abort       中止审核并丢弃剩余补丁
 ```
 
-这条链路的核心约束是：LLM 负责推理，Workflow 负责边界，工具负责可复核动作。
+## 开发验证
 
-## 目录结构
+常用检查：
 
-```text
-src/autopatch_j/
-├─ cli/       # prompt-toolkit + Rich 交互层、命令处理、Workflow 调度、流式输出
-├─ core/      # 意图、范围、扫描、索引、工作台、补丁生命周期、普通问答记忆
-├─ agent/     # ReAct 循环、Task Profile、Prompt 编排、消息脱水
-├─ llm/       # OpenAI 兼容 LLM 客户端、调用意图策略、供应商流式方言
-├─ tools/     # 暴露给 Agent 的 function call 工具
-└─ scanners/  # Semgrep 及扩展扫描器适配位
-
-examples/demo-repo/   # 内置演示仓库
-tests/                # 回归测试
-docs/                 # 架构设计文档
+```bash
+python -m compileall -q src tests
+pytest -q
 ```
 
-## 代码阅读入口
+文档修改一般不需要跑全量测试，但提交前建议至少执行：
 
-如果想快速理解主流程，建议按这个顺序读：
-
-1. `src/autopatch_j/cli/app.py`
-2. `src/autopatch_j/cli/input_router.py`
-3. `src/autopatch_j/cli/workflows/`
-4. `src/autopatch_j/agent/agent.py`
-5. `src/autopatch_j/core/user_input/`
-6. `src/autopatch_j/core/review/`
-7. `src/autopatch_j/core/patching/`
-8. `src/autopatch_j/core/memory/`
-
-如果想理解普通问答记忆的设计边界，直接看 [Agent Memory 设计说明](docs/memory_design.md)。
+```bash
+git diff --check
+```
