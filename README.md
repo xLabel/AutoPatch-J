@@ -199,17 +199,17 @@ docs/                 # 架构设计文档
 
 建议按主流程阅读：
 
-1. `src/autopatch_j/cli/app.py`
-2. `src/autopatch_j/cli/input_router.py`
-3. `src/autopatch_j/cli/workflows/`
-4. `src/autopatch_j/agent/agent.py`
-5. `src/autopatch_j/agent/react_runner.py`
-6. `src/autopatch_j/core/user_input/`
-7. `src/autopatch_j/core/review/`
-8. `src/autopatch_j/core/patching/`
-9. `src/autopatch_j/core/memory/`
+1. `src/autopatch_j/cli/app.py`：CLI 生命周期入口，负责启动、初始化 runtime 和主输入循环。
+2. `src/autopatch_j/cli/input_router.py`：自然语言输入和补丁确认输入的路由层。
+3. `src/autopatch_j/cli/workflows/`：CLI 侧业务流程编排，连接用户输入、扫描、Agent 和补丁确认。
+4. `src/autopatch_j/agent/agent.py`：Agent 对外门面，聚合 session、task executor 和 memory scheduler。
+5. `src/autopatch_j/agent/react_runner.py`：ReAct 主循环，负责 LLM 调用、工具调用和进度保护。
+6. `src/autopatch_j/core/user_input/`：意图识别、输入分类和 pending review 路由。
+7. `src/autopatch_j/core/review/`：扫描结果、finding 队列、review workspace 和项目状态工件。
+8. `src/autopatch_j/core/patching/`：search-replace 补丁应用和补丁质量复核。
+9. `src/autopatch_j/core/memory/`：普通问答 memory 的读写、摘要、注入和治理。
 
-如果只关心 function call 工具，从 `src/autopatch_j/tools/function_calls/` 开始读。如果只关心普通问答记忆，直接看 [Agent Memory 设计说明](docs/memory_design.md)。
+如果只关心 function call 工具，从 `src/autopatch_j/tools/function_calls/` 开始读；如果只关心 memory 架构，直接看 [Agent Memory 设计说明](docs/memory_design.md)。
 
 ## 快速开始
 
