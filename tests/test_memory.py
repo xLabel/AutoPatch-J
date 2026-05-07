@@ -14,6 +14,7 @@ from autopatch_j.core.memory import (
     MemoryManager,
 )
 from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
+from autopatch_j.core.memory.prompts import MEMORY_SUMMARY_SYSTEM_PROMPT
 from autopatch_j.core.memory.summarizer import MemorySummarizer
 
 
@@ -370,6 +371,12 @@ def test_summarizer_allows_project_fact_only_with_payload_evidence(tmp_path: Pat
     )
     facts = manager.load()["long_term_memory"]["project_facts"]
     assert facts[0]["label"] == "project identity"
+
+
+def test_memory_summary_prompt_requires_project_fact_evidence_for_updates() -> None:
+    assert "create_new 和 update_existing 都必须带 source=repo_verified 和合法 evidence_id" in MEMORY_SUMMARY_SYSTEM_PROMPT
+    assert "不适用字段请省略" in MEMORY_SUMMARY_SYSTEM_PROMPT
+    assert "project_fact create_new/update_existing 必须提供项目证据 id" in MEMORY_SUMMARY_SYSTEM_PROMPT
 
 
 def test_summary_scheduler_writes_delta_in_background(tmp_path: Path) -> None:

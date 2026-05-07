@@ -49,5 +49,8 @@ def test_catalog_exports_stable_function_call_schema() -> None:
     assert propose_patch["parameters"]["properties"].keys() == revise_patch["parameters"]["properties"].keys()
 
     assert "read_source_code" in propose_patch["description"]
+    assert "old_string 不匹配" in propose_patch["description"]
     assert "不会修改文件系统" in propose_patch["description"]
+    assert "只是询问补丁含义" in revise_patch["description"]
     assert "不会影响后续补丁队列" in revise_patch["description"]
+    assert "read_source_code" in propose_patch["parameters"]["properties"]["old_string"]["description"]
