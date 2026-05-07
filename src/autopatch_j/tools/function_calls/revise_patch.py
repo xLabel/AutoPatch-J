@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from autopatch_j.tools.contract import FunctionTool, FunctionToolSpec, ToolExecutionResult
+from autopatch_j.tools.function_calls.patch_result import build_patch_success_result
+from autopatch_j.tools.function_calls.patch_schema import PATCH_DRAFT_PARAMETERS
 from autopatch_j.tools.names import FunctionToolName
-from autopatch_j.tools.search_replace_draft_factory import (
-    PATCH_DRAFT_PARAMETERS,
+from autopatch_j.tools.search_replace_draft_builder import (
     PatchDraftAction,
-    SearchReplaceDraftFactory,
-    build_patch_success_result,
+    SearchReplaceDraftBuilder,
 )
 
 
@@ -36,7 +36,7 @@ class RevisePatchTool(FunctionTool):
         associated_finding_id: str | None = None,
     ) -> ToolExecutionResult:
         context = self.require_context()
-        draft_result = SearchReplaceDraftFactory(context).build(
+        draft_result = SearchReplaceDraftBuilder(context).build(
             file_path=file_path,
             old_string=old_string,
             new_string=new_string,

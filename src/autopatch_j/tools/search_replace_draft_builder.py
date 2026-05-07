@@ -14,41 +14,13 @@ from autopatch_j.core.patching import (
 from autopatch_j.tools.contract import ToolExecutionResult, ToolRuntimeContext
 
 
-PATCH_DRAFT_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "file_path": {
-            "type": "string",
-            "description": "仓库内目标 Java 文件的相对路径，必须来自 read_source_code 或 finding 详情。",
-        },
-        "old_string": {
-            "type": "string",
-            "description": "要替换的原始代码精确片段；必须和当前源码完全一致，不要省略缩进或上下文。",
-        },
-        "new_string": {
-            "type": "string",
-            "description": "替换后的完整代码片段，只包含 old_string 对应区域的新内容。",
-        },
-        "rationale": {
-            "type": "string",
-            "description": "简要说明为什么这样修复，以及修复依据来自哪个 finding 或源码证据。",
-        },
-        "associated_finding_id": {
-            "type": "string",
-            "description": "关联的 finding 句柄，如 F1。处理扫描 finding 时必须传入；无 finding 的轻量复核可省略。",
-        },
-    },
-    "required": ["file_path", "old_string", "new_string", "rationale"],
-}
-
-
 @dataclass(frozen=True, slots=True)
 class PatchDraftAction:
     action_label: str
     focus_verb: str
 
 
-class SearchReplaceDraftFactory:
+class SearchReplaceDraftBuilder:
     """
     search-replace 补丁草稿的共享生成器。
 
@@ -199,30 +171,3 @@ class SearchReplaceDraftFactory:
         if not scan_files:
             return None
         return self.context.artifact_manager.get_finding_by_index(scan_files[0].stem, finding_index)
-
-
-def build_patch_success_result(
-    *,
-    draft: SearchReplacePatchDraft,
-    file_path: str,
-    associated_finding_id: str | None,
-    summary: str,
-    final_message: str,
-) -> ToolExecutionResult:
-    message = f"补丁草稿已生成，等待流程确认。目标文件：{file_path}。\n"
-    message += f"语法校验：{draft.validation.status}。\n"
-    message += f"差异预览：\n{draft.diff}\n\n"
-    if draft.status == "invalid":
-        message += f"警告：补丁导致语法错误（{draft.validation.message}），请及时修正方案。"
-    else:
-        message += final_message
-    return ToolExecutionResult(
-        status=draft.status,
-        message=message,
-        summary=summary,
-        payload={
-            "file_path": file_path,
-            "associated_finding_id": associated_finding_id,
-            "validation": draft.validation.status,
-        },
-    )
