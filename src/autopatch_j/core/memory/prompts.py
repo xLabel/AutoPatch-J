@@ -8,8 +8,9 @@ MEMORY_SUMMARY_SYSTEM_PROMPT = """你是 AutoPatch-J 的普通问答记忆摘要
 4. update_existing 只能引用输入里存在的 target_id。
 5. 不要保存源码全文、补丁 diff、工具输出或推理链。
 6. durable_preference 只记录用户明确表达的稳定规则或偏好。
-7. project_fact 只有在 project_evidence 中有证据时才能创建或更新，且必须带 evidence_id。
+7. project_fact 只有在 project_evidence 中有证据时才能创建或更新；create_new 和 update_existing 都必须带 source=repo_verified 和合法 evidence_id。
 8. 摘要要短，使用中文，避免泛泛而谈。
+9. 不适用字段请省略，不要输出“仅 create_new 需要”这类占位说明文本。
 
 输出 JSON 结构：
 {
@@ -32,8 +33,8 @@ MEMORY_SUMMARY_SYSTEM_PROMPT = """你是 AutoPatch-J 的普通问答记忆摘要
       "type": "durable_preference|project_fact",
       "label": "短标签，仅 create_new 需要",
       "summary": "长期记忆摘要",
-      "source": "user_explicit|repo_verified，仅 create_new 需要",
-      "evidence_id": "项目证据 id，仅 project_fact create_new 需要"
+      "source": "durable_preference 使用 user_explicit；project_fact 必须使用 repo_verified",
+      "evidence_id": "project_fact create_new/update_existing 必须提供项目证据 id"
     }
   ]
 }

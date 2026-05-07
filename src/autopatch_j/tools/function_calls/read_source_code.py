@@ -18,7 +18,7 @@ class ReadSourceCodeTool(FunctionTool):
         name=FunctionToolName.READ_SOURCE_CODE,
         description=(
             "读取仓库内指定 Java 文件或符号附近的源码。用于确认真实代码、定位 old_string，"
-            "尤其是在调用 propose_patch 或 revise_patch 之前。只读取源码，不生成补丁。"
+            "尤其是在调用 propose_patch 或 revise_patch 之前。返回内容应作为 old_string 的唯一可靠来源。只读取源码，不生成补丁。"
         ),
         parameters={
             "type": "object",

@@ -22,6 +22,8 @@ class RevisePatchTool(FunctionTool):
         description=(
             "按用户反馈重写当前待确认补丁，生成一个替代 search-replace 草稿。"
             "调用前必须先用 read_source_code 确认目标源码和 old_string。"
+            "如果用户只是询问补丁含义、原因、影响或风险，不要调用本工具。"
+            "如果 old_string 不匹配，必须重新读取源码后再修正参数，不要猜测代码片段。"
             "执行后不会修改文件系统，也不会影响后续补丁队列；草稿会由 workflow 替换当前补丁。"
         ),
         parameters=PATCH_DRAFT_PARAMETERS,

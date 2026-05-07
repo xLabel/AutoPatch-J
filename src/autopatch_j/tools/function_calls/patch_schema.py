@@ -10,7 +10,7 @@ PATCH_DRAFT_PARAMETERS = {
         },
         "old_string": {
             "type": "string",
-            "description": "要替换的原始代码精确片段；必须和当前源码完全一致，不要省略缩进或上下文。",
+            "description": "要替换的原始代码精确片段；调用前必须用 read_source_code 确认，必须和当前源码完全一致，不要省略缩进或上下文。",
         },
         "new_string": {
             "type": "string",
