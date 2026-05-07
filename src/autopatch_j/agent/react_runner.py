@@ -7,6 +7,7 @@ from autopatch_j.agent.message_adapter import AgentMessageAdapter
 from autopatch_j.agent.progress_guard import ReactProgressGuard, build_react_step_trace
 from autopatch_j.agent.tool_executor import ToolExecutor
 from autopatch_j.llm.client import LLMCallPurpose, LLMClient
+from autopatch_j.tools.names import FunctionToolName
 
 
 class ReActRunner:
@@ -35,7 +36,7 @@ class ReActRunner:
         self,
         user_text: str,
         system_prompt: str,
-        allowed_tool_names: tuple[str, ...],
+        allowed_tool_names: tuple[FunctionToolName, ...],
         callbacks: AgentCallbacks,
     ) -> str:
         if not self.llm:

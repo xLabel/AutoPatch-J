@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from autopatch_j.core.patching import PatchQualityVerifier
     from autopatch_j.core.project import SymbolIndex
     from autopatch_j.core.review import ReviewWorkspaceManager
-    from autopatch_j.tools.base import ToolResult
+    from autopatch_j.tools.contract import ToolExecutionResult
 
 
 @dataclass
@@ -43,7 +43,7 @@ class AgentSession:
     memory_manager: MemoryManager | None = None
 
     focus_paths: list[str] = field(default_factory=list)
-    source_read_cache: dict[tuple[str, str | None, int | None], ToolResult] = field(default_factory=dict)
+    source_read_cache: dict[tuple[str, str | None, int | None], ToolExecutionResult] = field(default_factory=dict)
     patch_source_hint: str | None = None
     proposed_patch_draft: SearchReplacePatchDraft | None = None
     revised_patch_draft: SearchReplacePatchDraft | None = None
@@ -75,11 +75,17 @@ class AgentSession:
     def normalize_repo_path(self, path: str) -> str:
         return normalize_repo_path(path)
 
-    def fetch_cached_source_read(self, path: str, symbol: str | None, line: int | None) -> ToolResult | None:
+    def fetch_cached_source_read(self, path: str, symbol: str | None, line: int | None) -> ToolExecutionResult | None:
         key = (self.normalize_repo_path(path), symbol, line)
         return self.source_read_cache.get(key)
 
-    def persist_cached_source_read(self, path: str, symbol: str | None, line: int | None, result: ToolResult) -> None:
+    def persist_cached_source_read(
+        self,
+        path: str,
+        symbol: str | None,
+        line: int | None,
+        result: ToolExecutionResult,
+    ) -> None:
         key = (self.normalize_repo_path(path), symbol, line)
         self.source_read_cache[key] = result
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable
 from typing import Any
 
 from autopatch_j.llm.dialect import ToolCall
 from autopatch_j.config import GlobalConfig
-from autopatch_j.tools.base import Tool
+from autopatch_j.tools.catalog import FunctionToolCatalog
+from autopatch_j.tools.names import ToolNameLike
 
 
 class AgentMessageAdapter:
@@ -18,8 +19,8 @@ class AgentMessageAdapter:
     3. 生成 tool schema 和序列化 Tool Call；不执行工具，也不改变 AgentSession 状态。
     """
 
-    def __init__(self, available_tools: Mapping[str, Tool]) -> None:
-        self.available_tools = available_tools
+    def __init__(self, tool_catalog: FunctionToolCatalog) -> None:
+        self.tool_catalog = tool_catalog
 
     def dehydrate_history(
         self,
@@ -73,23 +74,8 @@ class AgentMessageAdapter:
             "content": message.get("content", ""),
         }
 
-    def tool_schemas(self, allowed_tool_names: tuple[str, ...]) -> list[dict[str, Any]]:
-        schemas: list[dict[str, Any]] = []
-        for tool_name in allowed_tool_names:
-            tool = self.available_tools.get(tool_name)
-            if tool is None:
-                continue
-            schemas.append(
-                {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.parameters,
-                    },
-                }
-            )
-        return schemas
+    def tool_schemas(self, allowed_tool_names: Iterable[ToolNameLike]) -> list[dict[str, Any]]:
+        return self.tool_catalog.schemas(allowed_tool_names)
 
     def serialize_tool_calls(self, calls: list[ToolCall]) -> list[dict[str, Any]]:
         return [

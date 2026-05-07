@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from autopatch_j.llm.dialect import ToolCall
-from autopatch_j.tools.base import ToolResult
+from autopatch_j.tools.contract import ToolExecutionResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +66,7 @@ class ReactProgressGuard:
         return a1 == a2 and b1 == b2 and a1 != b1
 
 
-def build_react_step_trace(call: ToolCall, result: ToolResult) -> ReactStepTrace:
+def build_react_step_trace(call: ToolCall, result: ToolExecutionResult) -> ReactStepTrace:
     return ReactStepTrace(
         tool_name=call.name,
         normalized_args=normalize_tool_arguments(call.arguments),

@@ -2,47 +2,49 @@ from __future__ import annotations
 
 import re
 
-from autopatch_j.tools.base import Tool, ToolResult
+from autopatch_j.tools.contract import FunctionTool, FunctionToolSpec, ToolExecutionResult
+from autopatch_j.tools.names import FunctionToolName
 
 
-class FindingRetrieverTool(Tool):
+class GetFindingDetailTool(FunctionTool):
     """
-    Finding 详情检索工具。
+    读取最新扫描快照中的 finding 详情。
 
-    将 CLI 摘要里的 F1/F2 句柄还原为真实扫描结果，并补齐当前源码片段；
-    它只读取最近一次扫描 artifact，不发起新扫描，也不生成补丁。
+    只把 CLI 摘要里的 F1/F2 还原为扫描器证据，不触发新扫描，也不生成补丁。
     """
 
-    name = "get_finding_detail"
-    description = (
-        "取回漏洞的详细证据。这是进行任何修复前的必要步骤。"
-        "输入逻辑句柄（如 F1），返回该漏洞的规则 ID、完整消息以及触发问题的代码片段。"
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "finding_id": {"type": "string", "description": "摘要表中的逻辑句柄，如 'F1'。"}
+    spec = FunctionToolSpec(
+        name=FunctionToolName.GET_FINDING_DETAIL,
+        description=(
+            "读取最新扫描快照中的单个 finding 详情。用于把 F1/F2 这类逻辑句柄还原为规则 ID、"
+            "文件位置、问题描述和当前源码片段。不会触发新扫描，也不会生成补丁。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "finding_id": {"type": "string", "description": "摘要表中的 finding 句柄，如 F1 或 F2。"}
+            },
+            "required": ["finding_id"],
         },
-        "required": ["finding_id"],
-    }
+    )
 
-    def execute(self, finding_id: str) -> ToolResult:
+    def execute(self, finding_id: str) -> ToolExecutionResult:
         context = self.require_context()
         artifact_manager = context.artifact_manager
 
         match = re.match(r"[Ff](\d+)", finding_id)
         if not match:
-            return ToolResult(
+            return ToolExecutionResult(
                 status="error",
-                message=f"无效的漏洞句柄格式：{finding_id}。请使用 F1、F2 这种格式。",
+                message=f"无效的 finding 句柄格式：{finding_id}。请使用 F1、F2 这种格式。",
                 summary=f"获取失败: {finding_id}",
             )
 
         finding_index = int(match.group(1)) - 1
         scan_files = sorted(artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
         if not scan_files:
-            return ToolResult(
-                status="error", 
+            return ToolExecutionResult(
+                status="error",
                 message="系统中未找到扫描记录，请先发起一次代码检查。",
                 summary="获取失败: 未找到扫描记录",
             )
@@ -50,15 +52,15 @@ class FindingRetrieverTool(Tool):
         active_scan_id = scan_files[0].stem
         finding = artifact_manager.get_finding_by_index(active_scan_id, finding_index)
         if not finding:
-            return ToolResult(
+            return ToolExecutionResult(
                 status="error",
                 message=f"无法从快照 {active_scan_id} 中取回句柄为 {finding_id} 的详情。",
-                summary=f"获取失败: 未找到漏洞 {finding_id}",
+                summary=f"获取失败: 未找到 finding {finding_id}",
             )
 
         if not context.is_path_in_focus(finding.path):
             allowed = ", ".join(context.focus_paths)
-            return ToolResult(
+            return ToolExecutionResult(
                 status="error",
                 message=f"焦点约束阻止越界取证：{finding.path} 不在当前允许范围内。允许路径：{allowed}",
                 summary=f"取证越界: {finding.path}",
@@ -77,9 +79,9 @@ class FindingRetrieverTool(Tool):
         message += f"- **漏洞描述**: {finding.message}\n"
         message += f"- **代码证据**:\n```java\n{finding.snippet}\n```"
 
-        return ToolResult(
-            status="ok", 
-            message=message, 
+        return ToolExecutionResult(
+            status="ok",
+            message=message,
             summary=f"已获取 finding 详情: {finding_id}",
-            payload=finding.to_dict()
+            payload=finding.to_dict(),
         )

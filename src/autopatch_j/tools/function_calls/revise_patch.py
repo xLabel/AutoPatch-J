@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+from autopatch_j.tools.contract import FunctionTool, FunctionToolSpec, ToolExecutionResult
+from autopatch_j.tools.names import FunctionToolName
+from autopatch_j.tools.search_replace_draft_factory import (
+    PATCH_DRAFT_PARAMETERS,
+    PatchDraftAction,
+    SearchReplaceDraftFactory,
+    build_patch_success_result,
+)
+
+
+class RevisePatchTool(FunctionTool):
+    """
+    生成当前待确认补丁的替代草稿。
+
+    工具不改文件、不影响后续补丁队列；workflow 会在 ReAct 结束后替换当前补丁。
+    """
+
+    spec = FunctionToolSpec(
+        name=FunctionToolName.REVISE_PATCH,
+        description=(
+            "按用户反馈重写当前待确认补丁，生成一个替代 search-replace 草稿。"
+            "调用前必须先用 read_source_code 确认目标源码和 old_string。"
+            "执行后不会修改文件系统，也不会影响后续补丁队列；草稿会由 workflow 替换当前补丁。"
+        ),
+        parameters=PATCH_DRAFT_PARAMETERS,
+    )
+
+    def execute(
+        self,
+        file_path: str,
+        old_string: str,
+        new_string: str,
+        rationale: str,
+        associated_finding_id: str | None = None,
+    ) -> ToolExecutionResult:
+        context = self.require_context()
+        draft_result = SearchReplaceDraftFactory(context).build(
+            file_path=file_path,
+            old_string=old_string,
+            new_string=new_string,
+            rationale=rationale,
+            associated_finding_id=associated_finding_id,
+            action=PatchDraftAction(action_label="补丁修订", focus_verb="修订"),
+        )
+        if isinstance(draft_result, ToolExecutionResult):
+            return draft_result
+
+        context.set_revised_patch_draft(draft_result)
+        return build_patch_success_result(
+            draft=draft_result,
+            file_path=file_path,
+            associated_finding_id=associated_finding_id,
+            summary=f"已修订当前补丁: {file_path}",
+            final_message="此修订草稿将在本轮结束后替换当前待确认补丁。",
+        )

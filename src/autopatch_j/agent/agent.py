@@ -11,7 +11,7 @@ from autopatch_j.agent.tool_executor import ToolExecutor
 from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
 from autopatch_j.core.domain import FindingTask, CodeScope, ReviewPatchItem
 from autopatch_j.llm.client import LLMClient, build_default_llm_client
-from autopatch_j.tools.base import Tool
+from autopatch_j.tools.contract import FunctionTool
 
 
 class Agent:
@@ -34,8 +34,8 @@ class Agent:
         self._messages: list[dict[str, Any]] = []
 
         self.tool_executor = ToolExecutor(self.session)
-        self.available_tools: dict[str, Tool] = self.tool_executor.available_tools
-        self.message_adapter = AgentMessageAdapter(self.available_tools)
+        self.available_tools: dict[str, FunctionTool] = self.tool_executor.available_tools
+        self.message_adapter = AgentMessageAdapter(self.tool_executor.catalog)
         self.react_runner = ReActRunner(
             llm=self.llm,
             messages=self._messages,

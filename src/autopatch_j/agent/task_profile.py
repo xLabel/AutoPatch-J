@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from autopatch_j.core.domain import IntentType
+from autopatch_j.tools.names import FunctionToolName
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,23 +16,23 @@ class TaskProfile:
     """
 
     intent: IntentType
-    tool_names: tuple[str, ...]
+    tool_names: tuple[FunctionToolName, ...]
 
 
 TASK_PROFILES: dict[IntentType, TaskProfile] = {
     IntentType.CODE_AUDIT: TaskProfile(
         intent=IntentType.CODE_AUDIT,
         tool_names=(
-            "get_finding_detail",
-            "read_source_code",
-            "propose_patch",
+            FunctionToolName.GET_FINDING_DETAIL,
+            FunctionToolName.READ_SOURCE_CODE,
+            FunctionToolName.PROPOSE_PATCH,
         ),
     ),
     IntentType.CODE_EXPLAIN: TaskProfile(
         intent=IntentType.CODE_EXPLAIN,
         tool_names=(
-            "search_symbols",
-            "read_source_code",
+            FunctionToolName.SEARCH_SYMBOLS,
+            FunctionToolName.READ_SOURCE_CODE,
         ),
     ),
     IntentType.GENERAL_CHAT: TaskProfile(
@@ -41,30 +42,30 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
     IntentType.PATCH_EXPLAIN: TaskProfile(
         intent=IntentType.PATCH_EXPLAIN,
         tool_names=(
-            "search_symbols",
-            "read_source_code",
+            FunctionToolName.SEARCH_SYMBOLS,
+            FunctionToolName.READ_SOURCE_CODE,
         ),
     ),
     IntentType.PATCH_REVISE: TaskProfile(
         intent=IntentType.PATCH_REVISE,
         tool_names=(
-            "search_symbols",
-            "read_source_code",
-            "get_finding_detail",
-            "revise_patch",
+            FunctionToolName.SEARCH_SYMBOLS,
+            FunctionToolName.READ_SOURCE_CODE,
+            FunctionToolName.GET_FINDING_DETAIL,
+            FunctionToolName.REVISE_PATCH,
         ),
     ),
 }
 
 CODE_EXPLAIN_SINGLE_FILE_PROFILE = TaskProfile(
     intent=IntentType.CODE_EXPLAIN,
-    tool_names=("read_source_code",),
+    tool_names=(FunctionToolName.READ_SOURCE_CODE,),
 )
 ZERO_FINDING_REVIEW_PROFILE = TaskProfile(
     intent=IntentType.CODE_AUDIT,
     tool_names=(
-        "read_source_code",
-        "propose_patch",
+        FunctionToolName.READ_SOURCE_CODE,
+        FunctionToolName.PROPOSE_PATCH,
     ),
 )
 
