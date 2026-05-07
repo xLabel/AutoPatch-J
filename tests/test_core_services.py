@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from autopatch_j.llm.client import LLMCallPurpose
+from autopatch_j.llm.options import LLMCallPurpose
 from autopatch_j.core.review import ProjectArtifactStore
 from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.user_input import (

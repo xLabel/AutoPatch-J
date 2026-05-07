@@ -1,5 +1,6 @@
-from .client import LLMClient, build_default_llm_client
+from .client import LLMClient
 from .dialects import DeepSeekAliyunDialect, MessageDialect, StandardDialect, ToolCall
+from .factory import build_default_llm_client
 from .models import LLMResponse
 from .options import LLMCallPurpose
 

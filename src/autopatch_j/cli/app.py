@@ -13,11 +13,12 @@ from autopatch_j.cli.command_handlers import CommandHandlers
 from autopatch_j.cli.command_router import CommandRouter
 from autopatch_j.cli.input_controller import CliInputController
 from autopatch_j.cli.input_router import UserInputRouter
-from autopatch_j.cli.render import DECISION_STYLE, SYSTEM_STYLE, CliRenderer
+from autopatch_j.cli.render import DECISION_STYLE, CliRenderer
 from autopatch_j.cli.runtime import CliRuntime, build_cli_runtime
-from autopatch_j.cli.workflow_context import WorkflowServices
+from autopatch_j.cli.welcome_presenter import WelcomePresenter
+from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
 from autopatch_j.config import GlobalConfig, discover_repo_root
-from autopatch_j.llm.client import build_default_llm_client
+from autopatch_j.llm.factory import build_default_llm_client
 
 
 class AutoPatchCli:
@@ -34,6 +35,7 @@ class AutoPatchCli:
         self.cwd = cwd.resolve()
         self.repo_root = discover_repo_root(self.cwd)
         self.renderer = CliRenderer()
+        self.welcome_presenter = WelcomePresenter(self.renderer)
 
         self.runtime: CliRuntime | None = None
         self.command_handlers = CommandHandlers(self)
@@ -89,7 +91,7 @@ class AutoPatchCli:
             return 1
         self.reset_agent_session()
 
-        self._print_welcome_panel()
+        self.welcome_presenter.render(self.repo_root, self.is_first_run, self.runtime)
         while True:
             try:
                 runtime = self.runtime
@@ -137,46 +139,6 @@ class AutoPatchCli:
 
         return 0
 
-    def _print_welcome_panel(self) -> None:
-        if not self.repo_root:
-            self.renderer.print_panel(
-                "AutoPatch-J: Java 安全与正确性修复智能体\n"
-                f"{self._describe_debug_output_mode()}"
-                "输入 /help 查看命令，使用 @ 符号绑定上下文。",
-                title="AutoPatch-J",
-                style=SYSTEM_STYLE,
-            )
-            self.renderer.print_agent_text("未检测到有效目录，请进入项目目录后执行 /init")
-            return
-
-        if self.is_first_run:
-            self.renderer.print_panel(
-                f"当前项目: {self.repo_root}\n"
-                f"{self._describe_debug_output_mode()}"
-                "[bold yellow]检测到首次在本项目运行。[/]\n"
-                "👉 请在下方输入 [bold green]/init[/] 执行初始化，系统将下载扫描器规则并构建本地代码索引。",
-                title="欢迎使用 AutoPatch-J",
-                style=SYSTEM_STYLE,
-            )
-            return
-
-        stats = self.runtime.symbol_indexer.get_stats() if self.runtime else {}
-        file_count = stats.get("file", 0)
-        self.renderer.print_panel(
-            f"当前项目: {self.repo_root}\n"
-            f"[bold green][就绪] 已静默加载现有工作台与本地索引 (共包含 {file_count} 个项目文件)。[/]\n"
-            f"{self._describe_debug_output_mode()}"
-            f"💡 提示：若代码发生大规模变更，请使用 [bold]/reindex[/] 手动刷新 AST 缓存。\n"
-            f"输入 /help 查看命令，使用 @ 符号绑定上下文。",
-            title="AutoPatch-J",
-            style=SYSTEM_STYLE,
-        )
-
-    def _describe_debug_output_mode(self) -> str:
-        if GlobalConfig.debug_mode:
-            return "[bold green][调试模式] 显示完整思考链与工具输出详情。[/]\n"
-        return ""
-
     def _render_runtime_error(self, exc: Exception) -> None:
         error_message = str(exc)
         if "401" in error_message or "AuthenticationError" in error_message:
@@ -212,7 +174,7 @@ class AutoPatchCli:
             debug_mode=lambda: GlobalConfig.debug_mode,
         )
         self.agent_runner = AgentRequestRunner(self.agent_presenter)
-        workflow_services = WorkflowServices(
+        workflow_services = WorkflowDependencies(
             runtime=self.runtime,
             agent_runner=self.agent_runner,
             summary_provider=self.runtime.summary_provider,

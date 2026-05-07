@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from autopatch_j.cli.workflow_context import InputRouteDecision, WorkflowServices
+from autopatch_j.cli.workflow_dependencies import InputRoutingDecision, WorkflowDependencies
 from autopatch_j.cli.workflows.chat import ChatWorkflow
 from autopatch_j.cli.workflows.code_audit import CodeAuditWorkflow
 from autopatch_j.cli.workflows.patch_review import PatchReviewWorkflow
@@ -17,7 +17,7 @@ class UserInputRouter:
     具体业务执行交给 chat/audit/patch review workflow。
     """
 
-    def __init__(self, services: WorkflowServices) -> None:
+    def __init__(self, services: WorkflowDependencies) -> None:
         self.services = services
         self.code_audit_workflow = CodeAuditWorkflow(services)
         self.chat_workflow = ChatWorkflow(services)
@@ -43,7 +43,7 @@ class UserInputRouter:
             return
         self.dispatch_chat_intent(text, decision.intent)
 
-    def classify_chat_input(self, text: str) -> InputRouteDecision:
+    def classify_chat_input(self, text: str) -> InputRoutingDecision:
         runtime = self.services.runtime
         workspace = runtime.workspace_manager.load()
         has_pending_review = workspace.has_pending_patch()
@@ -58,7 +58,7 @@ class UserInputRouter:
         )
 
         if route is ConversationRoute.COMMAND:
-            return InputRouteDecision(route=route, intent=None)
+            return InputRoutingDecision(route=route, intent=None)
 
         if route is ConversationRoute.NEW_TASK:
             self.switch_to_new_task_if_needed(has_pending_review)
@@ -67,7 +67,7 @@ class UserInputRouter:
             intent = runtime.intent_detector.classify(text, has_pending_review=True)
             if intent is IntentType.CODE_EXPLAIN and has_pending_review and "@" not in text:
                 intent = IntentType.PATCH_EXPLAIN
-        return InputRouteDecision(route=route, intent=intent)
+        return InputRoutingDecision(route=route, intent=intent)
 
     def switch_to_new_task_if_needed(self, has_pending_review: bool) -> None:
         runtime = self.services.runtime

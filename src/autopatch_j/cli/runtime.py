@@ -20,7 +20,8 @@ from autopatch_j.core.review import StaticScanRunner
 from autopatch_j.core.project import ScopeResolver
 from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.review import ReviewWorkspaceManager
-from autopatch_j.llm.client import LLMClient, build_default_llm_client
+from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.factory import build_default_llm_client
 from autopatch_j.scanners import DEFAULT_SCANNER_CATALOG, DEFAULT_SCANNER_NAME
 
 

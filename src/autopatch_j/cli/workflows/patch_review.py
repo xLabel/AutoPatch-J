@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.cli.workflow_context import WorkflowServices
+from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
 from autopatch_j.core.domain import IntentType, ReviewPatchItem
 
 
@@ -12,7 +12,7 @@ class PatchReviewWorkflow:
     patch_revise。它不反向调用主路由；无法消费的普通文本由 UserInputRouter 再分类。
     """
 
-    def __init__(self, services: WorkflowServices) -> None:
+    def __init__(self, services: WorkflowDependencies) -> None:
         self.services = services
 
     def handle_review_action(self, user_input: str, current_item: ReviewPatchItem) -> bool:
@@ -88,4 +88,3 @@ class PatchReviewWorkflow:
             return
         runtime.workspace_manager.replace_current_patch(revised_patch)
         self.services.renderer.print_agent_text("已更新当前补丁，后续补丁保持不变。")
-

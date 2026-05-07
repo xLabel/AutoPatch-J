@@ -13,7 +13,7 @@ from autopatch_j.core.domain import ConversationRoute, IntentType
 
 
 @dataclass(slots=True)
-class InputRouteDecision:
+class InputRoutingDecision:
     """
     单次用户输入经过会话路由和意图识别后的决策。
 
@@ -26,7 +26,7 @@ class InputRouteDecision:
 
 
 @dataclass(slots=True)
-class WorkflowServices:
+class WorkflowDependencies:
     """
     CLI workflow 层的显式依赖集合。
 

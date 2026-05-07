@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.cli.workflow_context import WorkflowServices
+from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
 from autopatch_j.core.domain import CodeScopeKind, IntentType
 
 
@@ -12,7 +12,7 @@ class ChatWorkflow:
     项目轻量上下文注入和最终回答展示参数。
     """
 
-    def __init__(self, services: WorkflowServices) -> None:
+    def __init__(self, services: WorkflowDependencies) -> None:
         self.services = services
 
     def handle_code_explain(self, text: str) -> None:
@@ -77,4 +77,3 @@ class ChatWorkflow:
             raw_user_text=text,
             plain_answer=True,
         )
-

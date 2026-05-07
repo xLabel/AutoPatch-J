@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from autopatch_j.llm.client import LLMCallPurpose
+from autopatch_j.llm.options import LLMCallPurpose
 from autopatch_j.core.user_input import ReviewRouteClassifier
 from autopatch_j.core.domain import CodeScope, CodeScopeKind, ConversationRoute
 

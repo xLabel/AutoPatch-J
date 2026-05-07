@@ -7,7 +7,8 @@ import pytest
 
 import autopatch_j.config as config_module
 from autopatch_j.config import AppConfig, GlobalConfig
-from autopatch_j.llm.client import LLMCallPurpose, LLMClient
+from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.options import LLMCallPurpose, resolve_request_options
 
 
 def _chunk(
@@ -234,8 +235,8 @@ def test_react_request_rejects_invalid_global_extra_body(monkeypatch) -> None:
     )
 
     with pytest.raises(ValueError, match="AUTOPATCH_LLM_EXTRA_BODY"):
-        client._build_request_kwargs(
+        client.request_builder.build_request_kwargs(
             messages=[{"role": "user", "content": "hello"}],
             tools=None,
-            options=client._resolve_options(LLMCallPurpose.REACT),
+            options=resolve_request_options(LLMCallPurpose.REACT),
         )

@@ -10,7 +10,8 @@ from autopatch_j.agent.task_executor import AgentTaskExecutor, build_agent_callb
 from autopatch_j.agent.tool_executor import ToolExecutor
 from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
 from autopatch_j.core.domain import FindingTask, CodeScope, ReviewPatchItem
-from autopatch_j.llm.client import LLMClient, build_default_llm_client
+from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.factory import build_default_llm_client
 from autopatch_j.tools.contract import FunctionTool
 
 

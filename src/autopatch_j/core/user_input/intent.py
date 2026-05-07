@@ -6,7 +6,7 @@ from typing import Any
 from autopatch_j.core.domain.intent import IntentType
 from autopatch_j.core.user_input.intent_parser import parse_intent_label
 from autopatch_j.core.user_input.prompts import INTENT_CLASSIFIER_PROMPT, build_intent_classifier_user_prompt
-from autopatch_j.llm.client import LLMCallPurpose
+from autopatch_j.llm.options import LLMCallPurpose
 
 
 PATCH_ONLY_INTENTS = {IntentType.PATCH_EXPLAIN, IntentType.PATCH_REVISE}

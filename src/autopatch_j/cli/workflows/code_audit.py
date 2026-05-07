@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from autopatch_j.cli.workflow_context import WorkflowServices
+from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
 from autopatch_j.core.domain import AuditAttemptOutcome, FindingTask, CodeScope
 
 
@@ -14,7 +14,7 @@ class CodeAuditWorkflow:
     Agent 暂存补丁草案提交。
     """
 
-    def __init__(self, services: WorkflowServices) -> None:
+    def __init__(self, services: WorkflowDependencies) -> None:
         self.services = services
 
     def handle_code_audit(self, text: str) -> None:
@@ -210,4 +210,3 @@ class CodeAuditWorkflow:
             llm_summary=self.services.summary_provider.build_local_no_issue_summary(),
         )
         self.services.renderer.print()
-

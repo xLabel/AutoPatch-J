@@ -6,7 +6,8 @@ from autopatch_j.agent.callbacks import AgentCallbacks
 from autopatch_j.agent.message_adapter import AgentMessageAdapter
 from autopatch_j.agent.progress_guard import ReactProgressGuard, build_react_step_trace
 from autopatch_j.agent.tool_executor import ToolExecutor
-from autopatch_j.llm.client import LLMCallPurpose, LLMClient
+from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.options import LLMCallPurpose
 from autopatch_j.tools.names import FunctionToolName
 
 

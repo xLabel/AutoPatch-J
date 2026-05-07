@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from autopatch_j.core.domain.intent import ConversationRoute
 from autopatch_j.core.domain.scope import CodeScope
 from autopatch_j.core.user_input.prompts import REVIEW_ROUTE_CLASSIFIER_PROMPT, build_review_route_user_prompt
-from autopatch_j.llm.client import LLMCallPurpose, LLMClient
+from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.options import LLMCallPurpose
 
 
 @dataclass(slots=True)
