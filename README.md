@@ -2,16 +2,15 @@
 
 <p align="center">
   <strong>面向 Java 仓库的 AI 代码修复 Agent</strong><br/>
-  用静态扫描建立证据，用 LLM 完成推理，用人工确认守住最后一道补丁边界。
+  用静态扫描建立证据，让 LLM 在受控工具链中推理，并以 human-in-the-loop 守住补丁边界。
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+" />
-  <img src="https://img.shields.io/badge/LLM-OpenAI%20Compatible-111827?style=flat-square" alt="OpenAI Compatible LLM" />
-  <img src="https://img.shields.io/badge/Architecture-Workflow%20%2B%20Agent-4F46E5?style=flat-square" alt="Workflow + Agent" />
-  <img src="https://img.shields.io/badge/Scanner-Semgrep-22C55E?style=flat-square" alt="Semgrep" />
-  <img src="https://img.shields.io/badge/Index-SQLite%20%2B%20Tree--sitter-0EA5E9?style=flat-square" alt="SQLite + Tree-sitter" />
-  <img src="https://img.shields.io/badge/CLI-Rich%20%2B%20prompt--toolkit-F59E0B?style=flat-square" alt="Rich + prompt-toolkit" />
+  <img src="https://img.shields.io/badge/Agent-Harness-4F46E5?style=flat-square" alt="Agent Harness" />
+  <img src="https://img.shields.io/badge/LLM--Guided-Repair-2563EB?style=flat-square" alt="LLM-Guided Repair" />
+  <img src="https://img.shields.io/badge/Evidence-Semgrep-16A34A?style=flat-square" alt="Semgrep Evidence" />
+  <img src="https://img.shields.io/badge/human--in--the--loop-Review-F59E0B?style=flat-square" alt="human-in-the-loop review" />
+  <img src="https://img.shields.io/badge/Java-Code%20Repair-ED8B00?style=flat-square" alt="Java Code Repair" />
 </p>
 
 ## 项目定位
