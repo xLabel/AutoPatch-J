@@ -10,7 +10,7 @@ from autopatch_j.cli.render import BODY_STYLE, DECISION_STYLE, MUTED_STYLE, SYST
 from autopatch_j.cli.runtime import CliRuntime
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.patching import SearchReplacePatchDraft
-from autopatch_j.scanners import ALL_SCANNERS
+from autopatch_j.scanners import DEFAULT_SCANNER_CATALOG
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 
 
@@ -77,7 +77,7 @@ class CommandHandlers:
         table.add_column("版本", justify="center")
         table.add_column("功能简介")
 
-        for scanner in ALL_SCANNERS:
+        for scanner in DEFAULT_SCANNER_CATALOG.all():
             meta = scanner.get_meta(self.host.repo_root)
             status_text = (
                 f"[green]● {meta.status}[/green]"
@@ -198,4 +198,3 @@ class CommandHandlers:
 
     def _status_value(self, text: str, style: str = BODY_STYLE) -> Text:
         return Text(text, style=style)
-

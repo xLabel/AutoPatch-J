@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from autopatch_j.core.project import SourceReader
-from autopatch_j.scanners.base import Finding, ScanResult
+from autopatch_j.scanners.models import Finding, ScanResult
 
 
-def normalize_semgrep_payload(
+def build_semgrep_scan_result(
     payload: dict[str, object],
     repo_root: Path,
     scope: list[str],

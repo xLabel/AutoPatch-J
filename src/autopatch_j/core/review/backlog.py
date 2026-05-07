@@ -9,7 +9,7 @@ from autopatch_j.core.domain.audit import (
     FindingAttemptDecision,
     FindingTask,
 )
-from autopatch_j.scanners.base import ScanResult
+from autopatch_j.scanners.models import ScanResult
 
 
 @dataclass(slots=True)

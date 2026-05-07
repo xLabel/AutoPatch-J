@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 
@@ -83,16 +81,3 @@ class ScannerMeta:
     status: str
     version: str = "N/A"
     description: str = ""
-
-
-class JavaScanner(ABC):
-    """Java 扫描器适配器契约，统一扫描执行和状态展示接口。"""
-    name: ScannerName
-
-    @abstractmethod
-    def get_meta(self, repo_root: Path | None = None) -> ScannerMeta:
-        """获取状态元数据"""
-
-    @abstractmethod
-    def scan(self, repo_root: Path, scope: list[str]) -> ScanResult:
-        """执行扫描逻辑"""

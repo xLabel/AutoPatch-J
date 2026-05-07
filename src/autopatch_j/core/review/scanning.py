@@ -4,8 +4,9 @@ from pathlib import Path
 
 from autopatch_j.core.domain.scope import CodeScope
 from autopatch_j.core.review.artifacts import ProjectArtifactStore
-from autopatch_j.scanners import DEFAULT_SCANNER_NAME, get_scanner
-from autopatch_j.scanners.base import ScanResult
+from autopatch_j.scanners import DEFAULT_SCANNER_CATALOG, DEFAULT_SCANNER_NAME
+from autopatch_j.scanners.catalog import ScannerCatalog
+from autopatch_j.scanners.models import ScanResult
 
 
 class StaticScanRunner:
@@ -18,12 +19,18 @@ class StaticScanRunner:
     3. 不解析用户输入，也不解释扫描结果；范围解析和 backlog 推进分别由其他服务负责。
     """
 
-    def __init__(self, repo_root: Path, artifact_store: ProjectArtifactStore) -> None:
+    def __init__(
+        self,
+        repo_root: Path,
+        artifact_store: ProjectArtifactStore,
+        scanner_catalog: ScannerCatalog = DEFAULT_SCANNER_CATALOG,
+    ) -> None:
         self.repo_root = repo_root.resolve()
         self.artifact_store = artifact_store
+        self.scanner_catalog = scanner_catalog
 
     def run_scan_and_save(self, scope: CodeScope) -> tuple[str, ScanResult]:
-        scanner = get_scanner(DEFAULT_SCANNER_NAME)
+        scanner = self.scanner_catalog.get(DEFAULT_SCANNER_NAME)
         if scanner is None:
             raise RuntimeError(f"未找到默认扫描器：{DEFAULT_SCANNER_NAME}")
 

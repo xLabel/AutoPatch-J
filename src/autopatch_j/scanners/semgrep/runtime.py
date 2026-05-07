@@ -11,8 +11,8 @@ from typing import Iterator
 from autopatch_j.config import GlobalConfig, get_project_state_dir
 
 
-def resolve_user_runtime_binary() -> str | None:
-    return resolve_existing_executable(user_runtime_binary_path())
+def resolve_managed_semgrep_binary() -> str | None:
+    return resolve_existing_executable(managed_semgrep_binary_path())
 
 
 def resolve_existing_executable(candidate: Path) -> str | None:
@@ -29,7 +29,7 @@ def is_executable_file(candidate: Path) -> bool:
     return candidate.exists() and candidate.is_file() and os.access(candidate, os.X_OK)
 
 
-def user_runtime_binary_path() -> Path:
+def managed_semgrep_binary_path() -> Path:
     return semgrep_venv_bin_dir() / semgrep_binary_name()
 
 
@@ -53,20 +53,20 @@ def semgrep_venv_bin_dir() -> Path:
 
 
 def semgrep_rules_path() -> Path:
-    return Path(__file__).resolve().parent / "resources" / "semgrep" / "rules" / "java.yml"
+    return Path(__file__).resolve().parent.parent / "resources" / "semgrep" / "rules" / "java.yml"
 
 
 def install_managed_semgrep_runtime(
     version: str = GlobalConfig.semgrep_version,
     python_executable: str = sys.executable,
 ) -> tuple[str, str]:
-    if resolve_user_runtime_binary() is not None:
-        return "ok", f"AutoPatch-J 管理的 Semgrep 已存在：{user_runtime_binary_path()}"
+    if resolve_managed_semgrep_binary() is not None:
+        return "ok", f"AutoPatch-J 管理的 Semgrep 已存在：{managed_semgrep_binary_path()}"
 
     semgrep_runtime_dir().mkdir(parents=True, exist_ok=True)
     with semgrep_install_lock():
-        if resolve_user_runtime_binary() is not None:
-            return "ok", f"AutoPatch-J 管理的 Semgrep 已存在：{user_runtime_binary_path()}"
+        if resolve_managed_semgrep_binary() is not None:
+            return "ok", f"AutoPatch-J 管理的 Semgrep 已存在：{managed_semgrep_binary_path()}"
 
         venv_result = run_setup_command([python_executable, "-m", "venv", str(semgrep_venv_dir())])
         if venv_result is not None:
@@ -76,12 +76,12 @@ def install_managed_semgrep_runtime(
         install_result = run_setup_command([str(pip_executable), "install", "--quiet", f"semgrep=={version}"])
         if install_result is not None:
             return install_result
-    if resolve_user_runtime_binary() is None:
+    if resolve_managed_semgrep_binary() is None:
         return (
             "error",
-            f"Semgrep 安装完成，但未在预期路径找到可执行文件：{user_runtime_binary_path()}",
+            f"Semgrep 安装完成，但未在预期路径找到可执行文件：{managed_semgrep_binary_path()}",
         )
-    return "ok", f"已安装 AutoPatch-J 管理的 Semgrep {version}：{user_runtime_binary_path()}"
+    return "ok", f"已安装 AutoPatch-J 管理的 Semgrep {version}：{managed_semgrep_binary_path()}"
 
 
 def run_setup_command(command: list[str]) -> tuple[str, str] | None:
@@ -112,7 +112,7 @@ def semgrep_install_lock(
             fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             break
         except FileExistsError:
-            if resolve_user_runtime_binary() is not None:
+            if resolve_managed_semgrep_binary() is not None:
                 yield
                 return
             if time.monotonic() >= deadline:

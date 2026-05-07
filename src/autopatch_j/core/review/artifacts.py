@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from autopatch_j.config import get_project_state_dir
 from autopatch_j.core.domain.workspace import ReviewWorkspace
-from autopatch_j.scanners.base import Finding, ScanResult
+from autopatch_j.scanners.models import Finding, ScanResult
 
 
 @dataclass(slots=True)

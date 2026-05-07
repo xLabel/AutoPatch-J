@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from autopatch_j.core.patching.types import SearchReplacePatchDraft, SyntaxCheckResult, VerificationResult
-from autopatch_j.scanners.base import JavaScanner
+from autopatch_j.scanners.contracts import StaticScanner
 
 
 class PatchQualityVerifier:
@@ -17,7 +17,7 @@ class PatchQualityVerifier:
     3. 不生成补丁、不写文件；补丁生成和落盘分别由 SearchReplacePatchEngine 负责。
     """
 
-    def __init__(self, repo_root: Path, scanner: JavaScanner | None) -> None:
+    def __init__(self, repo_root: Path, scanner: StaticScanner | None) -> None:
         self.repo_root = repo_root
         self.scanner = scanner
 

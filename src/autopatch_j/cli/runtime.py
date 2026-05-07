@@ -21,7 +21,7 @@ from autopatch_j.core.project import ScopeResolver
 from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.review import ReviewWorkspaceManager
 from autopatch_j.llm.client import LLMClient, build_default_llm_client
-from autopatch_j.scanners import DEFAULT_SCANNER_NAME, get_scanner
+from autopatch_j.scanners import DEFAULT_SCANNER_CATALOG, DEFAULT_SCANNER_NAME
 
 
 @dataclass(slots=True)
@@ -68,7 +68,7 @@ def build_cli_runtime(
     workspace_manager = ReviewWorkspaceManager(artifact_manager)
     memory_manager = MemoryManager(artifact_manager.state_dir / "memory.json")
 
-    scanner = get_scanner(DEFAULT_SCANNER_NAME)
+    scanner = DEFAULT_SCANNER_CATALOG.get(DEFAULT_SCANNER_NAME)
     patch_verifier = PatchQualityVerifier(repo_root, scanner) if scanner else None
 
     agent_session = AgentSession(
@@ -106,4 +106,3 @@ def build_cli_runtime(
         agent=agent,
         summary_provider=summary_provider,
     )
-

@@ -5,24 +5,20 @@ import subprocess
 from pathlib import Path
 
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.project import UnsafeRepoPathError, resolve_repo_path, to_repo_relative_path
-from autopatch_j.scanners.base import ScannerMeta, ScannerName, ScanResult
-from autopatch_j.scanners.semgrep_result import (
-    extract_rule,
-    normalize_check_id,
-    normalize_semgrep_payload,
-)
-from autopatch_j.scanners.semgrep_runtime import (
+from autopatch_j.scanners.contracts import StaticScanner
+from autopatch_j.scanners.models import ScannerMeta, ScannerName, ScanResult
+from autopatch_j.scanners.semgrep.results import build_semgrep_scan_result
+from autopatch_j.scanners.semgrep.runtime import (
     build_semgrep_subprocess_env,
-    install_managed_semgrep_runtime,
-    resolve_user_runtime_binary,
+    resolve_managed_semgrep_binary,
     semgrep_rules_path,
 )
+from autopatch_j.scanners.semgrep.targets import select_semgrep_targets
 
 DEFAULT_SEMGREP_CONFIG_LABEL = "autopatch-j/java-default"
 
 
-class SemgrepScanner:
+class SemgrepScanner(StaticScanner):
     """Semgrep Java 扫描器适配器，负责选择目标、调用 runtime 并归一化结果。"""
 
     name = ScannerName.SEMGREP
@@ -41,7 +37,7 @@ class SemgrepScanner:
         return self.config
 
     def scan(self, repo_root: Path, scope: list[str]) -> ScanResult:
-        targets = select_targets(repo_root, scope)
+        targets = select_semgrep_targets(repo_root, scope)
         if not targets:
             return ScanResult(
                 engine="semgrep",
@@ -117,7 +113,7 @@ class SemgrepScanner:
                 message="Semgrep 输出 JSON 结构不符合预期，请检查扫描器运行时状态。",
                 findings=[],
             )
-        return normalize_semgrep_payload(
+        return build_semgrep_scan_result(
             payload,
             repo_root=repo_root,
             scope=list(scope),
@@ -129,7 +125,7 @@ class SemgrepScanner:
         return resolved[0] if resolved is not None else None
 
     def resolve_binary_with_source(self, repo_root: Path | None = None) -> tuple[str, str] | None:
-        user_runtime = resolve_user_runtime_binary()
+        user_runtime = resolve_managed_semgrep_binary()
         if user_runtime is not None:
             return user_runtime, "AutoPatch-J 管理的 Semgrep"
         return None
@@ -176,24 +172,3 @@ def is_default_semgrep_config(config: str) -> bool:
         return Path(config).resolve() == Path(default_semgrep_config()).resolve()
     except OSError:
         return False
-
-
-def select_targets(repo_root: Path, scope: list[str]) -> list[str]:
-    if not scope:
-        return ["."]
-
-    targets: list[str] = []
-    for entry in scope:
-        try:
-            candidate = resolve_repo_path(repo_root, entry)
-        except UnsafeRepoPathError:
-            continue
-        if not candidate.exists():
-            continue
-        rel_path = to_repo_relative_path(repo_root, candidate)
-        if candidate.is_dir():
-            targets.append(Path(rel_path).as_posix())
-            continue
-        if candidate.suffix.lower() == ".java":
-            targets.append(Path(rel_path).as_posix())
-    return targets
