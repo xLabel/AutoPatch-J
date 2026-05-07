@@ -4,7 +4,10 @@
 
 ## 1. 为什么需要 Memory
 
-AutoPatch-J 的主要工作不是聊天，而是围绕 Java 仓库完成代码解释、代码审计、补丁生成和人工确认。普通问答仍然需要连续性：用户可能先问项目结构，再追问某个模块，再切到 Java 语法或工程实践。如果每一轮都完全失忆，体验会很割裂。
+AutoPatch-J 的主要工作不是聊天，而是围绕 Java 仓库完成代码解释、代码审计、补丁生成和人工确认。
+
+普通问答仍然需要连续性：用户可能先问项目结构，再追问某个模块，
+再切到 Java 语法或工程实践。如果每一轮都完全失忆，体验会很割裂。
 
 但把完整历史直接塞进 prompt 也会带来问题：
 
@@ -58,7 +61,11 @@ Memory 只服务 `code_explain` 和 `general_chat`。补丁相关流程不读取
 
 ### 失败降级
 
-Memory 失败不能影响主流程。摘要失败、delta 非法、写入失败都应安静降级；坏 JSON 会备份为 `memory.corrupt*.json` 并回退为空文档；`/reset` 会清理 memory，并丢弃尚未写回的后台摘要结果。
+Memory 失败不能影响主流程。
+
+摘要失败、delta 非法、写入失败都应安静降级。
+坏 JSON 会备份为 `memory.corrupt*.json` 并回退为空文档。
+`/reset` 会清理 memory，并丢弃尚未写回的后台摘要结果。
 
 ## 4. 分层模型
 
@@ -184,7 +191,10 @@ Memory 分为 `working_memory` 和 `long_term_memory`。
 - `build.gradle`
 - `settings.gradle`
 
-最多收集 4 份证据，每份最多 700 字符。短 LLM 创建或更新 `project_fact` 时，必须带 `source=repo_verified` 和合法 `evidence_id`。没有证据的项目推测只能进入 `active_topics`，不能沉淀为长期项目事实。
+最多收集 4 份证据，每份最多 700 字符。
+
+短 LLM 创建或更新 `project_fact` 时，必须带 `source=repo_verified` 和合法 `evidence_id`。
+没有证据的项目推测只能进入 `active_topics`，不能沉淀为长期项目事实。
 
 ## 5. 阈值设计
 
@@ -269,7 +279,10 @@ code_explain/general_chat 完成
 
 摘要是被动触发的。AutoPatch-J 启动时不会自动后台总结，也不会监听文件变化。
 
-后台调度器使用单线程执行，避免多个摘要任务并发写同一个 memory 文件。如果上一轮摘要任务尚未完成，本轮不会重复提交。`/reset` 会提升 generation，旧任务即使完成也会被丢弃，避免状态清空后又写回旧结果。
+后台调度器使用单线程执行，避免多个摘要任务并发写同一个 memory 文件。
+
+如果上一轮摘要任务尚未完成，本轮不会重复提交。
+`/reset` 会提升 generation，旧任务即使完成也会被丢弃，避免状态清空后又写回旧结果。
 
 ## 7. 短 LLM 与 Delta
 
