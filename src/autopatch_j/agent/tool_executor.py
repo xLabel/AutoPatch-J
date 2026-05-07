@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from autopatch_j.agent.session import AgentSession
-from autopatch_j.llm.dialect import ToolCall
+from autopatch_j.llm.dialects import ToolCall
 from autopatch_j.tools.catalog import FunctionToolCatalog
 from autopatch_j.tools.contract import FunctionTool, ToolExecutionResult
 from autopatch_j.tools.names import ToolNameLike, tool_name_value

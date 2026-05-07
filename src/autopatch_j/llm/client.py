@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from .dialect import MessageDialect, StandardDialect, DeepSeekAliyunDialect
+from .dialects import MessageDialect, StandardDialect, DeepSeekAliyunDialect
 from .models import LLMResponse
 from .options import LLMCallPurpose, LLMRequestOptions, resolve_request_options
 from .parser import LLMResponseParser

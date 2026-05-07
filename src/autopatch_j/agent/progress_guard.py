@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from autopatch_j.llm.dialect import ToolCall
+from autopatch_j.llm.dialects import ToolCall
 from autopatch_j.tools.contract import ToolExecutionResult
 
 

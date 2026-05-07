@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-from autopatch_j.llm.dialect import MessageDialect, ToolCall
+from autopatch_j.llm.dialects import MessageDialect, ToolCall
 from autopatch_j.llm.models import LLMResponse
 
 DialectFactory = Callable[[], MessageDialect]

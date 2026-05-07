@@ -6,7 +6,7 @@ from autopatch_j.agent.progress_guard import (
     normalize_observation_summary,
     normalize_tool_arguments,
 )
-from autopatch_j.llm.dialect import ToolCall
+from autopatch_j.llm.dialects import ToolCall
 from autopatch_j.tools.contract import ToolExecutionResult
 
 

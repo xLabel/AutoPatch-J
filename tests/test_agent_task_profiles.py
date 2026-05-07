@@ -10,7 +10,7 @@ from autopatch_j.agent.task_profile import (
     fetch_task_profile,
 )
 from autopatch_j.llm.client import LLMClient, LLMResponse
-from autopatch_j.llm.dialect import ToolCall
+from autopatch_j.llm.dialects import ToolCall
 from autopatch_j.agent.prompts import (
     build_code_explain_user_prompt,
     build_patch_explain_user_prompt,
