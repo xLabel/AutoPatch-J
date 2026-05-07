@@ -1,54 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from enum import Enum, auto
 from typing import Any
 from uuid import uuid4
 
-from autopatch_j.core.domain import IntentType
-
-
-MEMORY_VERSION = 1
-MAX_RECENT_TURNS = 12
-COMPACTION_RECENT_TURNS = 8
-KEEP_RECENT_TURNS_AFTER_COMPACTION = 4
-MAX_PROMPT_READY_SUMMARIES = 3
-MAX_PROMPT_PENDING_TURNS = 2
-MAX_ACTIVE_TOPICS = 8
-MAX_LONG_TERM_ITEMS = 50
-MAX_SCOPE_PATHS = 10
-MAX_USER_TEXT = 1000
-MAX_ASSISTANT_TEXT = 2000
-MAX_LABEL = 60
-MAX_SUMMARY = 300
-SOFT_FILE_BYTES = 24 * 1024
-HARD_FILE_BYTES = 32 * 1024
-
-ORDINARY_INTENTS = {IntentType.CODE_EXPLAIN, IntentType.GENERAL_CHAT}
-LONG_TERM_SIGNALS = (
-    "以后",
-    "每次",
-    "必须",
-    "不要",
-    "我希望",
-    "我不喜欢",
-    "优先",
-    "规则",
-    "守则",
-    "记住",
-    "默认",
-)
-PROJECT_SIGNALS = ("项目", "仓库", "模块", "目录", "代码", "工程", "repo", "repository")
-
-
-class MemorySummaryTrigger(Enum):
-    """普通问答记忆摘要触发原因，便于调试和测试具体触发路径。"""
-
-    PENDING_TURNS = auto()
-    RECENT_TURNS = auto()
-    FILE_SIZE = auto()
-    LONG_TERM_SIGNAL = auto()
-    PROJECT_CODE_EXPLAIN = auto()
+from .constants import MAX_SCOPE_PATHS
 
 
 def now_iso() -> str:

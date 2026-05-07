@@ -5,16 +5,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from autopatch_j.llm.client import LLMCallPurpose, LLMClient
+from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.options import LLMCallPurpose
 
+from .delta_parser import MemoryDeltaParser
 from .manager import MemoryManager
 from .prompts import MEMORY_SUMMARY_SYSTEM_PROMPT
-from .schema import MemorySummaryTrigger
+from .project_evidence import ProjectEvidenceCollector
+from .triggers import MemorySummaryTrigger
 
 MAX_SUMMARY_PENDING_TURNS = 4
 MAX_SUMMARY_EXISTING_ITEMS = 20
-MAX_PROJECT_EVIDENCE_ITEMS = 4
-MAX_PROJECT_EVIDENCE_TEXT = 700
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,8 @@ class MemorySummarizer:
         self.memory_manager = memory_manager
         self.llm = llm
         self.repo_root = repo_root
+        self.project_evidence_collector = ProjectEvidenceCollector(repo_root)
+        self.delta_parser = MemoryDeltaParser()
 
     def try_summarize(
         self,
@@ -58,7 +61,7 @@ class MemorySummarizer:
         if effective_trigger is None:
             return None
 
-        project_evidence = self._collect_project_evidence()
+        project_evidence = self.project_evidence_collector.collect()
         payload = self._build_payload(effective_trigger, project_evidence)
         if not payload["pending_turns"]:
             return None
@@ -75,7 +78,7 @@ class MemorySummarizer:
                 tools=None,
                 purpose=LLMCallPurpose.MEMORY_SUMMARY,
             )
-            delta = self._parse_delta(response.content)
+            delta = self.delta_parser.parse(response.content)
         except Exception:
             return None
 
@@ -118,56 +121,3 @@ class MemorySummarizer:
             "scope_paths": turn.get("scope_paths", []),
             "created_at": turn.get("created_at", ""),
         }
-
-    def _parse_delta(self, content: str) -> dict[str, Any] | None:
-        text = content.strip()
-        if not text:
-            return None
-        if text.startswith("```"):
-            text = self._strip_fenced_json(text)
-        else:
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1 and start < end:
-                text = text[start : end + 1]
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, dict) else None
-
-    def _collect_project_evidence(self) -> list[dict[str, str]]:
-        if self.repo_root is None:
-            return []
-
-        candidates = ("README_CN.md", "README.md", "pom.xml", "build.gradle", "settings.gradle")
-        evidence: list[dict[str, str]] = []
-        for index, name in enumerate(candidates, start=1):
-            path = self.repo_root / name
-            if not path.is_file():
-                continue
-            try:
-                content = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            compact = " ".join(content.split())
-            if not compact:
-                continue
-            evidence.append(
-                {
-                    "evidence_id": f"project_evidence_{index}",
-                    "source": name,
-                    "text": compact[:MAX_PROJECT_EVIDENCE_TEXT],
-                }
-            )
-            if len(evidence) >= MAX_PROJECT_EVIDENCE_ITEMS:
-                break
-        return evidence
-
-    def _strip_fenced_json(self, text: str) -> str:
-        lines = text.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        return "\n".join(lines).strip()

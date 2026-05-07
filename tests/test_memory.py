@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
-from autopatch_j.llm.client import LLMCallPurpose
+from autopatch_j.llm.options import LLMCallPurpose
 from autopatch_j.core.domain import IntentType
 from autopatch_j.core.memory import (
     MAX_RECENT_TURNS,

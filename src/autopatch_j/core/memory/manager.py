@@ -8,19 +8,21 @@ from autopatch_j.core.domain import IntentType
 
 from .delta import MemoryDeltaApplier
 from .prompt_context import MemoryPromptContextBuilder
-from .schema import (
-    LONG_TERM_SIGNALS,
+from .constants import (
     MAX_ASSISTANT_TEXT,
     MAX_SCOPE_PATHS,
     MAX_USER_TEXT,
     ORDINARY_INTENTS,
     SOFT_FILE_BYTES,
-    MemorySummaryTrigger,
+)
+from .signals import LONG_TERM_SIGNALS
+from .text_utils import (
     clip_text,
     generate_id,
     now_iso,
 )
 from .store import MemoryStore
+from .triggers import MemorySummaryTrigger
 
 
 class MemoryManager:

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from .schema import MAX_LABEL, MAX_SUMMARY, clip_text, generate_id, normalize_string_list, now_iso
+from .constants import MAX_LABEL, MAX_SUMMARY
+from .long_term_policy import LongTermMemoryPolicy
+from .text_utils import clip_text, generate_id, normalize_string_list, now_iso
 
 
 class MemoryDeltaApplier:
     """对短 LLM 生成的 memory delta 做程序侧硬校验并写入内存对象。"""
+
+    def __init__(self, long_term_policy: LongTermMemoryPolicy | None = None) -> None:
+        self.long_term_policy = long_term_policy or LongTermMemoryPolicy()
 
     def apply(
         self,
@@ -114,7 +119,7 @@ class MemoryDeltaApplier:
         summary = str(operation.get("summary", "")).strip()
         source = str(operation.get("source", "")).strip()
         item_type = str(operation.get("type"))
-        if not self._is_allowed_new_long_term_item(
+        if not self.long_term_policy.allows_new_item(
             item_type=item_type,
             label=label,
             summary=summary,
@@ -149,7 +154,7 @@ class MemoryDeltaApplier:
         summary = str(operation.get("summary", "")).strip()
         if not item or not summary:
             return False
-        if not self._is_allowed_long_term_update(
+        if not self.long_term_policy.allows_update(
             item=item,
             operation=operation,
             allowed_project_evidence_ids=allowed_project_evidence_ids,
@@ -158,41 +163,6 @@ class MemoryDeltaApplier:
         item["summary"] = clip_text(summary, MAX_SUMMARY)
         item["updated_at"] = now_iso()
         return True
-
-    def _is_allowed_new_long_term_item(
-        self,
-        item_type: str,
-        label: str,
-        summary: str,
-        source: str,
-        evidence_id: Any,
-        allowed_project_evidence_ids: set[str] | None,
-    ) -> bool:
-        if not label or not summary:
-            return False
-        if item_type == "durable_preference":
-            return source == "user_explicit"
-        if item_type == "project_fact":
-            return (
-                source == "repo_verified"
-                and allowed_project_evidence_ids is not None
-                and str(evidence_id or "") in allowed_project_evidence_ids
-            )
-        return False
-
-    def _is_allowed_long_term_update(
-        self,
-        item: dict[str, Any],
-        operation: dict[str, Any],
-        allowed_project_evidence_ids: set[str] | None,
-    ) -> bool:
-        if item.get("type") != "project_fact":
-            return True
-        return (
-            operation.get("source") == "repo_verified"
-            and allowed_project_evidence_ids is not None
-            and str(operation.get("evidence_id") or "") in allowed_project_evidence_ids
-        )
 
     def _long_term_target(self, memory: dict[str, Any], item_type: Any) -> list[dict[str, Any]] | None:
         if item_type == "durable_preference":

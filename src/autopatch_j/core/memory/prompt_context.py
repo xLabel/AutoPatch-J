@@ -4,13 +4,12 @@ from typing import Any
 
 from autopatch_j.core.domain import IntentType
 
-from .schema import (
-    LONG_TERM_SIGNALS,
+from .constants import (
     MAX_PROMPT_PENDING_TURNS,
     MAX_PROMPT_READY_SUMMARIES,
     ORDINARY_INTENTS,
-    PROJECT_SIGNALS,
 )
+from .signals import LONG_TERM_SIGNALS, PROJECT_SIGNALS
 
 
 class MemoryPromptContextBuilder:

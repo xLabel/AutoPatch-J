@@ -7,8 +7,8 @@ from threading import Lock
 from autopatch_j.llm.client import LLMClient
 
 from .manager import MemoryManager
-from .schema import MemorySummaryTrigger
 from .summarizer import MemorySummarizer
+from .triggers import MemorySummaryTrigger
 
 
 class MemorySummaryScheduler:
