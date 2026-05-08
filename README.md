@@ -8,7 +8,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Agent-Harness-4F46E5?style=flat-square" alt="Agent Harness" />
   <img src="https://img.shields.io/badge/LLM--Guided-Repair-2563EB?style=flat-square" alt="LLM-Guided Repair" />
-  <img src="https://img.shields.io/badge/Evidence-Semgrep-16A34A?style=flat-square" alt="Semgrep Evidence" />
+  <img src="https://img.shields.io/badge/Evidence-Grounded-16A34A?style=flat-square" alt="Evidence-Grounded" />
   <img src="https://img.shields.io/badge/human--in--the--loop-Review-F59E0B?style=flat-square" alt="human-in-the-loop review" />
   <img src="https://img.shields.io/badge/Java-Code%20Repair-ED8B00?style=flat-square" alt="Java Code Repair" />
 </p>
