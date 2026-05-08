@@ -7,6 +7,8 @@ from .constants import (
     MAX_ASSISTANT_TEXT,
     MAX_LABEL,
     MAX_LONG_TERM_ITEMS,
+    MAX_REPO_PROFILE_ITEMS,
+    MAX_REPO_PROFILE_TEXT,
     MAX_RECENT_TURNS,
     MAX_SUMMARY,
     MAX_USER_TEXT,
@@ -24,10 +26,10 @@ from .text_utils import (
 
 
 class MemoryNormalizer:
-    """Builds a safe memory document from missing, stale, or partially corrupt JSON data."""
+    """Builds a safe memory document for the current memory JSON schema only."""
 
     def normalize(self, raw: Any) -> dict[str, Any]:
-        if not isinstance(raw, dict):
+        if not isinstance(raw, dict) or raw.get("version") != MEMORY_VERSION:
             return self.empty()
 
         memory = self.empty()
@@ -37,13 +39,14 @@ class MemoryNormalizer:
         long_term = raw.get("long_term_memory") if isinstance(raw.get("long_term_memory"), dict) else {}
         memory["working_memory"]["recent_turns"] = self._normalize_recent_turns(working.get("recent_turns"))
         memory["working_memory"]["active_topics"] = self._normalize_topics(working.get("active_topics"))
+        memory["repo_profile"] = self._normalize_repo_profile(raw.get("repo_profile"))
         memory["long_term_memory"]["durable_preferences"] = self._normalize_long_term_items(
             long_term.get("durable_preferences"),
             "durable_preference",
         )
-        memory["long_term_memory"]["project_facts"] = self._normalize_long_term_items(
-            long_term.get("project_facts"),
-            "project_fact",
+        memory["long_term_memory"]["project_notes"] = self._normalize_long_term_items(
+            long_term.get("project_notes"),
+            "project_note",
         )
         return memory
 
@@ -55,9 +58,18 @@ class MemoryNormalizer:
                 "active_topics": [],
                 "recent_turns": [],
             },
+            "repo_profile": {
+                "build_tool": "",
+                "java_version": "",
+                "project_name": "",
+                "modules": [],
+                "frameworks": [],
+                "source_files": [],
+                "updated_at": "",
+            },
             "long_term_memory": {
                 "durable_preferences": [],
-                "project_facts": [],
+                "project_notes": [],
             },
         }
 
@@ -118,8 +130,9 @@ class MemoryNormalizer:
                 continue
             now = now_iso()
             source = raw.get("source")
-            if source not in {"user_explicit", "repo_verified"}:
-                source = "user_explicit"
+            expected_source = "user_explicit" if item_type == "durable_preference" else "conversation_summary"
+            if source != expected_source:
+                source = expected_source
             items.append(
                 {
                     "id": non_empty(raw.get("id"), generate_id("mem")),
@@ -135,3 +148,28 @@ class MemoryNormalizer:
         return sorted(items, key=lambda item: (item["status"] == "active", item["updated_at"]))[
             -MAX_LONG_TERM_ITEMS:
         ]
+
+    def _normalize_repo_profile(self, raw_profile: Any) -> dict[str, Any]:
+        if not isinstance(raw_profile, dict):
+            return self.empty()["repo_profile"]
+        return {
+            "build_tool": clip_text(raw_profile.get("build_tool", ""), MAX_REPO_PROFILE_TEXT),
+            "java_version": clip_text(raw_profile.get("java_version", ""), MAX_REPO_PROFILE_TEXT),
+            "project_name": clip_text(raw_profile.get("project_name", ""), MAX_REPO_PROFILE_TEXT),
+            "modules": normalize_string_list(
+                raw_profile.get("modules"),
+                MAX_REPO_PROFILE_ITEMS,
+                MAX_REPO_PROFILE_TEXT,
+            ),
+            "frameworks": normalize_string_list(
+                raw_profile.get("frameworks"),
+                MAX_REPO_PROFILE_ITEMS,
+                MAX_REPO_PROFILE_TEXT,
+            ),
+            "source_files": normalize_string_list(
+                raw_profile.get("source_files"),
+                MAX_REPO_PROFILE_ITEMS,
+                MAX_REPO_PROFILE_TEXT,
+            ),
+            "updated_at": non_empty(raw_profile.get("updated_at"), ""),
+        }

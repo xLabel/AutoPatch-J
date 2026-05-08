@@ -15,6 +15,7 @@ from autopatch_j.core.memory import (
 )
 from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
 from autopatch_j.core.memory.prompts import MEMORY_SUMMARY_SYSTEM_PROMPT
+from autopatch_j.core.memory.repo_profile import RepoProfileCollector
 from autopatch_j.core.memory.summarizer import MemorySummarizer
 
 
@@ -27,9 +28,11 @@ def test_missing_memory_file_loads_empty_memory(tmp_path: Path) -> None:
 
     memory = manager.load()
 
-    assert memory["version"] == 1
+    assert memory["version"] == 2
+    assert memory["repo_profile"]["build_tool"] == ""
     assert memory["working_memory"]["recent_turns"] == []
     assert memory["long_term_memory"]["durable_preferences"] == []
+    assert memory["long_term_memory"]["project_notes"] == []
 
 
 def test_append_recent_turn_writes_project_memory_file(tmp_path: Path) -> None:
@@ -108,6 +111,39 @@ def test_prompt_context_includes_ready_summaries(tmp_path: Path) -> None:
     assert "用户关注 Java Optional 的安全用法" in context
 
 
+def test_prompt_context_includes_repo_profile_and_project_notes_for_project_questions(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    assert manager.apply_delta(
+        {
+            "long_term_operations": [
+                {
+                    "operation": "create_new",
+                    "type": "project_note",
+                    "label": "review module",
+                    "summary": "用户关注 review 模块如何管理 finding 队列。",
+                    "source": "conversation_summary",
+                }
+            ]
+        },
+        repo_profile={
+            "build_tool": "maven",
+            "java_version": "17",
+            "project_name": "demo-service",
+            "modules": ["api", "service"],
+            "frameworks": ["spring boot"],
+            "source_files": ["pom.xml"],
+            "updated_at": "2026-05-08T00:00:00+08:00",
+        },
+    )
+
+    context = manager.build_prompt_context(IntentType.CODE_EXPLAIN, "继续解释这个项目")
+
+    assert "仓库元信息" in context
+    assert "构建工具: maven" in context
+    assert "项目讨论笔记" in context
+    assert "finding 队列" in context
+
+
 def test_patch_intents_never_receive_memory_context(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     manager.append_recent_turn(
@@ -130,6 +166,47 @@ def test_corrupt_memory_file_is_backed_up_and_ignored(tmp_path: Path) -> None:
 
     assert memory["working_memory"]["recent_turns"] == []
     assert (manager.memory_file.parent / "memory.corrupt.json").exists()
+
+
+def test_old_memory_version_is_ignored_without_migration(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    manager.memory_file.parent.mkdir(parents=True)
+    manager.memory_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "working_memory": {
+                    "recent_turns": [
+                        {
+                            "id": "turn_old",
+                            "intent": "general_chat",
+                            "user_text": "旧版本问题",
+                            "assistant_text": "旧版本回答",
+                        }
+                    ]
+                },
+                "long_term_memory": {
+                    "project_facts": [
+                        {
+                            "id": "mem_old",
+                            "type": "project_fact",
+                            "label": "old",
+                            "summary": "旧版本项目事实",
+                        }
+                    ]
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    memory = manager.load()
+
+    assert memory["version"] == 2
+    assert memory["working_memory"]["recent_turns"] == []
+    assert memory["long_term_memory"]["project_notes"] == []
+    assert not (manager.memory_file.parent / "memory.corrupt.json").exists()
 
 
 def test_recent_turns_are_capped(tmp_path: Path) -> None:
@@ -182,61 +259,69 @@ def test_long_term_delta_requires_existing_target_id_for_update(tmp_path: Path) 
     assert manager.load()["long_term_memory"]["durable_preferences"] == []
 
 
-def test_project_fact_requires_valid_project_evidence_id(tmp_path: Path) -> None:
+def test_project_note_requires_conversation_summary_source(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
-    delta = {
+
+    invalid_delta = {
         "long_term_operations": [
             {
                 "operation": "create_new",
-                "type": "project_fact",
-                "label": "project identity",
-                "summary": "AutoPatch-J 是 Java 代码修复 CLI。",
-                "source": "repo_verified",
-                "evidence_id": "readme_cn_001",
+                "type": "project_note",
+                "label": "review module",
+                "summary": "用户正在关注 review 模块的职责边界。",
+                "source": "user_explicit",
+            }
+        ]
+    }
+    valid_delta = {
+        "long_term_operations": [
+            {
+                "operation": "create_new",
+                "type": "project_note",
+                "label": "review module",
+                "summary": "用户正在关注 review 模块的职责边界。",
+                "source": "conversation_summary",
             }
         ]
     }
 
-    assert manager.apply_delta(delta) is False
-    assert manager.apply_delta(delta, allowed_project_evidence_ids={"other"}) is False
-    assert manager.apply_delta(delta, allowed_project_evidence_ids={"readme_cn_001"}) is True
-    facts = manager.load()["long_term_memory"]["project_facts"]
-    assert facts[0]["label"] == "project identity"
+    assert manager.apply_delta(invalid_delta) is False
+    assert manager.apply_delta(valid_delta) is True
+    notes = manager.load()["long_term_memory"]["project_notes"]
+    assert notes[0]["label"] == "review module"
 
 
-def test_project_fact_update_requires_valid_project_evidence_id(tmp_path: Path) -> None:
+def test_project_note_update_requires_conversation_summary_source(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     create_delta = {
         "long_term_operations": [
             {
                 "operation": "create_new",
-                "type": "project_fact",
-                "label": "project identity",
-                "summary": "AutoPatch-J 是 Java 代码修复 CLI。",
-                "source": "repo_verified",
-                "evidence_id": "readme_cn_001",
+                "type": "project_note",
+                "label": "review module",
+                "summary": "用户正在关注 review 模块的职责边界。",
+                "source": "conversation_summary",
             }
         ]
     }
-    assert manager.apply_delta(create_delta, allowed_project_evidence_ids={"readme_cn_001"}) is True
-    fact_id = manager.load()["long_term_memory"]["project_facts"][0]["id"]
+    assert manager.apply_delta(create_delta) is True
+    note_id = manager.load()["long_term_memory"]["project_notes"][0]["id"]
     update_delta = {
         "long_term_operations": [
             {
                 "operation": "update_existing",
-                "target_id": fact_id,
-                "summary": "不应写入的项目事实。",
+                "target_id": note_id,
+                "summary": "用户继续关注 review 模块与补丁确认的关系。",
             }
         ]
     }
 
     assert manager.apply_delta(update_delta) is False
-    assert manager.load()["long_term_memory"]["project_facts"][0]["summary"] == "AutoPatch-J 是 Java 代码修复 CLI。"
+    assert manager.load()["long_term_memory"]["project_notes"][0]["summary"] == "用户正在关注 review 模块的职责边界。"
 
-    update_delta["long_term_operations"][0]["source"] = "repo_verified"
-    update_delta["long_term_operations"][0]["evidence_id"] = "readme_cn_001"
-    assert manager.apply_delta(update_delta, allowed_project_evidence_ids={"readme_cn_001"}) is True
-    assert manager.load()["long_term_memory"]["project_facts"][0]["summary"] == "不应写入的项目事实。"
+    update_delta["long_term_operations"][0]["source"] = "conversation_summary"
+    assert manager.apply_delta(update_delta) is True
+    assert manager.load()["long_term_memory"]["project_notes"][0]["summary"] == "用户继续关注 review 模块与补丁确认的关系。"
 
 
 def test_find_summary_trigger_reports_project_code_explain(tmp_path: Path) -> None:
@@ -259,6 +344,70 @@ def test_clear_resets_memory_file(tmp_path: Path) -> None:
     manager.clear()
 
     assert manager.load()["working_memory"]["recent_turns"] == []
+
+
+def test_repo_profile_collector_extracts_narrow_maven_metadata(tmp_path: Path) -> None:
+    (tmp_path / "pom.xml").write_text(
+        """
+        <project>
+          <artifactId>demo-service</artifactId>
+          <properties>
+            <java.version>17</java.version>
+          </properties>
+          <modules>
+            <module>api</module>
+            <module>service</module>
+          </modules>
+          <dependencies>
+            <dependency>
+              <groupId>org.springframework.boot</groupId>
+              <artifactId>spring-boot-starter-web</artifactId>
+            </dependency>
+          </dependencies>
+        </project>
+        """,
+        encoding="utf-8",
+    )
+
+    profile = RepoProfileCollector(tmp_path).collect()
+
+    assert profile["build_tool"] == "maven"
+    assert profile["java_version"] == "17"
+    assert profile["project_name"] == "demo-service"
+    assert profile["modules"] == ["api", "service"]
+    assert "spring boot" in profile["frameworks"]
+    assert profile["source_files"] == ["pom.xml"]
+
+
+def test_repo_profile_collector_does_not_invent_business_identity_from_gradle(tmp_path: Path) -> None:
+    (tmp_path / "settings.gradle").write_text(
+        """
+        rootProject.name = 'demo-platform'
+        include ':api', ':service'
+        """,
+        encoding="utf-8",
+    )
+    (tmp_path / "build.gradle").write_text(
+        """
+        plugins {
+            id 'java'
+        }
+        java {
+            toolchain {
+                languageVersion = JavaLanguageVersion.of(21)
+            }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    profile = RepoProfileCollector(tmp_path).collect()
+
+    assert profile["build_tool"] == "gradle"
+    assert profile["java_version"] == "21"
+    assert profile["project_name"] == "demo-platform"
+    assert profile["modules"] == ["api", "service"]
+    assert profile["frameworks"] == []
 
 
 def test_summarizer_writes_ready_summary_delta(tmp_path: Path) -> None:
@@ -332,30 +481,37 @@ def test_summarizer_ignores_invalid_json_delta(tmp_path: Path) -> None:
     assert all(turn["summary_status"] == "pending" for turn in manager.load()["working_memory"]["recent_turns"])
 
 
-def test_summarizer_allows_project_fact_only_with_payload_evidence(tmp_path: Path) -> None:
-    (tmp_path / "README_CN.md").write_text("AutoPatch-J 是面向 Java 仓库的代码修复 CLI。", encoding="utf-8")
+def test_summarizer_writes_repo_profile_and_project_note(tmp_path: Path) -> None:
+    (tmp_path / "pom.xml").write_text(
+        """
+        <project>
+          <artifactId>demo-service</artifactId>
+          <properties><java.version>17</java.version></properties>
+        </project>
+        """,
+        encoding="utf-8",
+    )
     manager = _manager(tmp_path)
     manager.append_recent_turn(
         intent=IntentType.CODE_EXPLAIN,
-        user_text="这个项目是干什么的",
-        assistant_text="这是一个 Java 代码修复 CLI。",
+        user_text="这个项目的 review 模块是什么职责",
+        assistant_text="review 模块负责 finding 队列和补丁确认。",
     )
 
     class FakeLLM:
         def chat(self, messages, **kwargs):
             payload = json.loads(messages[1]["content"])
-            evidence_id = payload["project_evidence"][0]["evidence_id"]
+            assert payload["repo_profile"]["build_tool"] == "maven"
             return SimpleNamespace(
                 content=json.dumps(
                     {
                         "long_term_operations": [
                             {
                                 "operation": "create_new",
-                                "type": "project_fact",
-                                "label": "project identity",
-                                "summary": "AutoPatch-J 是面向 Java 仓库的代码修复 CLI。",
-                                "source": "repo_verified",
-                                "evidence_id": evidence_id,
+                                "type": "project_note",
+                                "label": "review module",
+                                "summary": "用户关注 review 模块如何管理 finding 队列和补丁确认。",
+                                "source": "conversation_summary",
                             }
                         ]
                     },
@@ -369,14 +525,17 @@ def test_summarizer_allows_project_fact_only_with_payload_evidence(tmp_path: Pat
         )
         is True
     )
-    facts = manager.load()["long_term_memory"]["project_facts"]
-    assert facts[0]["label"] == "project identity"
+    memory = manager.load()
+    assert memory["repo_profile"]["build_tool"] == "maven"
+    assert memory["repo_profile"]["java_version"] == "17"
+    notes = memory["long_term_memory"]["project_notes"]
+    assert notes[0]["label"] == "review module"
 
 
-def test_memory_summary_prompt_requires_project_fact_evidence_for_updates() -> None:
-    assert "create_new 和 update_existing 都必须带 source=repo_verified 和合法 evidence_id" in MEMORY_SUMMARY_SYSTEM_PROMPT
+def test_memory_summary_prompt_describes_project_notes() -> None:
+    assert "project_note 只记录用户围绕当前仓库持续讨论出来的上下文" in MEMORY_SUMMARY_SYSTEM_PROMPT
+    assert "不要把 repo_profile 中的构建信息改写成业务事实" in MEMORY_SUMMARY_SYSTEM_PROMPT
     assert "不适用字段请省略" in MEMORY_SUMMARY_SYSTEM_PROMPT
-    assert "project_fact create_new/update_existing 必须提供项目证据 id" in MEMORY_SUMMARY_SYSTEM_PROMPT
 
 
 def test_summary_scheduler_writes_delta_in_background(tmp_path: Path) -> None:

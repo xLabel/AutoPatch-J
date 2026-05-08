@@ -13,26 +13,14 @@ class MemoryDeltaApplier:
     def __init__(self, long_term_policy: LongTermMemoryPolicy | None = None) -> None:
         self.long_term_policy = long_term_policy or LongTermMemoryPolicy()
 
-    def apply(
-        self,
-        memory: dict[str, Any],
-        delta: dict[str, Any],
-        allowed_project_evidence_ids: set[str] | None = None,
-    ) -> bool:
+    def apply(self, memory: dict[str, Any], delta: dict[str, Any]) -> bool:
         if not isinstance(delta, dict):
             return False
 
         changed = False
         changed = self._apply_turn_summaries(memory, delta.get("turn_summaries")) or changed
         changed = self._apply_topic_operations(memory, delta.get("topic_operations")) or changed
-        changed = (
-            self._apply_long_term_operations(
-                memory,
-                delta.get("long_term_operations"),
-                allowed_project_evidence_ids=allowed_project_evidence_ids,
-            )
-            or changed
-        )
+        changed = self._apply_long_term_operations(memory, delta.get("long_term_operations")) or changed
         return changed
 
     def _apply_turn_summaries(self, memory: dict[str, Any], operations: Any) -> bool:
@@ -87,12 +75,7 @@ class MemoryDeltaApplier:
                 changed = True
         return changed
 
-    def _apply_long_term_operations(
-        self,
-        memory: dict[str, Any],
-        operations: Any,
-        allowed_project_evidence_ids: set[str] | None,
-    ) -> bool:
+    def _apply_long_term_operations(self, memory: dict[str, Any], operations: Any) -> bool:
         if not isinstance(operations, list):
             return False
         changed = False
@@ -101,17 +84,12 @@ class MemoryDeltaApplier:
                 continue
             op = operation.get("operation")
             if op == "create_new":
-                changed = self._create_long_term_item(memory, operation, allowed_project_evidence_ids) or changed
+                changed = self._create_long_term_item(memory, operation) or changed
             elif op == "update_existing":
-                changed = self._update_long_term_item(memory, operation, allowed_project_evidence_ids) or changed
+                changed = self._update_long_term_item(memory, operation) or changed
         return changed
 
-    def _create_long_term_item(
-        self,
-        memory: dict[str, Any],
-        operation: dict[str, Any],
-        allowed_project_evidence_ids: set[str] | None,
-    ) -> bool:
+    def _create_long_term_item(self, memory: dict[str, Any], operation: dict[str, Any]) -> bool:
         target_list = self._long_term_target(memory, operation.get("type"))
         if target_list is None:
             return False
@@ -124,8 +102,6 @@ class MemoryDeltaApplier:
             label=label,
             summary=summary,
             source=source,
-            evidence_id=operation.get("evidence_id"),
-            allowed_project_evidence_ids=allowed_project_evidence_ids,
         ):
             return False
 
@@ -144,21 +120,12 @@ class MemoryDeltaApplier:
         )
         return True
 
-    def _update_long_term_item(
-        self,
-        memory: dict[str, Any],
-        operation: dict[str, Any],
-        allowed_project_evidence_ids: set[str] | None,
-    ) -> bool:
+    def _update_long_term_item(self, memory: dict[str, Any], operation: dict[str, Any]) -> bool:
         item = self._find_long_term_item(memory, operation.get("target_id"))
         summary = str(operation.get("summary", "")).strip()
         if not item or not summary:
             return False
-        if not self.long_term_policy.allows_update(
-            item=item,
-            operation=operation,
-            allowed_project_evidence_ids=allowed_project_evidence_ids,
-        ):
+        if not self.long_term_policy.allows_update(item=item, operation=operation):
             return False
         item["summary"] = clip_text(summary, MAX_SUMMARY)
         item["updated_at"] = now_iso()
@@ -167,15 +134,15 @@ class MemoryDeltaApplier:
     def _long_term_target(self, memory: dict[str, Any], item_type: Any) -> list[dict[str, Any]] | None:
         if item_type == "durable_preference":
             return memory["long_term_memory"]["durable_preferences"]
-        if item_type == "project_fact":
-            return memory["long_term_memory"]["project_facts"]
+        if item_type == "project_note":
+            return memory["long_term_memory"]["project_notes"]
         return None
 
     def _find_long_term_item(self, memory: dict[str, Any], target_id: Any) -> dict[str, Any] | None:
         target = str(target_id or "")
         for collection in (
             memory["long_term_memory"]["durable_preferences"],
-            memory["long_term_memory"]["project_facts"],
+            memory["long_term_memory"]["project_notes"],
         ):
             for item in collection:
                 if item["id"] == target and item["status"] == "active":

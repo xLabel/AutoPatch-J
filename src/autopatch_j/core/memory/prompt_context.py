@@ -29,15 +29,20 @@ class MemoryPromptContextBuilder:
         if durable_preferences:
             sections.append(self._format_items("长期偏好", durable_preferences))
 
-        if intent is IntentType.CODE_EXPLAIN or self._looks_project_related(current_user_text):
-            project_facts = self._select_relevant_items(
-                memory["long_term_memory"]["project_facts"],
+        project_context_allowed = intent is IntentType.CODE_EXPLAIN or self._looks_project_related(current_user_text)
+        if project_context_allowed:
+            repo_profile = self._format_repo_profile(memory.get("repo_profile"))
+            if repo_profile:
+                sections.append(repo_profile)
+
+            project_notes = self._select_relevant_items(
+                memory["long_term_memory"]["project_notes"],
                 current_user_text,
                 limit=5,
                 always_include=intent is IntentType.CODE_EXPLAIN,
             )
-            if project_facts:
-                sections.append(self._format_items("项目事实", project_facts))
+            if project_notes:
+                sections.append(self._format_items("项目讨论笔记", project_notes))
 
         active_topics = self._select_relevant_items(
             memory["working_memory"]["active_topics"],
@@ -112,6 +117,24 @@ class MemoryPromptContextBuilder:
         for item in items:
             lines.append(f"- {item.get('label', '')}: {item.get('summary', '')}")
         return "\n".join(lines)
+
+    def _format_repo_profile(self, profile: Any) -> str:
+        if not isinstance(profile, dict):
+            return ""
+        fields = [
+            ("构建工具", profile.get("build_tool", "")),
+            ("Java 版本", profile.get("java_version", "")),
+            ("项目名", profile.get("project_name", "")),
+            ("模块", ", ".join(profile.get("modules", []) if isinstance(profile.get("modules"), list) else [])),
+            (
+                "明确依赖特征",
+                ", ".join(profile.get("frameworks", []) if isinstance(profile.get("frameworks"), list) else []),
+            ),
+        ]
+        lines = [f"- {label}: {value}" for label, value in fields if value]
+        if not lines:
+            return ""
+        return "仓库元信息：\n" + "\n".join(lines)
 
     def _format_recent_summaries(self, turns: list[dict[str, Any]]) -> str:
         lines = ["近期问答摘要："]

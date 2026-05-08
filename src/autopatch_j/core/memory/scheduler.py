@@ -73,7 +73,4 @@ class MemorySummaryScheduler:
         with self._lock:
             if generation != self._generation:
                 return
-            self.memory_manager.apply_delta(
-                result.delta,
-                allowed_project_evidence_ids=result.allowed_project_evidence_ids,
-            )
+            self.memory_manager.apply_delta(result.delta, repo_profile=result.repo_profile)

@@ -83,18 +83,14 @@ class MemoryManager:
             )
             self.store.save(memory)
 
-    def apply_delta(
-        self,
-        delta: dict[str, Any],
-        allowed_project_evidence_ids: set[str] | None = None,
-    ) -> bool:
+    def apply_delta(self, delta: dict[str, Any], repo_profile: dict[str, Any] | None = None) -> bool:
         with self._lock:
             memory = self.store.load()
-            changed = self.delta_applier.apply(
-                memory,
-                delta,
-                allowed_project_evidence_ids=allowed_project_evidence_ids,
-            )
+            changed = False
+            if repo_profile is not None:
+                memory["repo_profile"] = repo_profile
+                changed = True
+            changed = self.delta_applier.apply(memory, delta) or changed
             return self.store.save(memory) if changed else False
 
     def should_summarize(self, last_user_text: str = "") -> bool:

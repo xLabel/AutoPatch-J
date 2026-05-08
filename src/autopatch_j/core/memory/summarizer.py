@@ -11,7 +11,7 @@ from autopatch_j.llm.options import LLMCallPurpose
 from .delta_parser import MemoryDeltaParser
 from .manager import MemoryManager
 from .prompts import MEMORY_SUMMARY_SYSTEM_PROMPT
-from .project_evidence import ProjectEvidenceCollector
+from .repo_profile import RepoProfileCollector
 from .triggers import MemorySummaryTrigger
 
 MAX_SUMMARY_PENDING_TURNS = 4
@@ -21,7 +21,7 @@ MAX_SUMMARY_EXISTING_ITEMS = 20
 @dataclass(frozen=True, slots=True)
 class MemorySummaryResult:
     delta: dict[str, Any]
-    allowed_project_evidence_ids: set[str]
+    repo_profile: dict[str, Any] | None
 
 
 class MemorySummarizer:
@@ -36,7 +36,7 @@ class MemorySummarizer:
         self.memory_manager = memory_manager
         self.llm = llm
         self.repo_root = repo_root
-        self.project_evidence_collector = ProjectEvidenceCollector(repo_root)
+        self.repo_profile_collector = RepoProfileCollector(repo_root)
         self.delta_parser = MemoryDeltaParser()
 
     def try_summarize(
@@ -47,10 +47,7 @@ class MemorySummarizer:
         result = self.summarize_delta(last_user_text, trigger)
         if result is None:
             return False
-        return self.memory_manager.apply_delta(
-            result.delta,
-            allowed_project_evidence_ids=result.allowed_project_evidence_ids,
-        )
+        return self.memory_manager.apply_delta(result.delta, repo_profile=result.repo_profile)
 
     def summarize_delta(
         self,
@@ -61,8 +58,8 @@ class MemorySummarizer:
         if effective_trigger is None:
             return None
 
-        project_evidence = self.project_evidence_collector.collect()
-        payload = self._build_payload(effective_trigger, project_evidence)
+        repo_profile = self.repo_profile_collector.collect()
+        payload = self._build_payload(effective_trigger, repo_profile)
         if not payload["pending_turns"]:
             return None
 
@@ -86,13 +83,13 @@ class MemorySummarizer:
             return None
         return MemorySummaryResult(
             delta=delta,
-            allowed_project_evidence_ids={item["evidence_id"] for item in project_evidence},
+            repo_profile=repo_profile if repo_profile.get("source_files") else None,
         )
 
     def _build_payload(
         self,
         trigger: MemorySummaryTrigger,
-        project_evidence: list[dict[str, str]],
+        repo_profile: dict[str, Any],
     ) -> dict[str, Any]:
         memory = self.memory_manager.load()
         pending_turns = [
@@ -108,8 +105,8 @@ class MemorySummarizer:
             "durable_preferences": memory["long_term_memory"]["durable_preferences"][
                 -MAX_SUMMARY_EXISTING_ITEMS:
             ],
-            "project_facts": memory["long_term_memory"]["project_facts"][-MAX_SUMMARY_EXISTING_ITEMS:],
-            "project_evidence": project_evidence,
+            "project_notes": memory["long_term_memory"]["project_notes"][-MAX_SUMMARY_EXISTING_ITEMS:],
+            "repo_profile": repo_profile,
         }
 
     def _turn_payload(self, turn: dict[str, Any]) -> dict[str, Any]:
