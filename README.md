@@ -57,7 +57,7 @@ autopatch-j> 这个项目是干什么的
 - 不触发审计扫描。
 - 单文件解释默认不越界追踪。
 - 项目级或目录级解释允许受控符号导航。
-- 可读取普通问答 Memory，让跨轮项目讨论更连续。
+- 可读取普通问答 Memory，让仓库元信息、项目讨论笔记和用户偏好在跨轮问答中保持连续。
 
 ### 补丁解释与重写
 
@@ -84,14 +84,19 @@ autopatch-j> 这个异常一般怎么排查？
 
 ## 架构取舍
 
-AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆成三条受控链路：程序负责边界和状态，LLM 负责在证据范围内推理。
-这类设计接近 Harness Engineering：用程序化边界、工具协议和反馈环路约束 Agent，而不是只依赖 Prompt 让模型自觉。
+AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆成三条受控链路：程序负责边界和状态，LLM 负责在证据范围内推理，用户负责最终确认。
 
-**受控的任务边界**：Workflow 负责意图、scope、扫描、finding 队列、补丁队列和人工确认；Agent 负责解释问题、读取证据、调用当前意图允许的工具，以及生成或重写补丁草案。每个 `IntentType` 都有独立工具白名单，聊天不会拿到补丁修改工具，补丁解释也不会变成补丁生成流程。原则：`Workflow owns state, Agent owns reasoning` / `Function Calls are gated by intent`
+**受控的任务边界**：Workflow 负责意图、scope、扫描、finding 队列、补丁队列和人工确认；Agent 负责解释问题、读取证据、调用当前意图允许的工具，以及生成或重写补丁草案。每个 `IntentType` 都有独立工具白名单，聊天不会拿到补丁修改工具，补丁解释也不会变成补丁生成流程。
 
-**证据优先的修复链路**：默认扫描器是 Semgrep，负责产出可定位的 finding；LLM 基于 finding、源码片段和当前 scope 做取证、解释和最小修复。补丁不是聊天回复，而是包含目标文件、关联 finding、unified diff、修复理由和校验状态的 review item，进入人工确认队列后由用户决定 `apply`、`discard` 或继续反馈。PMD、SpotBugs、Checkstyle 当前作为 planned scanner 展示。原则：`Scanner provides evidence, LLM performs triage` / `Patch is a review item, not a chat reply`
+原则：`Workflow owns state, Agent owns reasoning` / `Function Calls are gated by intent`
 
-**隔离的上下文能力**：项目级 Memory 只服务 `code_explain` 和 `general_chat`，用于记住用户关注的项目事实和工程偏好，不进入 `code_audit`、`patch_explain`、`patch_revise`，避免历史偏好污染修复证据链。业务代码只声明 `LLMCallPurpose`，是否关闭 reasoning、是否流式输出、如何适配 DeepSeek、百炼、OpenAI 兼容接口，统一由 LLM 层处理。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。原则：`Memory helps chat, not repair` / `LLM calls are purpose driven`
+**证据优先的修复链路**：默认扫描器是 Semgrep，负责产出可定位的 finding；LLM 基于 finding、源码片段和当前 scope 做取证、解释和最小修复。补丁不是聊天回复，而是包含目标文件、关联 finding、unified diff、修复理由和校验状态的 review item，进入人工确认队列后由用户决定 `apply`、`discard` 或继续反馈。PMD、SpotBugs、Checkstyle 当前作为 planned scanner 展示。
+
+原则：`Scanner provides evidence, LLM performs triage` / `Patch is a review item, not a chat reply`
+
+**隔离的上下文能力**：项目级 Memory 只服务 `code_explain` 和 `general_chat`，用于注入仓库元信息、项目讨论笔记和用户偏好，不进入 `code_audit`、`patch_explain`、`patch_revise`，避免历史偏好污染修复证据链。业务代码只声明 `LLMCallPurpose`，是否关闭 reasoning、是否流式输出、如何适配 DeepSeek、百炼、OpenAI 兼容接口，统一由 LLM 层处理。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
+
+原则：`Memory helps chat, not repair` / `LLM calls are purpose driven`
 
 ## 5 种任务边界
 
@@ -133,8 +138,9 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 code_explain/general_chat 完成
 -> 写入 recent_turn，summary_status=pending
 -> 满足触发条件后提交后台摘要任务
+-> 程序刷新 repo_profile 仓库元信息
 -> 短 LLM 输出 Memory Delta
--> 程序校验并写入 active_topics / long_term_memory
+-> 程序校验并写入 active_topics / project_notes
 -> 下一轮普通问答只注入少量相关摘要
 ```
 
