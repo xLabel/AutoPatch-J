@@ -28,7 +28,7 @@ def test_missing_memory_file_loads_empty_memory(tmp_path: Path) -> None:
 
     memory = manager.load()
 
-    assert memory["version"] == 2
+    assert memory["version"] == 1
     assert memory["repo_profile"]["build_tool"] == ""
     assert memory["working_memory"]["recent_turns"] == []
     assert memory["long_term_memory"]["durable_preferences"] == []
@@ -168,20 +168,20 @@ def test_corrupt_memory_file_is_backed_up_and_ignored(tmp_path: Path) -> None:
     assert (manager.memory_file.parent / "memory.corrupt.json").exists()
 
 
-def test_old_memory_version_is_ignored_without_migration(tmp_path: Path) -> None:
+def test_mismatched_memory_version_is_ignored_without_migration(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     manager.memory_file.parent.mkdir(parents=True)
     manager.memory_file.write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": 0,
                 "working_memory": {
                     "recent_turns": [
                         {
                             "id": "turn_old",
                             "intent": "general_chat",
-                            "user_text": "旧版本问题",
-                            "assistant_text": "旧版本回答",
+                            "user_text": "版本不匹配问题",
+                            "assistant_text": "版本不匹配回答",
                         }
                     ]
                 },
@@ -191,7 +191,7 @@ def test_old_memory_version_is_ignored_without_migration(tmp_path: Path) -> None
                             "id": "mem_old",
                             "type": "project_fact",
                             "label": "old",
-                            "summary": "旧版本项目事实",
+                            "summary": "版本不匹配项目事实",
                         }
                     ]
                 },
@@ -203,7 +203,7 @@ def test_old_memory_version_is_ignored_without_migration(tmp_path: Path) -> None
 
     memory = manager.load()
 
-    assert memory["version"] == 2
+    assert memory["version"] == 1
     assert memory["working_memory"]["recent_turns"] == []
     assert memory["long_term_memory"]["project_notes"] == []
     assert not (manager.memory_file.parent / "memory.corrupt.json").exists()
