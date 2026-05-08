@@ -3,7 +3,7 @@ from __future__ import annotations
 from autopatch_j.core.domain import IntentType
 
 
-MEMORY_VERSION = 2
+MEMORY_VERSION = 1
 MAX_RECENT_TURNS = 12
 COMPACTION_RECENT_TURNS = 8
 KEEP_RECENT_TURNS_AFTER_COMPACTION = 4
