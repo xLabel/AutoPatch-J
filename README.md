@@ -86,6 +86,7 @@ autopatch-j> 这个异常一般怎么排查？
 ## 架构取舍
 
 AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆成三条受控链路：程序负责边界和状态，LLM 负责在证据范围内推理。
+这类设计接近 Harness Engineering：用程序化边界、工具协议和反馈环路约束 Agent，而不是只依赖 Prompt 让模型自觉。
 
 **受控的任务边界**：Workflow 负责意图、scope、扫描、finding 队列、补丁队列和人工确认；Agent 负责解释问题、读取证据、调用当前意图允许的工具，以及生成或重写补丁草案。每个 `IntentType` 都有独立工具白名单，聊天不会拿到补丁修改工具，补丁解释也不会变成补丁生成流程。原则：`Workflow owns state, Agent owns reasoning` / `Function Calls are gated by intent`
 
