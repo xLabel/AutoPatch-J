@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from autopatch_j.tools.contract import FunctionToolSpec, ToolExecutionResult
-from autopatch_j.tools.function_calls.source_reading import SourceReadToolBase
+from autopatch_j.tools.function_calls._source_reading_base import SourceReadToolBase
 from autopatch_j.tools.names import FunctionToolName
 
 
