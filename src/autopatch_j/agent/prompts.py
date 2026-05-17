@@ -21,7 +21,8 @@ TASK_PROMPTS: dict[IntentType, str] = {
         "## 工具策略\n"
         "扫描已由本地 workflow 执行，默认不要重新扫描。"
         "如果调用方已经在用户消息中提供 F 编号摘要，你应优先基于这些 F 编号调用 get_finding_detail。"
-        "形成补丁前必须读取或确认真实源码，确保 old_string 来自当前文件。\n"
+        "形成补丁前必须通过 get_finding_detail 或源码读取工具确认真实源码，确保 old_string 来自当前文件。"
+        "finding 行号优先用 read_source_context；修改整个方法/类前用 read_source_block；只有需要 imports、字段或跨方法关系时才用 read_source_file。\n"
         "## 输出风格\n"
         "不要先做无关的代码讲解，也不要搜索焦点范围之外的符号。"
     ),
@@ -29,7 +30,7 @@ TASK_PROMPTS: dict[IntentType, str] = {
         "## 当前任务\n"
         "当前任务是 code_explain。你的职责是解释代码，不做扫描，不提出补丁。\n"
         "## 工具策略\n"
-        "你可以在工具白名单允许范围内查符号和读取少量源码来回答。"
+        "你可以在工具白名单允许范围内查符号和读取少量源码来回答；search_symbols 返回 path:line 后优先用 read_source_block。"
     ),
     IntentType.GENERAL_CHAT: (
         "## 当前任务\n"
@@ -43,7 +44,7 @@ TASK_PROMPTS: dict[IntentType, str] = {
         "## 当前任务\n"
         "当前任务是 patch_explain。你只解释当前待确认补丁，不修改补丁，不调用修订工具。\n"
         "## 工具策略\n"
-        "只在补丁差异和补丁意图不足以回答时，才读取源码补充判断。不得调用 revise_patch。\n"
+        "只在补丁差异和补丁意图不足以回答时，才读取源码补充判断；优先用 read_source_block 或 read_source_context。不得调用 revise_patch。\n"
         "## 输出风格\n"
         "默认用简短中文回答，优先直接回答用户问题。不要复述完整 diff，不要输出 Markdown 标题、表格或长篇报告。"
         "除非用户明确要求详细分析，否则控制在 3 到 5 行。"
@@ -54,8 +55,8 @@ TASK_PROMPTS: dict[IntentType, str] = {
         "如果用户只是询问补丁含义、原因、影响或风险，请直接解释，不要调用 revise_patch。\n"
         "## 工具策略\n"
         "不要影响后续补丁队列。如需提交修订结果，必须调用 revise_patch。"
-        "调用 revise_patch 前必须读取或确认真实源码，确保 old_string 来自当前文件。"
-        "你可以读代码、查找符号、取回漏洞详情并修订当前补丁。"
+        "调用 revise_patch 前必须通过 get_finding_detail 或源码读取工具确认真实源码，确保 old_string 来自当前文件。"
+        "你可以读代码、查找符号、取回漏洞详情并修订当前补丁；search_symbols 返回 path:line 后优先用 read_source_block。"
     ),
 }
 
@@ -149,7 +150,7 @@ def build_code_audit_user_prompt(
             [
                 "",
                 "上一次 propose_patch 因 old_string 不匹配失败。",
-                f"这一次你必须先 read_source_code({current_finding.file_path})，再重新 propose_patch。",
+                f"这一次你必须先用 read_source_context(path={current_finding.file_path}, line={current_finding.start_line}) 或 read_source_block 重新确认源码，再重新 propose_patch。",
             ]
         )
     lines.extend(["", f"用户原始请求: {text}"])
@@ -162,7 +163,7 @@ def build_zero_finding_review_user_prompt(text: str, file_path: str) -> str:
             f"当前目标文件: {file_path}",
             "执行要求:",
             "1. 只围绕当前文件做一次轻量复核，不要假设存在 F 编号。",
-            "2. 如需代码证据，只允许 read_source_code 当前文件。",
+            "2. 如需代码证据，只允许 read_source_file/read_source_context/read_source_block 读取当前文件。",
             "3. 只有在拿到具体代码证据、能明确指出风险并给出最小修法时，才允许 propose_patch。",
             "4. 如果没有明确证据支持修改，不要输出长篇分析。",
             "",
@@ -200,7 +201,7 @@ def build_code_explain_user_prompt(
 
     joined_paths = "\n".join(f"- {path}" for path in scope.focus_files)
     return (
-        "当前任务是代码讲解。你可以在当前焦点范围内使用 search_symbols 和 read_source_code 辅助解释，"
+        "当前任务是代码讲解。你可以在当前焦点范围内使用 search_symbols 和源码读取工具辅助解释，"
         "但不要越过当前 focus scope。回答默认控制在 1 段或 3 个要点以内；"
         "除非用户明确要求详细展开，否则不要输出长篇报告。\n"
         f"当前焦点范围:\n{joined_paths}\n\n"

@@ -6,11 +6,11 @@ PATCH_DRAFT_PARAMETERS = {
     "properties": {
         "file_path": {
             "type": "string",
-            "description": "仓库内目标 Java 文件的相对路径，必须来自 read_source_code 或 finding 详情。",
+            "description": "仓库内目标 Java 文件的相对路径，必须来自 finding 详情或源码读取工具结果。",
         },
         "old_string": {
             "type": "string",
-            "description": "要替换的原始代码精确片段；调用前必须用 read_source_code 确认，必须和当前源码完全一致，不要省略缩进或上下文。",
+            "description": "要替换的原始代码精确片段；调用前必须用 get_finding_detail、read_source_context、read_source_block 或 read_source_file 确认，必须和当前源码完全一致，不要省略缩进或上下文。",
         },
         "new_string": {
             "type": "string",

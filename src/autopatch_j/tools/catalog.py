@@ -7,7 +7,9 @@ from autopatch_j.tools.contract import FunctionTool, ToolRuntimeContext
 from autopatch_j.tools.function_calls import (
     GetFindingDetailTool,
     ProposePatchTool,
-    ReadSourceCodeTool,
+    ReadSourceBlockTool,
+    ReadSourceContextTool,
+    ReadSourceFileTool,
     RevisePatchTool,
     SearchSymbolsTool,
 )
@@ -29,7 +31,9 @@ class FunctionToolCatalog:
         return cls(
             [
                 GetFindingDetailTool(context),
-                ReadSourceCodeTool(context),
+                ReadSourceFileTool(context),
+                ReadSourceBlockTool(context),
+                ReadSourceContextTool(context),
                 SearchSymbolsTool(context),
                 ProposePatchTool(context),
                 RevisePatchTool(context),

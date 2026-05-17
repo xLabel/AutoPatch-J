@@ -8,14 +8,14 @@ class SearchSymbolsTool(FunctionTool):
     """
     查询 Java 符号索引。
 
-    只返回候选位置；需要源码内容时继续调用 read_source_code。
+    只返回候选位置；需要源码内容时继续调用 read_source_block。
     """
 
     spec = FunctionToolSpec(
         name=FunctionToolName.SEARCH_SYMBOLS,
         description=(
             "在当前项目索引中搜索类名、方法名、接口或文件名，返回候选文件和行号。"
-            "只用于定位代码位置，不读取源码内容。"
+            "只用于定位代码位置，不读取源码内容。拿到 path:line 后，优先调用 read_source_block(path, line)。"
         ),
         parameters={
             "type": "object",

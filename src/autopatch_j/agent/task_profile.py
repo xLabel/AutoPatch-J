@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from autopatch_j.core.domain import IntentType
 from autopatch_j.tools.names import FunctionToolName
 
+SOURCE_READING_TOOLS = (
+    FunctionToolName.READ_SOURCE_FILE,
+    FunctionToolName.READ_SOURCE_BLOCK,
+    FunctionToolName.READ_SOURCE_CONTEXT,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class TaskProfile:
@@ -24,7 +30,9 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
         intent=IntentType.CODE_AUDIT,
         tool_names=(
             FunctionToolName.GET_FINDING_DETAIL,
-            FunctionToolName.READ_SOURCE_CODE,
+            FunctionToolName.READ_SOURCE_CONTEXT,
+            FunctionToolName.READ_SOURCE_BLOCK,
+            FunctionToolName.READ_SOURCE_FILE,
             FunctionToolName.PROPOSE_PATCH,
         ),
     ),
@@ -32,7 +40,7 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
         intent=IntentType.CODE_EXPLAIN,
         tool_names=(
             FunctionToolName.SEARCH_SYMBOLS,
-            FunctionToolName.READ_SOURCE_CODE,
+            *SOURCE_READING_TOOLS,
         ),
     ),
     IntentType.GENERAL_CHAT: TaskProfile(
@@ -43,14 +51,14 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
         intent=IntentType.PATCH_EXPLAIN,
         tool_names=(
             FunctionToolName.SEARCH_SYMBOLS,
-            FunctionToolName.READ_SOURCE_CODE,
+            *SOURCE_READING_TOOLS,
         ),
     ),
     IntentType.PATCH_REVISE: TaskProfile(
         intent=IntentType.PATCH_REVISE,
         tool_names=(
             FunctionToolName.SEARCH_SYMBOLS,
-            FunctionToolName.READ_SOURCE_CODE,
+            *SOURCE_READING_TOOLS,
             FunctionToolName.GET_FINDING_DETAIL,
             FunctionToolName.REVISE_PATCH,
         ),
@@ -59,12 +67,12 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
 
 CODE_EXPLAIN_SINGLE_FILE_PROFILE = TaskProfile(
     intent=IntentType.CODE_EXPLAIN,
-    tool_names=(FunctionToolName.READ_SOURCE_CODE,),
+    tool_names=SOURCE_READING_TOOLS,
 )
 ZERO_FINDING_REVIEW_PROFILE = TaskProfile(
     intent=IntentType.CODE_AUDIT,
     tool_names=(
-        FunctionToolName.READ_SOURCE_CODE,
+        *SOURCE_READING_TOOLS,
         FunctionToolName.PROPOSE_PATCH,
     ),
 )

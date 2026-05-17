@@ -7,7 +7,9 @@ class FunctionToolName(str, Enum):
     """Names exposed to the LLM function_call interface."""
 
     GET_FINDING_DETAIL = "get_finding_detail"
-    READ_SOURCE_CODE = "read_source_code"
+    READ_SOURCE_FILE = "read_source_file"
+    READ_SOURCE_BLOCK = "read_source_block"
+    READ_SOURCE_CONTEXT = "read_source_context"
     SEARCH_SYMBOLS = "search_symbols"
     PROPOSE_PATCH = "propose_patch"
     REVISE_PATCH = "revise_patch"

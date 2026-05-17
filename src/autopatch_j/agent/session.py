@@ -43,7 +43,7 @@ class AgentSession:
     memory_manager: MemoryManager | None = None
 
     focus_paths: list[str] = field(default_factory=list)
-    source_read_cache: dict[tuple[str, str | None, int | None], ToolExecutionResult] = field(default_factory=dict)
+    source_read_cache: dict[tuple[str, str, int | None], ToolExecutionResult] = field(default_factory=dict)
     patch_source_hint: str | None = None
     proposed_patch_draft: SearchReplacePatchDraft | None = None
     revised_patch_draft: SearchReplacePatchDraft | None = None
@@ -75,18 +75,18 @@ class AgentSession:
     def normalize_repo_path(self, path: str) -> str:
         return normalize_repo_path(path)
 
-    def fetch_cached_source_read(self, path: str, symbol: str | None, line: int | None) -> ToolExecutionResult | None:
-        key = (self.normalize_repo_path(path), symbol, line)
+    def fetch_cached_source_read(self, tool_name: str, path: str, line: int | None) -> ToolExecutionResult | None:
+        key = (tool_name, self.normalize_repo_path(path), line)
         return self.source_read_cache.get(key)
 
     def persist_cached_source_read(
         self,
+        tool_name: str,
         path: str,
-        symbol: str | None,
         line: int | None,
         result: ToolExecutionResult,
     ) -> None:
-        key = (self.normalize_repo_path(path), symbol, line)
+        key = (tool_name, self.normalize_repo_path(path), line)
         self.source_read_cache[key] = result
 
     def set_proposed_patch_draft(self, draft: SearchReplacePatchDraft) -> None:
