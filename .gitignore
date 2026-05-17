@@ -53,5 +53,5 @@ target/
 .pdm-build/
 
 # Local-only workspace artifacts
-GEMINI.md
-AGENTS.md
+AGENTS.local.md
+CLAUDE.local.md
