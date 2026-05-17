@@ -42,17 +42,22 @@ class JavaBlockExtractor:
 
     def _find_node_at_line(self, node: Any, line: int) -> Any:
         start_row = node.start_point[0] + 1
-
-        if start_row == line and node.type in (
-            "method_declaration",
-            "class_declaration",
-            "interface_declaration",
-            "record_declaration",
-        ):
-            return node
+        end_row = node.end_point[0] + 1
+        if line < start_row or line > end_row:
+            return None
 
         for child in node.children:
             found = self._find_node_at_line(child, line)
             if found:
                 return found
+
+        if node.type in (
+            "method_declaration",
+            "constructor_declaration",
+            "class_declaration",
+            "interface_declaration",
+            "record_declaration",
+            "enum_declaration",
+        ):
+            return node
         return None

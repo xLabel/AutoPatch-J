@@ -5,8 +5,8 @@ from autopatch_j.core.project.repo_path import (
     to_repo_relative_path,
     try_resolve_repo_path,
 )
-from autopatch_j.core.project.scope import ScopeResolver
 from autopatch_j.core.project.source_reader import SourceReader
+from autopatch_j.core.project.scope import ScopeResolver
 from autopatch_j.core.project.symbol_index import SymbolIndex, SymbolIndexEntry
 
 __all__ = [
