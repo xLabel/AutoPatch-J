@@ -73,7 +73,12 @@ def test_perform_code_explain_uses_navigation_tool_profile_by_default(tmp_path: 
 
     agent.perform_code_explain("@User.java explain code", scope=None)
 
-    assert _fetch_tool_names(mock_llm) == ["search_symbols", "read_source_code"]
+    assert _fetch_tool_names(mock_llm) == [
+        "search_symbols",
+        "read_source_file",
+        "read_source_block",
+        "read_source_context",
+    ]
 
 
 def test_task_system_prompt_declares_java_context() -> None:
@@ -93,16 +98,26 @@ def test_task_system_prompt_declares_java_context() -> None:
 def test_task_profiles_define_tool_boundaries() -> None:
     assert fetch_task_profile(IntentType.CODE_AUDIT).tool_names == (
         FunctionToolName.GET_FINDING_DETAIL,
-        FunctionToolName.READ_SOURCE_CODE,
+        FunctionToolName.READ_SOURCE_CONTEXT,
+        FunctionToolName.READ_SOURCE_BLOCK,
+        FunctionToolName.READ_SOURCE_FILE,
         FunctionToolName.PROPOSE_PATCH,
     )
     assert fetch_code_explain_profile(allow_symbol_search=True).tool_names == (
         FunctionToolName.SEARCH_SYMBOLS,
-        FunctionToolName.READ_SOURCE_CODE,
+        FunctionToolName.READ_SOURCE_FILE,
+        FunctionToolName.READ_SOURCE_BLOCK,
+        FunctionToolName.READ_SOURCE_CONTEXT,
     )
-    assert fetch_code_explain_profile(allow_symbol_search=False).tool_names == (FunctionToolName.READ_SOURCE_CODE,)
+    assert fetch_code_explain_profile(allow_symbol_search=False).tool_names == (
+        FunctionToolName.READ_SOURCE_FILE,
+        FunctionToolName.READ_SOURCE_BLOCK,
+        FunctionToolName.READ_SOURCE_CONTEXT,
+    )
     assert ZERO_FINDING_REVIEW_PROFILE.tool_names == (
-        FunctionToolName.READ_SOURCE_CODE,
+        FunctionToolName.READ_SOURCE_FILE,
+        FunctionToolName.READ_SOURCE_BLOCK,
+        FunctionToolName.READ_SOURCE_CONTEXT,
         FunctionToolName.PROPOSE_PATCH,
     )
 
@@ -114,7 +129,7 @@ def test_perform_code_explain_disables_symbol_search_in_single_file_mode(tmp_pat
 
     agent.perform_code_explain("@User.java explain code", scope=None, allow_symbol_search=False)
 
-    assert _fetch_tool_names(mock_llm) == ["read_source_code"]
+    assert _fetch_tool_names(mock_llm) == ["read_source_file", "read_source_block", "read_source_context"]
 
 
 def test_memory_is_shared_by_code_explain_and_general_chat(tmp_path: Path) -> None:
@@ -174,7 +189,9 @@ def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> 
 
     assert _fetch_tool_names(mock_llm) == [
         "get_finding_detail",
-        "read_source_code",
+        "read_source_context",
+        "read_source_block",
+        "read_source_file",
         "propose_patch",
     ]
 
@@ -187,7 +204,9 @@ def test_perform_zero_finding_review_uses_lightweight_tool_profile(tmp_path: Pat
     agent.perform_zero_finding_review("@User.java 检查代码", file_path="User.java")
 
     assert _fetch_tool_names(mock_llm) == [
-        "read_source_code",
+        "read_source_file",
+        "read_source_block",
+        "read_source_context",
         "propose_patch",
     ]
 
@@ -201,7 +220,9 @@ def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
 
     assert _fetch_tool_names(mock_llm) == [
         "search_symbols",
-        "read_source_code",
+        "read_source_file",
+        "read_source_block",
+        "read_source_context",
         "get_finding_detail",
         "revise_patch",
     ]
@@ -216,7 +237,9 @@ def test_perform_patch_explain_keeps_read_only_tool_profile(tmp_path: Path) -> N
 
     assert _fetch_tool_names(mock_llm) == [
         "search_symbols",
-        "read_source_code",
+        "read_source_file",
+        "read_source_block",
+        "read_source_context",
     ]
 
 
@@ -319,7 +342,7 @@ def test_tool_executor_rejects_tools_outside_task_profile(tmp_path: Path) -> Non
     mock_llm = MagicMock()
     agent = _build_agent(tmp_path, mock_llm)
     call = ToolCall(
-        name="read_source_code",
+        name="read_source_file",
         arguments={"path": "src/main/java/demo/User.java"},
         call_id="call-1",
     )
@@ -344,14 +367,14 @@ def test_tool_executor_reports_unknown_tool(tmp_path: Path) -> None:
 def test_tool_executor_normalizes_tool_exceptions(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     agent = _build_agent(tmp_path, mock_llm)
-    agent.available_tools["read_source_code"].execute = MagicMock(side_effect=RuntimeError("boom"))
+    agent.available_tools["read_source_file"].execute = MagicMock(side_effect=RuntimeError("boom"))
     call = ToolCall(
-        name="read_source_code",
+        name="read_source_file",
         arguments={"path": "src/main/java/demo/User.java"},
         call_id="call-1",
     )
 
-    result = agent.tool_executor.execute(call, allowed_tool_names={"read_source_code"})
+    result = agent.tool_executor.execute(call, allowed_tool_names={"read_source_file"})
 
     assert result.status == "error"
     assert "执行异常：boom" in result.message
@@ -364,7 +387,7 @@ def test_react_loop_blocks_repeated_no_progress_tool_calls(tmp_path: Path) -> No
             content="",
             tool_calls=[
                 ToolCall(
-                    name="read_source_code",
+                    name="read_source_file",
                     arguments={"path": "src/main/java/demo/User.java"},
                     call_id=f"call-{index}",
                 )
@@ -373,7 +396,7 @@ def test_react_loop_blocks_repeated_no_progress_tool_calls(tmp_path: Path) -> No
         for index in range(3)
     ]
     agent = _build_agent(tmp_path, mock_llm)
-    agent.available_tools["read_source_code"].execute = MagicMock(
+    agent.available_tools["read_source_file"].execute = MagicMock(
         return_value=ToolExecutionResult(
             status="ok",
             message="源码内容",
@@ -410,14 +433,14 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
                 {
                     "id": "call-1",
                     "type": "function",
-                    "function": {"name": "read_source_code", "arguments": "{}"},
+                    "function": {"name": "read_source_file", "arguments": "{}"},
                 }
             ],
         },
         {
             "role": "tool",
             "tool_call_id": "call-1",
-            "name": "read_source_code",
+            "name": "read_source_file",
             "content": long_content,
         },
         {

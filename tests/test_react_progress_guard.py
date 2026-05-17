@@ -37,7 +37,7 @@ def test_normalize_observation_summary_collapses_whitespace_and_paths() -> None:
 
 def test_progress_guard_blocks_three_identical_traces() -> None:
     guard = ReactProgressGuard()
-    trace = _trace("read_source_code", {"path": "src/Demo.java"}, "ok", "已读取源代码: src/Demo.java")
+    trace = _trace("read_source_file", {"path": "src/Demo.java"}, "ok", "已读取源代码: src/Demo.java")
 
     assert not guard.record(trace).blocked
     assert not guard.record(trace).blocked
@@ -49,7 +49,7 @@ def test_progress_guard_blocks_three_identical_traces() -> None:
 
 def test_progress_guard_blocks_failed_short_cycle() -> None:
     guard = ReactProgressGuard()
-    first = _trace("read_source_code", {"path": "missing.java"}, "error", "读取失败: missing.java")
+    first = _trace("read_source_file", {"path": "missing.java"}, "error", "读取失败: missing.java")
     second = _trace("search_symbols", {"query": "Missing"}, "error", "未找到符号: Missing")
 
     assert not guard.record(first).blocked
@@ -64,7 +64,7 @@ def test_progress_guard_blocks_failed_short_cycle() -> None:
 def test_progress_guard_does_not_block_ok_short_cycle() -> None:
     guard = ReactProgressGuard()
     first = _trace("get_finding_detail", {"finding_id": "F1"}, "ok", "已获取 finding 详情: F1")
-    second = _trace("read_source_code", {"path": "src/Demo.java"}, "ok", "已读取源代码: src/Demo.java")
+    second = _trace("read_source_file", {"path": "src/Demo.java"}, "ok", "已读取源代码: src/Demo.java")
 
     guard.record(first)
     guard.record(second)

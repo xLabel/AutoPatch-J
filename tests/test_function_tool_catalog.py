@@ -21,7 +21,9 @@ def test_tools_root_exports_only_tool_infrastructure() -> None:
         for concrete_tool_name in [
             "GetFindingDetailTool",
             "ProposePatchTool",
-            "ReadSourceCodeTool",
+            "ReadSourceBlockTool",
+            "ReadSourceContextTool",
+            "ReadSourceFileTool",
             "RevisePatchTool",
             "SearchSymbolsTool",
         ]
@@ -48,9 +50,9 @@ def test_catalog_exports_stable_function_call_schema() -> None:
     assert revise_patch["parameters"]["required"] == ["file_path", "old_string", "new_string", "rationale"]
     assert propose_patch["parameters"]["properties"].keys() == revise_patch["parameters"]["properties"].keys()
 
-    assert "read_source_code" in propose_patch["description"]
+    assert "源码读取工具" in propose_patch["description"]
     assert "old_string 不匹配" in propose_patch["description"]
     assert "不会修改文件系统" in propose_patch["description"]
     assert "只是询问补丁含义" in revise_patch["description"]
     assert "不会影响后续补丁队列" in revise_patch["description"]
-    assert "read_source_code" in propose_patch["parameters"]["properties"]["old_string"]["description"]
+    assert "read_source_context" in propose_patch["parameters"]["properties"]["old_string"]["description"]

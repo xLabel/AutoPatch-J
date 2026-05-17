@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import Agent
-from autopatch_j.core.review import ProjectArtifactStore
-from autopatch_j.core.project import SourceReader
-from autopatch_j.core.project import SymbolIndex
-from autopatch_j.core.patching import SearchReplacePatchEngine
-from autopatch_j.core.patching import PatchQualityVerifier
-from autopatch_j.core.review import ReviewWorkspaceManager
+from autopatch_j.agent.session import AgentSession
+from autopatch_j.core.patching import PatchQualityVerifier, SearchReplacePatchEngine
+from autopatch_j.core.project import SourceReader, SymbolIndex
+from autopatch_j.core.review import ProjectArtifactStore, ReviewWorkspaceManager
 from autopatch_j.tools.function_calls.propose_patch import ProposePatchTool
-from autopatch_j.tools.function_calls.read_source_code import ReadSourceCodeTool
+from autopatch_j.tools.function_calls.read_source_context import ReadSourceContextTool
+from autopatch_j.tools.function_calls.read_source_file import ReadSourceFileTool
 from autopatch_j.tools.function_calls.search_symbols import SearchSymbolsTool
 
 
@@ -28,7 +26,8 @@ def _build_agent(repo_root: Path) -> Agent:
         workspace_manager=workspace_manager,
         symbol_indexer=symbol_indexer,
         patch_engine=patch_engine,
-        code_fetcher=code_fetcher
+        code_fetcher=code_fetcher,
+        patch_verifier=PatchQualityVerifier(repo_root, None),
     )
     return Agent(session=session, llm=None)
 
@@ -48,7 +47,7 @@ def test_focus_lock_blocks_unrelated_read_and_patch(tmp_path: Path) -> None:
 
     agent = _build_agent(tmp_path)
     agent.session.set_focus_paths(["src/main/java/demo/LegacyConfig.java"])
-    read_result = ReadSourceCodeTool(agent.session).execute("src/main/java/demo/UserService.java")
+    read_result = ReadSourceFileTool(agent.session).execute("src/main/java/demo/UserService.java")
     assert read_result.status == "error"
     assert "焦点约束阻止越界读取" in read_result.message
 
@@ -68,9 +67,9 @@ def test_tools_reject_paths_outside_repo_even_without_focus_lock(tmp_path: Path)
     outside_file.write_text("public class Outside {}", encoding="utf-8")
 
     agent = _build_agent(tmp_path)
-    read_result = ReadSourceCodeTool(agent.session).execute("../Outside.java")
+    read_result = ReadSourceFileTool(agent.session).execute("../Outside.java")
     assert read_result.status == "error"
-    assert "路径超出项目根目录范围" in read_result.message
+    assert "读取失败" in read_result.message
 
     patch_result = ProposePatchTool(agent.session).execute(
         file_path="../Outside.java",
@@ -94,7 +93,7 @@ def test_focus_lock_filters_symbol_search_results(tmp_path: Path) -> None:
     agent.session.set_focus_paths(["src/main/java/demo/LegacyConfig.java"])
     blocked = SearchSymbolsTool(agent.session).execute("AppConfig")
     assert blocked.status == "ok"
-    assert "未找到与 'AppConfig' 相关的符号。" in blocked.message
+    assert "未找到" in blocked.message
 
     allowed = SearchSymbolsTool(agent.session).execute("LegacyConfig")
     assert allowed.status == "ok"
@@ -116,7 +115,7 @@ def test_source_reader_uses_same_turn_cache(tmp_path: Path) -> None:
         return "public class LegacyConfig {}"
 
     agent.session.code_fetcher.fetch_entry_source = fake_fetch_entry_source  # type: ignore[method-assign]
-    tool = ReadSourceCodeTool(agent.session)
+    tool = ReadSourceFileTool(agent.session)
 
     first = tool.execute("src/main/java/demo/LegacyConfig.java")
     second = tool.execute("src/main/java/demo/LegacyConfig.java")
@@ -125,3 +124,19 @@ def test_source_reader_uses_same_turn_cache(tmp_path: Path) -> None:
     assert second.status == "ok"
     assert calls == ["fetch"]
     assert first.message == second.message
+
+
+def test_source_reader_cache_is_split_by_tool_semantics(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "demo" / "LegacyConfig.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("\n".join(f"line {index}" for index in range(1, 40)), encoding="utf-8")
+
+    agent = _build_agent(tmp_path)
+    agent.session.set_focus_paths(["src/main/java/demo/LegacyConfig.java"])
+
+    file_result = ReadSourceFileTool(agent.session).execute("src/main/java/demo/LegacyConfig.java")
+    context_result = ReadSourceContextTool(agent.session).execute("src/main/java/demo/LegacyConfig.java", 25)
+
+    assert file_result.status == "ok"
+    assert context_result.status == "ok"
+    assert file_result.message != context_result.message

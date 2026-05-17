@@ -102,11 +102,11 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 
 | IntentType | 场景 | 可用工具 | Memory | 关键边界 |
 |---|---|---|---:|---|
-| `code_audit` | 检查代码并生成补丁 | `get_finding_detail` / `read_source_code` / `propose_patch` | 否 | 以当前 scope、finding 和源码证据为准 |
-| `code_explain` | 解释项目、目录、文件或代码 | `search_symbols` / `read_source_code` | 是 | 可继承用户对项目的关注点 |
+| `code_audit` | 检查代码并生成补丁 | `get_finding_detail` / `read_source_context` / `read_source_block` / `read_source_file` / `propose_patch` | 否 | 以当前 scope、finding 和源码证据为准 |
+| `code_explain` | 解释项目、目录、文件或代码 | `search_symbols` / `read_source_file` / `read_source_block` / `read_source_context` | 是 | 可继承用户对项目的关注点 |
 | `general_chat` | Java、算法、调试、架构和工程常识问答 | 默认无 Function Call 工具 | 是 | 只回答工程相关问题 |
-| `patch_explain` | 解释当前待确认补丁 | `search_symbols` / `read_source_code` | 否 | 只解释当前补丁，不生成新补丁 |
-| `patch_revise` | 按反馈重写当前补丁 | `search_symbols` / `read_source_code` / `get_finding_detail` / `revise_patch` | 否 | 只替换当前补丁，不改后续队列 |
+| `patch_explain` | 解释当前待确认补丁 | `search_symbols` / `read_source_file` / `read_source_block` / `read_source_context` | 否 | 只解释当前补丁，不生成新补丁 |
+| `patch_revise` | 按反馈重写当前补丁 | `search_symbols` / `read_source_file` / `read_source_block` / `read_source_context` / `get_finding_detail` / `revise_patch` | 否 | 只替换当前补丁，不改后续队列 |
 
 意图识别由短 LLM 完成，但程序会做硬约束。
 

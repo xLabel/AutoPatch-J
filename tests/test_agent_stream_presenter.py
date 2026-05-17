@@ -51,7 +51,7 @@ def test_agent_stream_presenter_compacts_reasoning_and_observation_when_debug_is
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_reasoning("reasoning one")
         on_reasoning("reasoning two")
-        on_tool_start("read_source_code")
+        on_tool_start("read_source_file")
         on_observation("full source code", "已读取源代码: Demo.java")
         return ""
 

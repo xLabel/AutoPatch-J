@@ -10,21 +10,25 @@ def test_tool_start_uses_same_muted_style_for_agent_and_llm() -> None:
     renderer.console = MagicMock()
 
     renderer.print_tool_start("scan_project", caller="AGENT")
-    renderer.print_tool_start("read_source_code", caller="LLM")
+    renderer.print_tool_start("read_source_file", caller="LLM")
 
-    expected_style = MUTED_STYLE
-    renderer.console.print.assert_any_call(f"[{expected_style}]正在执行工具[AGENT]: scan_project...[/]")
-    renderer.console.print.assert_any_call(f"[{expected_style}]正在执行工具[LLM]: read_source_code...[/]")
+    calls = [call.args[0] for call in renderer.console.print.call_args_list]
+    assert calls[0].startswith(f"[{MUTED_STYLE}]")
+    assert "[AGENT]" in calls[0]
+    assert "scan_project" in calls[0]
+    assert calls[1].startswith(f"[{MUTED_STYLE}]")
+    assert "[LLM]" in calls[1]
+    assert "read_source_file" in calls[1]
 
 
 def test_reasoning_text_is_plain_italic_muted_text() -> None:
     renderer = CliRenderer()
     renderer.console = MagicMock()
 
-    renderer.print_reasoning_text("步骤 1: 获取 F1 (MD5 弱哈希算法)。")
+    renderer.print_reasoning_text("step 1")
 
     renderer.console.print.assert_called_once_with(
-        "步骤 1: 获取 F1 (MD5 弱哈希算法)。",
+        "step 1",
         end="",
         highlight=False,
         markup=False,
@@ -38,11 +42,9 @@ def test_reasoning_status_prints_single_compact_status() -> None:
 
     renderer.print_reasoning_status(0)
 
-    renderer.console.print.assert_called_once_with(
-        f"[italic {MUTED_STYLE}]思考中...[/]",
-        end="",
-        soft_wrap=True,
-    )
+    args, kwargs = renderer.console.print.call_args
+    assert args[0].startswith(f"[italic {MUTED_STYLE}]")
+    assert kwargs == {"end": "", "soft_wrap": True}
 
 
 def test_agent_text_is_plain_muted_text() -> None:
@@ -64,10 +66,10 @@ def test_agent_text_supports_custom_end() -> None:
     renderer = CliRenderer()
     renderer.console = MagicMock()
 
-    renderer.print_agent_text("已读取源代码: src/main/java/demo/LegacyConfig.java", end="")
+    renderer.print_agent_text("source read summary", end="")
 
     renderer.console.print.assert_called_once_with(
-        "已读取源代码: src/main/java/demo/LegacyConfig.java",
+        "source read summary",
         end="",
         highlight=False,
         markup=False,

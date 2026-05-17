@@ -72,9 +72,9 @@ def test_chat_parses_dsml_tool_call_with_preamble_and_spacing() -> None:
 
     client.client.chat.completions.create.return_value = [
         _chunk(
-            "现在需要获取 UserService.java 的完整代码。使用 read_source_code。\n\n"
+            "现在需要获取 UserService.java 的完整代码。使用 read_source_file。\n\n"
             "<｜DSML｜function_calls>\n"
-            "<｜DSML｜invoke name=\"read_source_code\">\n"
+            "<｜DSML｜invoke name=\"read_source_file\">\n"
             "<｜DSML｜parameter name=\"path\" string=\"true\">src/main/java/demo/UserService.java</｜DSML｜parameter>\n"
             "</｜DSML｜invoke>\n"
             "</｜DSML｜function_calls>"
@@ -90,10 +90,10 @@ def test_chat_parses_dsml_tool_call_with_preamble_and_spacing() -> None:
 
     assert response.tool_calls is not None
     assert len(response.tool_calls) == 1
-    assert response.tool_calls[0].name == "read_source_code"
+    assert response.tool_calls[0].name == "read_source_file"
     assert response.tool_calls[0].arguments == {"path": "src/main/java/demo/UserService.java"}
-    assert response.content == "现在需要获取 UserService.java 的完整代码。使用 read_source_code。"
-    assert "".join(streamed_tokens) == "现在需要获取 UserService.java 的完整代码。使用 read_source_code。\n\n"
+    assert response.content == "现在需要获取 UserService.java 的完整代码。使用 read_source_file。"
+    assert "".join(streamed_tokens) == "现在需要获取 UserService.java 的完整代码。使用 read_source_file。\n\n"
 
 
 def test_react_purpose_inherits_reasoning_and_streams_deltas(monkeypatch) -> None:
