@@ -43,6 +43,15 @@ class CliRenderer:
     def print_panel(self, content: Any, title: str | None = None, style: str = SYSTEM_STYLE) -> None:
         self.console.print(Panel(content, title=title, border_style=style, box=ROUNDED))
 
+    def print_table(self, table: Table) -> None:
+        self.console.print(table)
+
+    def print_heading(self, message: str) -> None:
+        self.console.print(f"[{BODY_STYLE}]{message}[/]")
+
+    def print_blank(self) -> None:
+        self.console.print()
+
     def print_step(self, message: str) -> None:
         self.console.print(f"> [{MUTED_STYLE}]{message}[/]")
 

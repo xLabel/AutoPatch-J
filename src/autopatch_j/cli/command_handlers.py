@@ -60,9 +60,10 @@ class CommandHandlers:
         act_table.add_row("abort", "中止审核并丢弃剩余所有补丁")
 
         self.host.renderer.print_panel("命令帮助", style=SYSTEM_STYLE)
-        self.host.renderer.console.print(sys_table)
-        self.host.renderer.print("\n[bold]交互说明[/bold]")
-        self.host.renderer.console.print(act_table)
+        self.host.renderer.print_table(sys_table)
+        self.host.renderer.print_blank()
+        self.host.renderer.print_heading("交互说明")
+        self.host.renderer.print_table(act_table)
 
     def handle_reset(self) -> None:
         self.host.reset_project_state()

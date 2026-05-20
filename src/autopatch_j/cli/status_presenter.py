@@ -64,7 +64,7 @@ class StatusPresenter:
             )
             table.add_row(meta.name, status_text, meta.version if meta.is_implemented else "-", meta.description)
 
-        self.renderer.console.print(table)
+        self.renderer.print_table(table)
 
     def _symbol_extract_status(self, runtime: CliRuntime) -> Text:
         symbol_status = runtime.symbol_indexer.fetch_symbol_extract_status()

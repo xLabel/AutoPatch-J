@@ -209,4 +209,4 @@ class CodeAuditWorkflow:
             scanner_summary=self.services.summary_provider.build_static_scan_summary(),
             llm_summary=self.services.summary_provider.build_local_no_issue_summary(),
         )
-        self.services.renderer.print()
+        self.services.renderer.print_blank()
