@@ -145,7 +145,9 @@ class SemgrepScanner(StaticScanner):
                 is_implemented=True,
                 status="未就绪 (Runtime Missing)",
                 version=GlobalConfig.semgrep_version,
-                description="核心扫描引擎，支持自定义 Java 安全规则集。"
+                description="核心扫描引擎，支持自定义 Java 安全规则集。",
+                availability="unavailable",
+                reason="AutoPatch-J 管理的 Semgrep 缺失或不可执行，请执行 /init。",
             )
 
         return ScannerMeta(
@@ -153,12 +155,22 @@ class SemgrepScanner(StaticScanner):
             is_implemented=True,
             status="就绪 (Ready)",
             version=GlobalConfig.semgrep_version,
-            description="核心扫描引擎，支持自定义 Java 安全规则集。"
+            description="核心扫描引擎，支持自定义 Java 安全规则集。",
+            availability="ready",
+            reason=resolved[1],
         )
 
     def missing_binary_result(self, scope: list[str], targets: list[str]) -> ScanResult:
         message = (
             "AutoPatch-J 管理的 Semgrep 缺失或不可执行。请执行 /init 初始化 scanner runtime。"
+        )
+        return ScanResult(
+            engine="semgrep",
+            scope=scope,
+            targets=targets,
+            status="error",
+            message=message,
+            findings=[],
         )
 
     def _command_targets(self, repo_root: Path, targets: list[str]) -> list[str]:
@@ -170,14 +182,6 @@ class SemgrepScanner(StaticScanner):
             else:
                 command_targets.append(str((normalized_repo_root / target).resolve()))
         return command_targets
-        return ScanResult(
-            engine="semgrep",
-            scope=scope,
-            targets=targets,
-            status="error",
-            message=message,
-            findings=[],
-        )
 
 
 def default_semgrep_config() -> str:

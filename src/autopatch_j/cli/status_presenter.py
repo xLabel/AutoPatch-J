@@ -9,6 +9,7 @@ from autopatch_j.cli.render import BODY_STYLE, DECISION_STYLE, MUTED_STYLE, SYST
 from autopatch_j.cli.runtime import CliRuntime
 from autopatch_j.config import GlobalConfig
 from autopatch_j.scanners import DEFAULT_SCANNER_CATALOG
+from autopatch_j.scanners.models import ScannerMeta
 
 
 class StatusPresenter:
@@ -53,18 +54,27 @@ class StatusPresenter:
         table.add_column("名称", style=SYSTEM_STYLE, width=12)
         table.add_column("状态", width=25)
         table.add_column("版本", justify="center")
-        table.add_column("功能简介")
+        table.add_column("说明")
 
         for scanner in DEFAULT_SCANNER_CATALOG.all():
             meta = scanner.get_meta(repo_root)
-            status_text = (
-                f"[green]● {meta.status}[/green]"
-                if meta.is_implemented
-                else f"[dim]● {meta.status}[/dim]"
+            table.add_row(
+                meta.name,
+                self._scanner_status_text(meta),
+                meta.version if meta.is_implemented else "-",
+                meta.reason or meta.description,
             )
-            table.add_row(meta.name, status_text, meta.version if meta.is_implemented else "-", meta.description)
 
         self.renderer.print_table(table)
+
+    def _scanner_status_text(self, meta: ScannerMeta) -> str:
+        if meta.availability == "ready":
+            return f"[green]● {meta.status}[/green]"
+        if meta.availability == "planned":
+            return f"[dim]● {meta.status}[/dim]"
+        if meta.availability == "unavailable":
+            return f"[yellow]● {meta.status}[/yellow]"
+        return f"[dim]● {meta.status}[/dim]"
 
     def _symbol_extract_status(self, runtime: CliRuntime) -> Text:
         symbol_status = runtime.symbol_indexer.fetch_symbol_extract_status()

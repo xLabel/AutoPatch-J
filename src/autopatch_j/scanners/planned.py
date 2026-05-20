@@ -19,6 +19,8 @@ class PlannedScanner(StaticScanner):
             name=self.name,
             is_implemented=False,
             status="规划中 (Coming Soon)",
+            availability="planned",
+            reason="尚未实现本地适配器。",
             description=self.description,
         )
 

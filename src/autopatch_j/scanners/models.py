@@ -81,3 +81,9 @@ class ScannerMeta:
     status: str
     version: str = "N/A"
     description: str = ""
+    availability: str = "unknown"
+    reason: str = ""
+
+    @property
+    def is_ready(self) -> bool:
+        return self.availability == "ready"
