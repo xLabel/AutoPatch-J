@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 from autopatch_j.core.patching.types import (
-    ProjectValidationResult,
     SearchReplacePatchDraft,
     SyntaxCheckResult,
     VerificationResult,
@@ -55,27 +54,6 @@ class PatchQualityVerifier:
             return SyntaxCheckResult(status="ok", message="Java 语法校验通过。")
         except Exception as exc:
             return SyntaxCheckResult(status="error", message=f"语法分析过程出现异常：{str(exc)}")
-
-    def describe_project_validation(self) -> ProjectValidationResult:
-        build_files = [
-            ("pom.xml", "Maven"),
-            ("build.gradle", "Gradle"),
-            ("build.gradle.kts", "Gradle"),
-            ("settings.gradle", "Gradle"),
-            ("settings.gradle.kts", "Gradle"),
-        ]
-        detected = [label for filename, label in build_files if (self.repo_root / filename).exists()]
-        if not detected:
-            return ProjectValidationResult(
-                status="not_applicable",
-                message="未检测到 Maven/Gradle 构建入口，未执行项目级验证。",
-            )
-
-        build_tool = detected[0]
-        return ProjectValidationResult(
-            status="not_run",
-            message=f"检测到 {build_tool} 项目，默认未执行项目级编译验证。",
-        )
 
     def _collect_errors(self, node: Any) -> list[str]:
         errors = []

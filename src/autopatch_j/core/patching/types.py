@@ -46,18 +46,6 @@ class VerificationResult:
 
 
 @dataclass(slots=True)
-class ProjectValidationResult:
-    """
-    项目级验证状态。
-
-    当前只表达“是否识别到可运行的项目验证入口”和“本轮是否执行”，不默认触发 Maven/Gradle。
-    """
-
-    status: str
-    message: str
-
-
-@dataclass(slots=True)
 class SearchReplacePatchDraft:
     """
     内存中的 search-replace 补丁草案。
@@ -77,6 +65,3 @@ class SearchReplacePatchDraft:
     error_code: str | None = None
     target_check_id: str | None = None
     target_snippet: str | None = None
-    project_validation: ProjectValidationResult = field(
-        default_factory=lambda: ProjectValidationResult(status="not_run", message="项目级验证未执行。")
-    )

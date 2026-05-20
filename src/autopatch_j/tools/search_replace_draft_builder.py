@@ -8,7 +8,6 @@ from autopatch_j.core.patching import (
     OldStringNotFoundError,
     OldStringNotUniqueError,
     SearchReplacePatchDraft,
-    ProjectValidationResult,
     SyntaxCheckResult,
     TargetFileNotFoundError,
 )
@@ -124,7 +123,6 @@ class SearchReplaceDraftBuilder:
             new_string=new_string,
             diff=patch_diff,
             validation=validation_result,
-            project_validation=self._describe_project_validation(),
             status=status,
             message=message_status,
             rationale=rationale,
@@ -139,12 +137,6 @@ class SearchReplaceDraftBuilder:
         if verifier is None:
             return SyntaxCheckResult(status="unavailable", message="未配置补丁语法校验器。")
         return verifier.verify_syntax(file_path, new_code)
-
-    def _describe_project_validation(self) -> ProjectValidationResult:
-        verifier = self.context.patch_verifier
-        if verifier is None:
-            return ProjectValidationResult(status="unavailable", message="未配置项目级验证器。")
-        return verifier.describe_project_validation()
 
     def _build_error_result(
         self,

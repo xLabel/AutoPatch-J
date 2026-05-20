@@ -47,23 +47,3 @@ def test_verify_fix_logic():
     result = validator.verify_finding_resolved(draft)
     assert result.is_resolved is False
     assert "语义校验失败" in result.message
-
-
-def test_project_validation_describes_build_entry_without_running_build(tmp_path: Path) -> None:
-    (tmp_path / "pom.xml").write_text("<project />", encoding="utf-8")
-    validator = PatchQualityVerifier(tmp_path, MagicMock())
-
-    result = validator.describe_project_validation()
-
-    assert result.status == "not_run"
-    assert "Maven" in result.message
-    assert "默认未执行" in result.message
-
-
-def test_project_validation_is_not_applicable_without_build_entry(tmp_path: Path) -> None:
-    validator = PatchQualityVerifier(tmp_path, MagicMock())
-
-    result = validator.describe_project_validation()
-
-    assert result.status == "not_applicable"
-    assert "未检测到 Maven/Gradle" in result.message
