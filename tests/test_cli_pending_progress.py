@@ -106,6 +106,7 @@ def test_run_renders_pending_patch_with_absolute_progress(tmp_path: Path) -> Non
     kwargs = cli.renderer.print_action_panel.call_args.kwargs
     assert kwargs["current_idx"] == 2
     assert kwargs["total_count"] == 3
+    assert kwargs["project_validation"] == "not_run"
 
 
 def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:

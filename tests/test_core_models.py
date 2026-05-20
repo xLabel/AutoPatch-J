@@ -38,6 +38,8 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
                     validation_status="ok",
                     validation_message="ok",
                     validation_errors=[],
+                    project_validation_status="not_run",
+                    project_validation_message="检测到 Maven 项目，默认未执行项目级编译验证。",
                     rationale="rationale",
                     source_hint="LLM 二次复核（静态扫描未报出问题）",
                     target_check_id="F1",
@@ -62,6 +64,8 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
     assert current.status is PatchReviewStatus.PENDING
     assert current.draft.source_hint == "LLM 二次复核（静态扫描未报出问题）"
     assert current.draft.target_check_id == "F1"
+    assert current.draft.project_validation_status == "not_run"
+    assert current.draft.to_patch_draft().project_validation.message == "检测到 Maven 项目，默认未执行项目级编译验证。"
 
 
 def test_fetch_current_patch_item_returns_none_for_out_of_bounds_cursor() -> None:

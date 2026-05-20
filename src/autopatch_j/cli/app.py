@@ -107,6 +107,7 @@ class AutoPatchCli:
                         file_path=pending_draft.file_path,
                         diff=pending_draft.diff,
                         validation=pending_draft.validation.status,
+                        project_validation=pending_draft.project_validation.status,
                         rationale=pending_draft.rationale or "无说明",
                         current_idx=current_idx,
                         total_count=total_count,

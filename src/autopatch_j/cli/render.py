@@ -120,6 +120,7 @@ class CliRenderer:
         current_idx: int = 1,
         total_count: int = 1,
         source_hint: str | None = None,
+        project_validation: str | None = None,
     ) -> None:
         """展示补丁确认决策面板"""
         # 计算统计
@@ -133,8 +134,10 @@ class CliRenderer:
             (f"+{add_lines}行", SUCCESS_STYLE),
             (" ", ""),
             (f"-{del_lines}行", ERROR_STYLE),
-            ("  校验: ", MUTED_STYLE),
+            ("  语法: ", MUTED_STYLE),
             (validation, SUCCESS_STYLE if validation == "ok" else DECISION_STYLE),
+            ("  项目: ", MUTED_STYLE),
+            (project_validation or "not_run", SUCCESS_STYLE if project_validation == "ok" else MUTED_STYLE),
         )
 
         rationale_text = Text(rationale, style="italic")

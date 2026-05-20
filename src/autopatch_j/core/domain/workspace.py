@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 
 from autopatch_j.core.domain.scope import CodeScope
-from autopatch_j.core.patching.types import SearchReplacePatchDraft, SyntaxCheckResult
+from autopatch_j.core.patching.types import ProjectValidationResult, SearchReplacePatchDraft, SyntaxCheckResult
 
 
 class WorkspaceStatus(str, Enum):
@@ -38,6 +38,8 @@ class PatchDraftSnapshot:
     validation_status: str
     validation_message: str
     validation_errors: list[str] = field(default_factory=list)
+    project_validation_status: str = "not_run"
+    project_validation_message: str = "项目级验证未执行。"
     rationale: str | None = None
     source_hint: str | None = None
     target_check_id: str | None = None
@@ -53,6 +55,8 @@ class PatchDraftSnapshot:
             validation_status=draft.validation.status,
             validation_message=draft.validation.message,
             validation_errors=list(draft.validation.errors),
+            project_validation_status=draft.project_validation.status,
+            project_validation_message=draft.project_validation.message,
             rationale=draft.rationale,
             source_hint=draft.source_hint,
             target_check_id=draft.target_check_id,
@@ -68,6 +72,8 @@ class PatchDraftSnapshot:
             "validation_status": self.validation_status,
             "validation_message": self.validation_message,
             "validation_errors": list(self.validation_errors),
+            "project_validation_status": self.project_validation_status,
+            "project_validation_message": self.project_validation_message,
             "rationale": self.rationale,
             "source_hint": self.source_hint,
             "target_check_id": self.target_check_id,
@@ -84,6 +90,8 @@ class PatchDraftSnapshot:
             validation_status=str(data.get("validation_status", "unknown")),
             validation_message=str(data.get("validation_message", "")),
             validation_errors=[str(item) for item in data.get("validation_errors", [])],
+            project_validation_status=str(data.get("project_validation_status", "not_run")),
+            project_validation_message=str(data.get("project_validation_message", "项目级验证未执行。")),
             rationale=str(data["rationale"]) if data.get("rationale") is not None else None,
             source_hint=str(data["source_hint"]) if data.get("source_hint") is not None else None,
             target_check_id=str(data["target_check_id"]) if data.get("target_check_id") is not None else None,
@@ -100,6 +108,10 @@ class PatchDraftSnapshot:
                 status=self.validation_status,
                 message=self.validation_message,
                 errors=list(self.validation_errors),
+            ),
+            project_validation=ProjectValidationResult(
+                status=self.project_validation_status,
+                message=self.project_validation_message,
             ),
             status="ok" if self.validation_status in {"ok", "skipped", "unavailable"} else "invalid",
             message=self.validation_message,
