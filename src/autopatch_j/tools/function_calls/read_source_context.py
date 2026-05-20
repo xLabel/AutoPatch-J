@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from autopatch_j.tools.contract import FunctionToolSpec, ToolExecutionResult
+from autopatch_j.tools.contract import (
+    FunctionToolParameter,
+    FunctionToolSpec,
+    ToolExecutionResult,
+    build_function_parameters,
+)
 from autopatch_j.tools.function_calls._source_reading_base import SourceReadToolBase
 from autopatch_j.tools.names import FunctionToolName
 
@@ -14,14 +19,20 @@ class ReadSourceContextTool(SourceReadToolBase):
             "读取指定行附近的固定窗口源码上下文：默认包含目标行前 20 行和后 80 行。"
             "适合根据 finding 行号确认局部证据和 old_string；不需要模型传 end_line 或窗口大小。"
         ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "仓库内文件相对路径。"},
-                "line": {"type": "integer", "description": "1-based 目标行号，通常来自 finding 或 search_symbols。"},
-            },
-            "required": ["path", "line"],
-        },
+        parameters=build_function_parameters(
+            FunctionToolParameter(
+                name="path",
+                type="string",
+                description="仓库内文件相对路径。",
+                required=True,
+            ),
+            FunctionToolParameter(
+                name="line",
+                type="integer",
+                description="1-based 目标行号，通常来自 finding 或 search_symbols。",
+                required=True,
+            ),
+        ),
     )
 
     def execute(self, path: str, line: int) -> ToolExecutionResult:

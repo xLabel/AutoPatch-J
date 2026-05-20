@@ -20,6 +20,37 @@ class FunctionToolSpec:
         return self.name.value
 
 
+@dataclass(frozen=True, slots=True)
+class FunctionToolParameter:
+    """LLM function_call 的单个参数声明。"""
+
+    name: str
+    type: str
+    description: str
+    required: bool = False
+
+    def to_schema_property(self) -> dict[str, str]:
+        return {
+            "type": self.type,
+            "description": self.description,
+        }
+
+
+def build_function_parameters(*parameters: FunctionToolParameter) -> dict[str, Any]:
+    """
+    生成 OpenAI-compatible function parameters schema。
+
+    工具仍然暴露普通 JSON schema dict，但声明参数时集中使用这个 helper，
+    避免每个工具重复手写 properties/required 结构导致字段名漂移。
+    """
+
+    return {
+        "type": "object",
+        "properties": {parameter.name: parameter.to_schema_property() for parameter in parameters},
+        "required": [parameter.name for parameter in parameters if parameter.required],
+    }
+
+
 @dataclass(slots=True)
 class ToolExecutionResult:
     """本地工具执行后回写给 ReAct 循环的统一结果。"""

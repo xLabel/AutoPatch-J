@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from autopatch_j.tools.contract import FunctionToolSpec, ToolExecutionResult
+from autopatch_j.tools.contract import (
+    FunctionToolParameter,
+    FunctionToolSpec,
+    ToolExecutionResult,
+    build_function_parameters,
+)
 from autopatch_j.tools.function_calls._source_reading_base import SourceReadToolBase
 from autopatch_j.tools.names import FunctionToolName
 
@@ -14,14 +19,20 @@ class ReadSourceBlockTool(SourceReadToolBase):
             "读取指定行所在的 Java 方法、构造器、类、接口、record 或 enum 完整代码块。"
             "适合接在 search_symbols 的 path:line 结果之后，或在修改整个方法/类前确认 old_string。"
         ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "仓库内 Java 文件相对路径。"},
-                "line": {"type": "integer", "description": "1-based 行号；可以是声明行，也可以是方法体内部行。"},
-            },
-            "required": ["path", "line"],
-        },
+        parameters=build_function_parameters(
+            FunctionToolParameter(
+                name="path",
+                type="string",
+                description="仓库内 Java 文件相对路径。",
+                required=True,
+            ),
+            FunctionToolParameter(
+                name="line",
+                type="integer",
+                description="1-based 行号；可以是声明行，也可以是方法体内部行。",
+                required=True,
+            ),
+        ),
     )
 
     def execute(self, path: str, line: int) -> ToolExecutionResult:

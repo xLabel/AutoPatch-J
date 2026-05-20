@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from autopatch_j.core.project import SymbolIndexEntry
-from autopatch_j.tools.contract import FunctionToolSpec, ToolExecutionResult
+from autopatch_j.tools.contract import (
+    FunctionToolParameter,
+    FunctionToolSpec,
+    ToolExecutionResult,
+    build_function_parameters,
+)
 from autopatch_j.tools.function_calls._source_reading_base import SourceReadToolBase
 from autopatch_j.tools.names import FunctionToolName
 
@@ -15,13 +20,14 @@ class ReadSourceFileTool(SourceReadToolBase):
             "读取仓库内指定文件的完整源码。仅在需要 imports、字段、类级上下文或跨方法关系时使用；"
             "如果只需要某个 finding 或符号附近的源码，优先使用 read_source_context 或 read_source_block。"
         ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "仓库内文件相对路径。"},
-            },
-            "required": ["path"],
-        },
+        parameters=build_function_parameters(
+            FunctionToolParameter(
+                name="path",
+                type="string",
+                description="仓库内文件相对路径。",
+                required=True,
+            )
+        ),
     )
 
     def execute(self, path: str) -> ToolExecutionResult:

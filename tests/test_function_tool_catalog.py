@@ -12,9 +12,11 @@ def test_tools_root_exports_only_tool_infrastructure() -> None:
         "FunctionTool",
         "FunctionToolCatalog",
         "FunctionToolName",
+        "FunctionToolParameter",
         "FunctionToolSpec",
         "ToolExecutionResult",
         "ToolRuntimeContext",
+        "build_function_parameters",
     ]
     assert not any(
         hasattr(tools, concrete_tool_name)

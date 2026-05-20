@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from autopatch_j.tools.contract import FunctionTool, FunctionToolSpec, ToolExecutionResult
+from autopatch_j.tools.contract import (
+    FunctionTool,
+    FunctionToolParameter,
+    FunctionToolSpec,
+    ToolExecutionResult,
+    build_function_parameters,
+)
 from autopatch_j.tools.names import FunctionToolName
 
 
@@ -17,13 +23,14 @@ class SearchSymbolsTool(FunctionTool):
             "在当前项目索引中搜索类名、方法名、接口或文件名，返回候选文件和行号。"
             "只用于定位代码位置，不读取源码内容。拿到 path:line 后，优先调用 read_source_block(path, line)。"
         ),
-        parameters={
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "要搜索的类名、方法名、接口名或文件名关键词。"}
-            },
-            "required": ["query"],
-        },
+        parameters=build_function_parameters(
+            FunctionToolParameter(
+                name="query",
+                type="string",
+                description="要搜索的类名、方法名、接口名或文件名关键词。",
+                required=True,
+            )
+        ),
     )
 
     def execute(self, query: str) -> ToolExecutionResult:
