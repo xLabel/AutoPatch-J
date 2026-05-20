@@ -144,6 +144,44 @@ def test_prompt_context_includes_repo_profile_and_project_notes_for_project_ques
     assert "finding 队列" in context
 
 
+def test_prompt_context_debug_summary_describes_injected_memory(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    assert manager.apply_delta(
+        {
+            "long_term_operations": [
+                {
+                    "operation": "create_new",
+                    "type": "project_note",
+                    "label": "review module",
+                    "summary": "用户关注 review 模块如何管理 finding 队列。",
+                    "source": "conversation_summary",
+                }
+            ]
+        },
+        repo_profile={
+            "build_tool": "maven",
+            "java_version": "17",
+            "project_name": "demo-service",
+            "modules": ["api"],
+            "frameworks": ["spring boot"],
+            "source_files": ["pom.xml"],
+            "updated_at": "2026-05-08T00:00:00+08:00",
+        },
+    )
+    manager.append_recent_turn(
+        intent=IntentType.GENERAL_CHAT,
+        user_text="继续聊 review 模块",
+        assistant_text="answer",
+    )
+
+    summary = manager.build_prompt_context_debug_summary(IntentType.CODE_EXPLAIN, "继续解释这个项目")
+
+    assert "Memory 注入" in summary
+    assert "repo_profile: build_tool, java_version, project_name, modules, frameworks" in summary
+    assert "project_notes: review module" in summary
+    assert "pending_turns: 1 条" in summary
+
+
 def test_patch_intents_never_receive_memory_context(tmp_path: Path) -> None:
     manager = _manager(tmp_path)
     manager.append_recent_turn(

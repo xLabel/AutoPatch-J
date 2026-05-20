@@ -117,6 +117,15 @@ class AgentSession:
             return ""
         return self.memory_manager.build_prompt_context(intent, current_user_text)
 
+    def build_memory_debug_summary(
+        self,
+        intent: IntentType,
+        current_user_text: str,
+    ) -> str:
+        if self.memory_manager is None:
+            return ""
+        return self.memory_manager.build_prompt_context_debug_summary(intent, current_user_text)
+
     def append_memory_turn(
         self,
         intent: IntentType,

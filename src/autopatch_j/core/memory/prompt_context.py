@@ -70,6 +70,59 @@ class MemoryPromptContextBuilder:
 
         return "\n\n".join(sections)
 
+    def build_debug_summary(self, memory: dict[str, Any], intent: IntentType, current_user_text: str = "") -> str:
+        if intent not in ORDINARY_INTENTS:
+            return ""
+
+        lines = ["Memory 注入："]
+        durable_preferences = self._select_relevant_items(
+            memory["long_term_memory"]["durable_preferences"],
+            current_user_text,
+            limit=5,
+            always_include=True,
+        )
+        self._append_debug_items(lines, "durable_preferences", durable_preferences)
+
+        project_context_allowed = intent is IntentType.CODE_EXPLAIN or self._looks_project_related(current_user_text)
+        if project_context_allowed:
+            repo_profile_fields = self._repo_profile_debug_fields(memory.get("repo_profile"))
+            if repo_profile_fields:
+                lines.append(f"- repo_profile: {', '.join(repo_profile_fields)}")
+
+            project_notes = self._select_relevant_items(
+                memory["long_term_memory"]["project_notes"],
+                current_user_text,
+                limit=5,
+                always_include=intent is IntentType.CODE_EXPLAIN,
+            )
+            self._append_debug_items(lines, "project_notes", project_notes)
+
+        active_topics = self._select_relevant_items(
+            memory["working_memory"]["active_topics"],
+            current_user_text,
+            limit=3,
+        )
+        self._append_debug_items(lines, "active_topics", active_topics)
+
+        ready_count = sum(
+            1
+            for turn in memory["working_memory"]["recent_turns"]
+            if turn.get("summary_status") == "ready" and turn.get("summary")
+        )
+        pending_count = sum(
+            1
+            for turn in memory["working_memory"]["recent_turns"]
+            if turn.get("summary_status") == "pending" and turn.get("user_text")
+        )
+        if ready_count:
+            lines.append(f"- recent_summaries: {min(ready_count, MAX_PROMPT_READY_SUMMARIES)} 条")
+        if pending_count:
+            lines.append(f"- pending_turns: {min(pending_count, MAX_PROMPT_PENDING_TURNS)} 条")
+
+        if len(lines) == 1:
+            lines.append("- 无匹配内容")
+        return "\n".join(lines)
+
     def _select_relevant_items(
         self,
         items: list[dict[str, Any]],
@@ -135,6 +188,25 @@ class MemoryPromptContextBuilder:
         if not lines:
             return ""
         return "仓库元信息：\n" + "\n".join(lines)
+
+    def _repo_profile_debug_fields(self, profile: Any) -> list[str]:
+        if not isinstance(profile, dict):
+            return []
+        fields = []
+        for key in ("build_tool", "java_version", "project_name"):
+            if profile.get(key):
+                fields.append(key)
+        for key in ("modules", "frameworks"):
+            value = profile.get(key)
+            if isinstance(value, list) and value:
+                fields.append(key)
+        return fields
+
+    def _append_debug_items(self, lines: list[str], label: str, items: list[dict[str, Any]]) -> None:
+        if not items:
+            return
+        item_labels = [str(item.get("label", "")).strip() or str(item.get("id", "")).strip() for item in items]
+        lines.append(f"- {label}: {', '.join(item_labels)}")
 
     def _format_recent_summaries(self, turns: list[dict[str, Any]]) -> str:
         lines = ["近期问答摘要："]

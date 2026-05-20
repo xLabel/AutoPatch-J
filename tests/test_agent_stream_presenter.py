@@ -28,16 +28,26 @@ class _ChatFilter:
 
 
 class _Agent:
-    def __init__(self) -> None:
+    def __init__(self, session=None) -> None:
         self.messages = []
+        self.session = session
 
 
-def _build_agent_stream_presenter(debug_mode: bool, has_pending_patch: bool = False) -> AgentStreamPresenter:
+class _Session:
+    def build_memory_debug_summary(self, intent, user_text):
+        return f"Memory 注入：{intent.value}:{user_text}"
+
+
+def _build_agent_stream_presenter(
+    debug_mode: bool,
+    has_pending_patch: bool = False,
+    agent=None,
+) -> AgentStreamPresenter:
     return AgentStreamPresenter(
         renderer=MagicMock(),
         workspace_manager=_WorkspaceManager(has_pending_patch),
         chat_filter=_ChatFilter(),
-        agent=_Agent(),
+        agent=agent or _Agent(),
         describe_current_scope_paths=lambda: [],
         build_static_scan_summary=lambda: "",
         build_local_no_issue_summary=lambda: "",
@@ -174,4 +184,21 @@ def test_agent_stream_presenter_drops_intermediate_answer_when_tool_call_starts(
     stream.run(prompt="audit", agent_call=agent_call)
 
     stream.renderer.print_agent_text.assert_called_once_with("已获取 finding 详情: F2")
+    stream.renderer.print.assert_not_called()
+
+
+def test_agent_stream_presenter_shows_memory_debug_summary_only_in_debug_mode() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=True, agent=_Agent(session=_Session()))
+
+    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+        return ""
+
+    stream.run(
+        prompt="解释项目",
+        agent_call=agent_call,
+        answer_intent=IntentType.CODE_EXPLAIN,
+        raw_user_text="这个项目是干什么的",
+    )
+
+    stream.renderer.print_agent_text.assert_called_once_with("Memory 注入：code_explain:这个项目是干什么的")
     stream.renderer.print.assert_not_called()

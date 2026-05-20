@@ -146,6 +146,12 @@ class AgentStreamPresenter:
 
         execution = _AgentStreamExecution(self, policy)
         start_index = len(agent.messages)
+        if policy.debug_mode:
+            self._render_memory_debug_context(
+                agent=agent,
+                answer_intent=answer_intent,
+                user_text=raw_user_text or prompt,
+            )
 
         final_answer = agent_call(
             prompt,
@@ -215,3 +221,12 @@ class AgentStreamPresenter:
 
         return new_messages
 
+    def _render_memory_debug_context(self, agent: Any, answer_intent: IntentType | None, user_text: str) -> None:
+        if answer_intent is None:
+            return
+        session = getattr(agent, "session", None)
+        if session is None or not hasattr(session, "build_memory_debug_summary"):
+            return
+        summary = session.build_memory_debug_summary(answer_intent, user_text)
+        if summary:
+            self.renderer.print_agent_text(summary)

@@ -57,6 +57,13 @@ class MemoryManager:
             memory = self.store.load()
             return self.prompt_context_builder.build(memory, intent, current_user_text)
 
+    def build_prompt_context_debug_summary(self, intent: IntentType, current_user_text: str = "") -> str:
+        if intent not in ORDINARY_INTENTS:
+            return ""
+        with self._lock:
+            memory = self.store.load()
+            return self.prompt_context_builder.build_debug_summary(memory, intent, current_user_text)
+
     def append_recent_turn(
         self,
         intent: IntentType,
