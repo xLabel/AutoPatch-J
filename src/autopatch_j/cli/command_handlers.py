@@ -44,8 +44,7 @@ class CommandHandlers:
         sys_table.add_column("系统命令", style=SYSTEM_STYLE, width=15)
         sys_table.add_column("功能描述")
         sys_table.add_row("/init", "初始化当前目录为 Java 项目并建立索引")
-        sys_table.add_row("/status", "查看当前项目状态与索引统计")
-        sys_table.add_row("/doctor", "诊断配置与运行时状态")
+        sys_table.add_row("/status", "查看当前项目状态与运行诊断")
         sys_table.add_row("/scanner", "查看扫描器状态")
         sys_table.add_row("/reindex", "重建代码索引")
         sys_table.add_row("/reset", "重置工作台状态与对话历史")
@@ -72,9 +71,6 @@ class CommandHandlers:
 
     def handle_scanners(self) -> None:
         StatusPresenter(self.host.renderer).render_scanners(self.host.repo_root)
-
-    def handle_doctor(self) -> None:
-        StatusPresenter(self.host.renderer).render_doctor(self.host.runtime, self.host.repo_root)
 
     def handle_init(self) -> None:
         if self.host.repo_root is None:
@@ -103,11 +99,7 @@ class CommandHandlers:
             )
 
     def handle_status(self) -> None:
-        runtime = self._require_runtime()
-        if runtime is None:
-            return
-
-        StatusPresenter(self.host.renderer).render_project_status(runtime, self.host.repo_root)
+        StatusPresenter(self.host.renderer).render_status(self.host.runtime, self.host.repo_root)
 
     def handle_reindex(self) -> None:
         runtime = self._require_runtime()

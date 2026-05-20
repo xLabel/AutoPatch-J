@@ -125,20 +125,33 @@ def test_handle_status_includes_output_mode(cli: AutoPatchCli) -> None:
 
     assert "调试模式" in cells
     assert "关闭" in cells
+    assert "LLM API Key" in cells
+    assert "Semgrep" in cells
+    assert "Tree-sitter" in cells
     assert "日志模式" not in cells
     assert "输出模式" not in cells
     assert "静态扫描器" not in cells
 
 
-def test_handle_doctor_renders_runtime_diagnostics(cli: AutoPatchCli) -> None:
-    cli.command_handlers.handle_doctor()
+def test_handle_status_renders_without_runtime(cli: AutoPatchCli) -> None:
+    cli.clear_runtime()
+
+    cli.command_handlers.handle_status()
 
     table = cli.renderer.print_panel.call_args.args[0]
     cells = [str(cell) for column in table.columns for cell in column._cells]
 
+    assert "工作区" in cells
+    assert "未初始化" in cells
     assert "LLM API Key" in cells
     assert "Semgrep" in cells
     assert "Tree-sitter" in cells
+
+
+def test_doctor_command_is_removed(cli: AutoPatchCli) -> None:
+    cli.command_router.handle_command("/doctor")
+
+    cli.renderer.print_error.assert_called_once_with("未知命令：/doctor")
 
 
 def test_handle_patch_explain_does_not_crash(cli: AutoPatchCli) -> None:

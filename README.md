@@ -247,8 +247,7 @@ python -m autopatch_j
 
 ```text
 /init       初始化当前目录为 Java 项目并建立索引
-/status     查看当前项目状态、LLM 模型、调试模式、补丁缓冲区和符号索引
-/doctor     诊断 LLM 配置、扫描器、Tree-sitter 和索引状态
+/status     查看当前项目状态、LLM 配置、扫描器、Tree-sitter 和索引状态
 /scanner    查看扫描器状态、版本和说明
 /reindex    重建本地代码符号索引
 /reset      清空工作台状态、Agent 对话历史和普通问答记忆

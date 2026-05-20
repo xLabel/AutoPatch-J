@@ -27,12 +27,11 @@ def test_command_completion_replaces_only_command_body() -> None:
     assert _apply_completion("/st", status_completion.text, status_completion.start_position) == "/status"
 
 
-def test_command_completion_includes_doctor() -> None:
+def test_command_completion_excludes_removed_doctor() -> None:
     completer = AutoPatchCompleter(lambda _: [])
     completions = list(completer.get_completions(Document(text="/do", cursor_position=3), None))
 
-    doctor_completion = next(c for c in completions if c.display_text == "/doctor")
-    assert _apply_completion("/do", doctor_completion.text, doctor_completion.start_position) == "/doctor"
+    assert all(completion.display_text != "/doctor" for completion in completions)
 
 
 def test_mention_completion_only_exposes_files_and_directories() -> None:
