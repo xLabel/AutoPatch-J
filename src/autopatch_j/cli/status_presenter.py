@@ -49,6 +49,34 @@ class StatusPresenter:
 
         self.renderer.print_panel(table, title=f"[bold {SYSTEM_STYLE}] 项目状态 [/]", style=SYSTEM_STYLE)
 
+    def render_doctor(self, runtime: CliRuntime | None, repo_root: Path | None) -> None:
+        table = Table(box=None, show_header=False, padding=(0, 2))
+        table.add_column("Key", width=18)
+        table.add_column("Value", style=BODY_STYLE)
+
+        table.add_row(self._label("项目根目录"), self._value(str(repo_root) if repo_root else "未检测到"))
+        table.add_row(self._label("工作区"), self._value("已初始化" if runtime else "未初始化"))
+        table.add_row(self._label("LLM API Key"), self._value("已配置" if GlobalConfig.llm_api_key else "缺失"))
+        table.add_row(self._label("LLM Base URL"), self._value(GlobalConfig.llm_base_url or "缺失"))
+        table.add_row(self._label("LLM 模型"), self._value(GlobalConfig.llm_model or "缺失"))
+        table.add_row(self._label("Stream Dialect"), self._value(GlobalConfig.llm_stream_dialect))
+        table.add_row(self._label("Reasoning"), self._value(GlobalConfig.llm_reasoning_effort or "未设置"))
+        table.add_row(self._label("Extra Body"), self._value(GlobalConfig.llm_extra_body_error or "ok"))
+
+        scanner_meta = DEFAULT_SCANNER_CATALOG.get("semgrep").get_meta(repo_root)
+        table.add_row(self._label("Semgrep"), self._value(f"{scanner_meta.status} - {scanner_meta.reason or scanner_meta.description}"))
+        table.add_row(self._label("Tree-sitter"), self._value(self._tree_sitter_status()))
+
+        if runtime is not None:
+            stats = runtime.symbol_indexer.get_stats()
+            table.add_row(
+                self._label("符号索引"),
+                self._value(f"文件:{stats.get('file', 0)} 类:{stats.get('class', 0)} 方法:{stats.get('method', 0)}"),
+            )
+            table.add_row(self._label("符号提取"), self._symbol_extract_status(runtime))
+
+        self.renderer.print_panel(table, title=f"[bold {SYSTEM_STYLE}] 运行诊断 [/]", style=SYSTEM_STYLE)
+
     def render_scanners(self, repo_root: Path | None) -> None:
         table = Table(title="扫描器状态", show_header=True, header_style=f"bold {SYSTEM_STYLE}")
         table.add_column("名称", style=SYSTEM_STYLE, width=12)
@@ -86,6 +114,14 @@ class StatusPresenter:
         if last_error:
             status_text.append(f" ({last_error})", style=MUTED_STYLE)
         return status_text
+
+    def _tree_sitter_status(self) -> str:
+        try:
+            import tree_sitter  # noqa: F401
+            import tree_sitter_java  # noqa: F401
+        except ImportError as exc:
+            return f"缺失 ({exc.name})"
+        return "ok"
 
     def _label(self, text: str) -> Text:
         return Text(text, style=f"bold {SYSTEM_STYLE}")

@@ -28,6 +28,8 @@ class CommandRouter:
             self.handlers.handle_reindex()
         elif cmd == "/scanner":
             self.handlers.handle_scanners()
+        elif cmd == "/doctor":
+            self.handlers.handle_doctor()
         elif cmd == "/reset":
             self.handlers.handle_reset()
         elif cmd == "/help":
@@ -36,4 +38,3 @@ class CommandRouter:
             self.handlers.host.request_exit()
         else:
             self.renderer.print_error(f"未知命令：{cmd}")
-

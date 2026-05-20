@@ -130,6 +130,17 @@ def test_handle_status_includes_output_mode(cli: AutoPatchCli) -> None:
     assert "静态扫描器" not in cells
 
 
+def test_handle_doctor_renders_runtime_diagnostics(cli: AutoPatchCli) -> None:
+    cli.command_handlers.handle_doctor()
+
+    table = cli.renderer.print_panel.call_args.args[0]
+    cells = [str(cell) for column in table.columns for cell in column._cells]
+
+    assert "LLM API Key" in cells
+    assert "Semgrep" in cells
+    assert "Tree-sitter" in cells
+
+
 def test_handle_patch_explain_does_not_crash(cli: AutoPatchCli) -> None:
     # Setup workspace with a pending patch
     workspace = ReviewWorkspace(
