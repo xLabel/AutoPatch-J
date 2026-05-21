@@ -3,11 +3,12 @@
 from autopatch_j.tools.catalog import FunctionToolCatalog
 from autopatch_j.tools.contract import (
     FunctionTool,
-    FunctionToolParameter,
     FunctionToolSpec,
+    ToolArg,
     ToolExecutionResult,
     ToolRuntimeContext,
-    build_function_parameters,
+    build_function_tool_spec,
+    function_tool,
 )
 from autopatch_j.tools.names import FunctionToolName
 
@@ -15,9 +16,10 @@ __all__ = [
     "FunctionTool",
     "FunctionToolCatalog",
     "FunctionToolName",
-    "FunctionToolParameter",
     "FunctionToolSpec",
+    "ToolArg",
     "ToolExecutionResult",
     "ToolRuntimeContext",
-    "build_function_parameters",
+    "build_function_tool_spec",
+    "function_tool",
 ]

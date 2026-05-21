@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from autopatch_j.tools.contract import (
     FunctionTool,
-    FunctionToolParameter,
-    FunctionToolSpec,
+    ToolArg,
     ToolExecutionResult,
-    build_function_parameters,
+    function_tool,
 )
 from autopatch_j.tools.names import FunctionToolName
 
@@ -17,23 +18,14 @@ class SearchSymbolsTool(FunctionTool):
     只返回候选位置；需要源码内容时继续调用 read_source_block。
     """
 
-    spec = FunctionToolSpec(
+    @function_tool(
         name=FunctionToolName.SEARCH_SYMBOLS,
         description=(
             "在当前项目索引中搜索类名、方法名、接口或文件名，返回候选文件和行号。"
             "只用于定位代码位置，不读取源码内容。拿到 path:line 后，优先调用 read_source_block(path, line)。"
         ),
-        parameters=build_function_parameters(
-            FunctionToolParameter(
-                name="query",
-                type="string",
-                description="要搜索的类名、方法名、接口名或文件名关键词。",
-                required=True,
-            )
-        ),
     )
-
-    def execute(self, query: str) -> ToolExecutionResult:
+    def execute(self, query: Annotated[str, ToolArg("要搜索的类名、方法名、接口名或文件名关键词。")]) -> ToolExecutionResult:
         context = self.require_context()
         symbol_indexer = context.symbol_indexer
         results = symbol_indexer.search(query, limit=10)

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from autopatch_j.tools.contract import (
-    FunctionToolParameter,
-    FunctionToolSpec,
+    ToolArg,
     ToolExecutionResult,
-    build_function_parameters,
+    function_tool,
 )
 from autopatch_j.tools.function_calls._source_reading_base import SourceReadToolBase
 from autopatch_j.tools.names import FunctionToolName
@@ -13,29 +14,18 @@ from autopatch_j.tools.names import FunctionToolName
 class ReadSourceContextTool(SourceReadToolBase):
     """读取指定行附近的固定窗口源码上下文。"""
 
-    spec = FunctionToolSpec(
+    @function_tool(
         name=FunctionToolName.READ_SOURCE_CONTEXT,
         description=(
             "读取指定行附近的固定窗口源码上下文：默认包含目标行前 20 行和后 80 行。"
             "适合根据 finding 行号确认局部证据和 old_string；不需要模型传 end_line 或窗口大小。"
         ),
-        parameters=build_function_parameters(
-            FunctionToolParameter(
-                name="path",
-                type="string",
-                description="仓库内文件相对路径。",
-                required=True,
-            ),
-            FunctionToolParameter(
-                name="line",
-                type="integer",
-                description="1-based 目标行号，通常来自 finding 或 search_symbols。",
-                required=True,
-            ),
-        ),
     )
-
-    def execute(self, path: str, line: int) -> ToolExecutionResult:
+    def execute(
+        self,
+        path: Annotated[str, ToolArg("仓库内文件相对路径。")],
+        line: Annotated[int, ToolArg("1-based 目标行号，通常来自 finding 或 search_symbols。")],
+    ) -> ToolExecutionResult:
         normalized_line = self._normalize_positive_line(line)
         if isinstance(normalized_line, ToolExecutionResult):
             return normalized_line

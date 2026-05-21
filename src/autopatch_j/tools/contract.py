@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Protocol
+from types import UnionType
+from typing import Annotated, Any, Protocol, Union, get_args, get_origin, get_type_hints
 
 from autopatch_j.tools.names import FunctionToolName
+
+
+_FUNCTION_TOOL_META_ATTR = "__autopatch_function_tool__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,34 +26,97 @@ class FunctionToolSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class FunctionToolParameter:
-    """LLM function_call 的单个参数声明。"""
+class ToolArg:
+    """LLM function_call 参数说明，配合 typing.Annotated 写在 execute 签名上。"""
 
-    name: str
-    type: str
     description: str
-    required: bool = False
 
-    def to_schema_property(self) -> dict[str, str]:
-        return {
-            "type": self.type,
-            "description": self.description,
+
+@dataclass(frozen=True, slots=True)
+class FunctionToolMeta:
+    """装饰器保存的工具名称和用途说明。"""
+
+    name: FunctionToolName
+    description: str
+
+
+def function_tool(name: FunctionToolName, description: str):
+    """声明本地工具对 LLM 暴露的名称和用途，参数 schema 从 execute 签名生成。"""
+
+    def decorator(func):
+        setattr(func, _FUNCTION_TOOL_META_ATTR, FunctionToolMeta(name=name, description=description))
+        return func
+
+    return decorator
+
+
+def build_function_tool_spec(execute_method: Any) -> FunctionToolSpec:
+    """从带 @function_tool 的 execute 方法签名生成 OpenAI-compatible tool spec。"""
+    func = getattr(execute_method, "__func__", execute_method)
+    meta = getattr(func, _FUNCTION_TOOL_META_ATTR, None)
+    if not isinstance(meta, FunctionToolMeta):
+        raise TypeError(f"{func.__qualname__} 缺少 @function_tool 声明。")
+
+    signature = inspect.signature(func)
+    type_hints = get_type_hints(func, include_extras=True)
+    properties: dict[str, dict[str, str]] = {}
+    required: list[str] = []
+
+    for parameter in signature.parameters.values():
+        if parameter.name == "self":
+            continue
+        if parameter.kind not in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}:
+            raise TypeError(f"{func.__qualname__}.{parameter.name} 使用了不支持的参数类型。")
+
+        annotation = type_hints.get(parameter.name)
+        value_type, tool_arg = _parse_tool_arg(func.__qualname__, parameter.name, annotation)
+        properties[parameter.name] = {
+            "type": _json_schema_type(func.__qualname__, parameter.name, value_type),
+            "description": tool_arg.description,
         }
+        if parameter.default is inspect.Parameter.empty:
+            required.append(parameter.name)
+
+    return FunctionToolSpec(
+        name=meta.name,
+        description=meta.description,
+        parameters={
+            "type": "object",
+            "properties": properties,
+            "required": required,
+        },
+    )
 
 
-def build_function_parameters(*parameters: FunctionToolParameter) -> dict[str, Any]:
-    """
-    生成 OpenAI-compatible function parameters schema。
+def _parse_tool_arg(qualname: str, parameter_name: str, annotation: Any) -> tuple[Any, ToolArg]:
+    if annotation is None:
+        raise TypeError(f"{qualname}.{parameter_name} 缺少 Annotated[..., ToolArg(...)] 参数声明。")
+    if get_origin(annotation) is not Annotated:
+        raise TypeError(f"{qualname}.{parameter_name} 必须使用 Annotated[..., ToolArg(...)]。")
 
-    工具仍然暴露普通 JSON schema dict，但声明参数时集中使用这个 helper，
-    避免每个工具重复手写 properties/required 结构导致字段名漂移。
-    """
+    value_type, *metadata = get_args(annotation)
+    tool_args = [item for item in metadata if isinstance(item, ToolArg)]
+    if len(tool_args) != 1:
+        raise TypeError(f"{qualname}.{parameter_name} 必须且只能声明一个 ToolArg。")
+    return value_type, tool_args[0]
 
-    return {
-        "type": "object",
-        "properties": {parameter.name: parameter.to_schema_property() for parameter in parameters},
-        "required": [parameter.name for parameter in parameters if parameter.required],
+
+def _json_schema_type(qualname: str, parameter_name: str, value_type: Any) -> str:
+    if get_origin(value_type) in {Union, UnionType}:
+        non_none_types = [item for item in get_args(value_type) if item is not type(None)]
+        if len(non_none_types) != 1:
+            raise TypeError(f"{qualname}.{parameter_name} 使用了不支持的 Union 类型。")
+        value_type = non_none_types[0]
+
+    type_mapping = {
+        str: "string",
+        int: "integer",
+        bool: "boolean",
+        float: "number",
     }
+    if value_type not in type_mapping:
+        raise TypeError(f"{qualname}.{parameter_name} 使用了不支持的参数类型：{value_type!r}。")
+    return type_mapping[value_type]
 
 
 @dataclass(slots=True)
@@ -101,22 +169,29 @@ class FunctionTool:
     子类只负责声明 schema 和执行本地能力；流程推进、入队和用户确认由上层 workflow 决定。
     """
 
-    spec: ClassVar[FunctionToolSpec]
-
     def __init__(self, context: ToolRuntimeContext | None = None) -> None:
         self.context = context
 
+    @classmethod
+    def spec(cls) -> FunctionToolSpec:
+        cached = cls.__dict__.get("_function_tool_spec_cache")
+        if isinstance(cached, FunctionToolSpec):
+            return cached
+        spec = build_function_tool_spec(cls.execute)
+        setattr(cls, "_function_tool_spec_cache", spec)
+        return spec
+
     @property
     def name(self) -> str:
-        return self.spec.json_name
+        return self.spec().json_name
 
     @property
     def description(self) -> str:
-        return self.spec.description
+        return self.spec().description
 
     @property
     def parameters(self) -> dict[str, Any]:
-        return self.spec.parameters
+        return self.spec().parameters
 
     def require_context(self) -> ToolRuntimeContext:
         if self.context is None:

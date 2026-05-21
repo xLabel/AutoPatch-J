@@ -12,11 +12,12 @@ def test_tools_root_exports_only_tool_infrastructure() -> None:
         "FunctionTool",
         "FunctionToolCatalog",
         "FunctionToolName",
-        "FunctionToolParameter",
         "FunctionToolSpec",
+        "ToolArg",
         "ToolExecutionResult",
         "ToolRuntimeContext",
-        "build_function_parameters",
+        "build_function_tool_spec",
+        "function_tool",
     ]
     assert not any(
         hasattr(tools, concrete_tool_name)
@@ -51,6 +52,8 @@ def test_catalog_exports_stable_function_call_schema() -> None:
     assert propose_patch["parameters"]["required"] == ["file_path", "old_string", "new_string", "rationale"]
     assert revise_patch["parameters"]["required"] == ["file_path", "old_string", "new_string", "rationale"]
     assert propose_patch["parameters"]["properties"].keys() == revise_patch["parameters"]["properties"].keys()
+    assert propose_patch["parameters"]["properties"]["file_path"]["type"] == "string"
+    assert propose_patch["parameters"]["properties"]["associated_finding_id"]["type"] == "string"
 
     assert "源码读取工具" in propose_patch["description"]
     assert "old_string 不匹配" in propose_patch["description"]
@@ -58,3 +61,7 @@ def test_catalog_exports_stable_function_call_schema() -> None:
     assert "只是询问补丁含义" in revise_patch["description"]
     assert "不会影响后续补丁队列" in revise_patch["description"]
     assert "read_source_context" in propose_patch["parameters"]["properties"]["old_string"]["description"]
+
+    read_context = schema_by_name[FunctionToolName.READ_SOURCE_CONTEXT.value]
+    assert read_context["parameters"]["required"] == ["path", "line"]
+    assert read_context["parameters"]["properties"]["line"]["type"] == "integer"

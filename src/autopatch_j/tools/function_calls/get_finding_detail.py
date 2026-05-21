@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import re
+from typing import Annotated
 
 from autopatch_j.tools.contract import (
     FunctionTool,
-    FunctionToolParameter,
-    FunctionToolSpec,
+    ToolArg,
     ToolExecutionResult,
-    build_function_parameters,
+    function_tool,
 )
 from autopatch_j.tools.names import FunctionToolName
 
@@ -19,23 +19,14 @@ class GetFindingDetailTool(FunctionTool):
     只把 CLI 摘要里的 F1/F2 还原为扫描器证据，不触发新扫描，也不生成补丁。
     """
 
-    spec = FunctionToolSpec(
+    @function_tool(
         name=FunctionToolName.GET_FINDING_DETAIL,
         description=(
             "读取最新扫描快照中的单个 finding 详情。用于把 F1/F2 这类逻辑句柄还原为规则 ID、"
             "文件位置、问题描述和当前源码片段。不会触发新扫描，也不会生成补丁。"
         ),
-        parameters=build_function_parameters(
-            FunctionToolParameter(
-                name="finding_id",
-                type="string",
-                description="摘要表中的 finding 句柄，如 F1 或 F2。",
-                required=True,
-            )
-        ),
     )
-
-    def execute(self, finding_id: str) -> ToolExecutionResult:
+    def execute(self, finding_id: Annotated[str, ToolArg("摘要表中的 finding 句柄，如 F1 或 F2。")]) -> ToolExecutionResult:
         context = self.require_context()
         artifact_manager = context.artifact_manager
 

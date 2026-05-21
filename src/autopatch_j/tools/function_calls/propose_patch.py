@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from autopatch_j.tools.contract import FunctionTool, FunctionToolSpec, ToolExecutionResult
+from typing import Annotated
+
+from autopatch_j.tools.contract import FunctionTool, ToolArg, ToolExecutionResult, function_tool
 from autopatch_j.tools.function_calls.patch_result import build_patch_success_result
-from autopatch_j.tools.function_calls.patch_schema import PATCH_DRAFT_PARAMETERS
 from autopatch_j.tools.names import FunctionToolName
 from autopatch_j.tools.search_replace_draft_builder import (
     PatchDraftAction,
@@ -17,23 +18,30 @@ class ProposePatchTool(FunctionTool):
     工具不改文件、不入队；workflow 会在 ReAct 成功结束后统一确认入队。
     """
 
-    spec = FunctionToolSpec(
+    @function_tool(
         name=FunctionToolName.PROPOSE_PATCH,
         description=(
             "生成一个新的 search-replace 补丁草稿。调用前必须先用 get_finding_detail 或源码读取工具确认目标源码和 old_string。"
             "如果 old_string 不匹配，必须重新读取源码后再修正参数，不要猜测代码片段。"
             "执行后不会修改文件系统，也不会直接写入补丁队列；草稿会在本轮任务成功后由 workflow 处理。"
         ),
-        parameters=PATCH_DRAFT_PARAMETERS,
     )
-
     def execute(
         self,
-        file_path: str,
-        old_string: str,
-        new_string: str,
-        rationale: str,
-        associated_finding_id: str | None = None,
+        file_path: Annotated[str, ToolArg("仓库内目标 Java 文件的相对路径，必须来自 finding 详情或源码读取工具结果。")],
+        old_string: Annotated[
+            str,
+            ToolArg(
+                "要替换的原始代码精确片段；调用前必须用 get_finding_detail、read_source_context、"
+                "read_source_block 或 read_source_file 确认，必须和当前源码完全一致，不要省略缩进或上下文。"
+            ),
+        ],
+        new_string: Annotated[str, ToolArg("替换后的完整代码片段，只包含 old_string 对应区域的新内容。")],
+        rationale: Annotated[str, ToolArg("简要说明为什么这样修复，以及修复依据来自哪个 finding 或源码证据。")],
+        associated_finding_id: Annotated[
+            str | None,
+            ToolArg("关联的 finding 句柄，如 F1。处理扫描 finding 时必须传入；无 finding 的轻量复核可省略。"),
+        ] = None,
     ) -> ToolExecutionResult:
         context = self.require_context()
         draft_result = SearchReplaceDraftBuilder(context).build(
