@@ -42,7 +42,7 @@ autopatch-j> 看一下这个项目里有没有空指针风险
 ```
 
 - 优先执行本地静态扫描。
-- finding 进入队列后逐项推进。
+- finding 进入队列后逐项推进；`F1`、`F2` 这类句柄只在当前扫描快照内有效。
 - Agent 基于 finding 和源码证据生成最小补丁。
 - 候选补丁先由 Workflow 接收，再进入人工确认队列。
 
@@ -91,6 +91,8 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 原则：`Workflow owns state, Agent owns reasoning` / `Function Calls are gated by intent`
 
 **证据优先的修复链路**：默认扫描器是 Semgrep，负责产出可定位的 finding；LLM 基于 finding、源码片段和当前 scope 做取证、解释和最小修复。补丁不是聊天回复，而是包含目标文件、关联 finding、unified diff、修复理由和校验状态的 review item，进入人工确认队列后由用户决定 `apply`、`discard` 或继续反馈。PMD、SpotBugs、Checkstyle 当前作为 planned scanner 展示。
+
+`F1`、`F2` 等 finding 句柄绑定到当前扫描快照，不作为跨扫描的全局 ID；补丁会记录对应扫描快照和扫描器规则 ID，避免历史扫描结果串线。
 
 原则：`Scanner provides evidence, LLM performs triage` / `Patch is a review item, not a chat reply`
 
@@ -231,7 +233,13 @@ Windows 测试入口：
 run_on_windows.bat
 ```
 
-脚本会检查 Python 环境、创建 `.venv`、同步依赖，并默认进入内置演示工程：
+macOS 测试入口：
+
+```bash
+bash run_on_macos.sh
+```
+
+脚本会检查 Python 环境、创建 `.venv`、同步依赖，macOS 入口还会初始化 managed Semgrep runtime，并默认进入内置演示工程：
 
 ```text
 examples/demo-repo
