@@ -61,10 +61,7 @@ class CliSummaryProvider:
         lines = [
             "项目轻量上下文:",
             f"- 项目根目录名: {self.repo_root.name}",
-            (
-                f"- 索引统计: 文件 {stats.get('file', 0)}，类 {stats.get('class', 0)}，"
-                f"方法 {stats.get('method', 0)}，总计 {stats.get('total', 0)}"
-            ),
+            f"- 索引统计: {self._format_symbol_stats(stats)}",
             f"- 主要顶层目录: {', '.join(root_dirs[:8]) if root_dirs else '无'}",
         ]
         metadata = self._read_project_metadata()
@@ -114,3 +111,18 @@ class CliSummaryProvider:
             return ""
         return "项目说明/构建文件摘录:\n" + "\n".join(snippets)
 
+    def _format_symbol_stats(self, stats: dict[str, int]) -> str:
+        labels = (
+            ("file", "文件"),
+            ("class", "类"),
+            ("interface", "接口"),
+            ("enum", "枚举"),
+            ("record", "record"),
+            ("constructor", "构造器"),
+            ("method", "方法"),
+        )
+        parts = [f"{label} {stats.get(kind, 0)}" for kind, label in labels if stats.get(kind, 0)]
+        if not parts:
+            parts = ["文件 0"]
+        parts.append(f"总计 {stats.get('total', 0)}")
+        return "，".join(parts)

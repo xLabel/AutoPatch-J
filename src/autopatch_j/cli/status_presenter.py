@@ -54,10 +54,7 @@ class StatusPresenter:
         table.add_row(self._label("补丁缓冲区"), buffer_status)
 
         stats = runtime.symbol_indexer.get_stats()
-        stats_text = (
-            f"文件:{stats.get('file', 0)} | 类:{stats.get('class', 0)} | "
-            f"方法:{stats.get('method', 0)} (总计:{stats.get('total', 0)})"
-        )
+        stats_text = self._format_symbol_stats(stats)
         table.add_row(self._label("符号索引"), self._value(stats_text))
         table.add_row(self._label("符号提取"), self._symbol_extract_status(runtime))
 
@@ -102,6 +99,22 @@ class StatusPresenter:
         if last_error:
             status_text.append(f" ({last_error})", style=MUTED_STYLE)
         return status_text
+
+    def _format_symbol_stats(self, stats: dict[str, int]) -> str:
+        ordered_kinds = ("file", "class", "interface", "enum", "record", "constructor", "method")
+        labels = {
+            "file": "文件",
+            "class": "类",
+            "interface": "接口",
+            "enum": "枚举",
+            "record": "record",
+            "constructor": "构造器",
+            "method": "方法",
+        }
+        parts = [f"{labels[kind]}:{stats.get(kind, 0)}" for kind in ordered_kinds if stats.get(kind, 0)]
+        if not parts:
+            parts = ["文件:0"]
+        return " | ".join(parts) + f" (总计:{stats.get('total', 0)})"
 
     def _tree_sitter_status(self) -> str:
         try:

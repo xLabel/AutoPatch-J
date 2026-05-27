@@ -141,6 +141,62 @@ def test_symbol_indexer_extracts_class_and_method_when_tree_sitter_available(
     assert status["last_error"] is None
 
 
+def test_symbol_indexer_extracts_extended_java_symbol_kinds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "Demo.java").write_text("interface Api {}", encoding="utf-8")
+
+    class FakeNode:
+        def __init__(self, text: str, line: int) -> None:
+            self.text = text.encode("utf-8")
+            self.start_point = (line, 0)
+
+    class FakeQueryCursor:
+        def __init__(self, _query) -> None:
+            pass
+
+        def captures(self, _root_node):
+            return {
+                "interface.name": [FakeNode("Api", 0)],
+                "enum.name": [FakeNode("Mode", 1)],
+                "record.name": [FakeNode("UserRecord", 2)],
+                "constructor.name": [FakeNode("Demo", 3)],
+            }
+
+    class FakeLanguage:
+        def __init__(self, _capsule) -> None:
+            pass
+
+    class FakeParser:
+        def __init__(self, _language: FakeLanguage) -> None:
+            pass
+
+        def parse(self, _content: bytes):
+            return types.SimpleNamespace(root_node=object())
+
+    class FakeQuery:
+        def __init__(self, _language, _query_str) -> None:
+            pass
+
+    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(
+        Language=FakeLanguage,
+        Parser=FakeParser,
+        Query=FakeQuery,
+        QueryCursor=FakeQueryCursor,
+    ))
+    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
+
+    symbol_indexer = SymbolIndex(tmp_path)
+    stats = symbol_indexer.rebuild_index()
+
+    assert stats.get("interface") == 1
+    assert stats.get("enum") == 1
+    assert stats.get("record") == 1
+    assert stats.get("constructor") == 1
+    assert any(entry.kind == "record" for entry in symbol_indexer.search("UserRecord"))
+
+
 def test_symbol_indexer_marks_symbol_extract_degraded_when_runtime_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

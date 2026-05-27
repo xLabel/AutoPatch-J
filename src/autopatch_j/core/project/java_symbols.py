@@ -25,9 +25,21 @@ class JavaSymbolExtractor:
         query = Query(
             language,
             "(class_declaration name: (identifier) @class.name) "
-            "(method_declaration name: (identifier) @method.name)",
+            "(method_declaration name: (identifier) @method.name) "
+            "(interface_declaration name: (identifier) @interface.name) "
+            "(enum_declaration name: (identifier) @enum.name) "
+            "(record_declaration name: (identifier) @record.name) "
+            "(constructor_declaration name: (identifier) @constructor.name)",
         )
         captures = QueryCursor(query).captures(tree.root_node)
+        kind_by_tag = {
+            "class.name": "class",
+            "method.name": "method",
+            "interface.name": "interface",
+            "enum.name": "enum",
+            "record.name": "record",
+            "constructor.name": "constructor",
+        }
 
         for tag, nodes in captures.items():
             for node in nodes:
@@ -35,7 +47,7 @@ class JavaSymbolExtractor:
                     SymbolIndexEntry(
                         path=rel_path,
                         name=node.text.decode("utf-8"),
-                        kind="class" if tag == "class.name" else "method",
+                        kind=kind_by_tag.get(tag, "symbol"),
                         line=node.start_point[0] + 1,
                         container=rel_path,
                         mtime=mtime,

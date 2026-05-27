@@ -177,6 +177,24 @@ def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> No
     ]
 
 
+def test_scope_service_directory_expansion_ignores_generated_dirs(tmp_path: Path) -> None:
+    repo_root = tmp_path
+    src_dir = repo_root / "src" / "main" / "java" / "demo"
+    generated_dir = repo_root / "src" / "main" / "java" / "demo" / "target"
+    generated_dir.mkdir(parents=True)
+    (src_dir / "User.java").write_text("class User {}", encoding="utf-8")
+    (generated_dir / "Generated.java").write_text("class Generated {}", encoding="utf-8")
+
+    symbol_indexer = SymbolIndex(repo_root)
+    symbol_indexer.rebuild_index()
+    service = ScopeResolver(repo_root, symbol_indexer, ignored_dirs={"target"})
+
+    scope = service.resolve("@src/main/java/demo 检查代码")
+
+    assert scope is not None
+    assert scope.focus_files == ["src/main/java/demo/User.java"]
+
+
 def test_scope_service_rejects_class_and_method_mentions(tmp_path: Path) -> None:
     repo_root = tmp_path
     demo_dir = repo_root / "src" / "main" / "java" / "demo"

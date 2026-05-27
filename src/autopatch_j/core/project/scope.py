@@ -110,6 +110,8 @@ class ScopeResolver:
                 rel_path = to_repo_relative_path(self.repo_root, full_path)
             except UnsafeRepoPathError:
                 continue
+            if any(part in self.ignored_dirs for part in Path(rel_path).parts):
+                continue
             if rel_path not in java_files:
                 java_files.append(rel_path)
         return java_files
