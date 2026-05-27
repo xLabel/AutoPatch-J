@@ -142,7 +142,7 @@ class CodeAuditWorkflow:
             raise
 
     def _commit_or_mark_failed(self, backlog: list[FindingTask], finding: FindingTask) -> None:
-        if self._commit_proposed_patch():
+        if self._commit_proposed_patch(finding):
             self.services.runtime.backlog_manager.mark_patch_ready(backlog, finding.finding_id)
         else:
             self._mark_finding_failed(
@@ -169,10 +169,12 @@ class CodeAuditWorkflow:
             error_message=error_message,
         )
 
-    def _commit_proposed_patch(self) -> bool:
+    def _commit_proposed_patch(self, finding: FindingTask | None = None) -> bool:
         runtime = self.services.runtime
         draft = runtime.agent.session.pop_proposed_patch_draft()
         if draft is None:
+            return False
+        if finding is not None and draft.associated_finding_id != finding.finding_id:
             return False
         runtime.workspace_manager.add_patch(draft)
         return True

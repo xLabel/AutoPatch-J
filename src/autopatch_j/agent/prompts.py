@@ -230,12 +230,15 @@ def build_patch_revise_user_prompt(
     user_text: str,
 ) -> str:
     draft = current_item.draft
+    finding_handles = ", ".join(current_item.finding_ids) if current_item.finding_ids else "无"
     return (
         f"当前待重写补丁文件: {current_item.file_path}\n"
+        f"当前补丁关联 finding: {finding_handles}\n"
         f"当前补丁意图: {draft.rationale or '无说明'}\n"
         f"当前补丁差异:\n{draft.diff}\n\n"
         f"用户反馈:\n{user_text}\n"
         "请只重写当前补丁，不要修改、删除或重建后续补丁。"
+        "如果当前补丁有关联 finding，revise_patch 的 associated_finding_id 必须保持当前关联，不要切换到其他 F 编号。"
         "如果用户反馈只是要求解释补丁，请直接回答，不要调用 revise_patch。"
         "如果需要提交修订结果，必须调用 revise_patch。"
     )

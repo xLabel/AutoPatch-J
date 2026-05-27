@@ -66,12 +66,15 @@ class AutoPatchCli:
 
     def reset_project_state(self) -> None:
         if self.runtime is not None:
+            self.runtime.agent.shutdown(wait=False)
             self.runtime.agent.reset_history(clear_memory=True)
             self.runtime.artifact_manager.clear_project_state()
         self.clear_runtime()
         self.is_first_run = True
 
     def clear_runtime(self) -> None:
+        if self.runtime is not None:
+            self.runtime.agent.shutdown(wait=False)
         self.runtime = None
         self.input_router = None
         self.agent_presenter = None
@@ -79,6 +82,8 @@ class AutoPatchCli:
 
     def _finalize_cli_exit(self, message: str | None = None) -> None:
         self.reset_agent_session()
+        if self.runtime is not None:
+            self.runtime.agent.shutdown(wait=False)
         if message:
             self.renderer.print(message)
 

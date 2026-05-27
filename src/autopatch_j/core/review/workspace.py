@@ -64,7 +64,7 @@ class ReviewWorkspaceManager:
     def add_patch(self, draft: SearchReplacePatchDraft) -> None:
         with self.edit() as workspace:
             new_item_index = len(workspace.patch_items) + 1
-            finding_ids = [draft.target_check_id] if draft.target_check_id else []
+            finding_ids = [draft.associated_finding_id] if draft.associated_finding_id else []
             review_item = ReviewPatchItem(
                 item_id=f"item-{new_item_index}",
                 file_path=draft.file_path,
@@ -83,7 +83,22 @@ class ReviewWorkspaceManager:
             current_item = workspace.current_patch()
             if current_item is None:
                 return False
-            finding_ids = [draft.target_check_id] if draft.target_check_id else list(current_item.finding_ids)
+            current_finding_ids = list(current_item.finding_ids)
+            if (
+                draft.associated_finding_id
+                and current_finding_ids
+                and draft.associated_finding_id not in current_finding_ids
+            ):
+                return False
+            finding_ids = [draft.associated_finding_id] if draft.associated_finding_id else current_finding_ids
+            if draft.associated_finding_id is None and current_finding_ids:
+                draft.associated_finding_id = current_finding_ids[0]
+            if draft.source_scan_id is None:
+                draft.source_scan_id = current_item.draft.source_scan_id
+            if draft.target_check_id is None:
+                draft.target_check_id = current_item.draft.target_check_id
+            if draft.target_snippet is None:
+                draft.target_snippet = current_item.draft.target_snippet
             replacement_item = ReviewPatchItem(
                 item_id=current_item.item_id,
                 file_path=draft.file_path,

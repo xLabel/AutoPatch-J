@@ -52,12 +52,14 @@ def _item(
             validation_message="ok",
             validation_errors=[],
             rationale=f"fix {finding_id}",
-            target_check_id=finding_id,
+            associated_finding_id=finding_id,
+            source_scan_id="scan-1",
+            target_check_id="demo.rule",
         ),
     )
 
 
-def _patch_draft(new_string: str, finding_id: str = "F1") -> SearchReplacePatchDraft:
+def _patch_draft(new_string: str, finding_id: str | None = "F1") -> SearchReplacePatchDraft:
     return SearchReplacePatchDraft(
         file_path="src/main/java/demo/User.java",
         old_string="old",
@@ -67,7 +69,9 @@ def _patch_draft(new_string: str, finding_id: str = "F1") -> SearchReplacePatchD
         status="ok",
         message="ok",
         rationale=f"fix {finding_id}",
-        target_check_id=finding_id,
+        associated_finding_id=finding_id,
+        source_scan_id="scan-1" if finding_id else None,
+        target_check_id="demo.rule" if finding_id else None,
     )
 
 
@@ -148,6 +152,18 @@ def test_handle_status_renders_without_runtime(cli: AutoPatchCli) -> None:
     assert "Tree-sitter" in cells
 
 
+def test_clear_runtime_shuts_down_agent(cli: AutoPatchCli) -> None:
+    assert cli.runtime is not None
+    shutdown = MagicMock()
+    cli.runtime.agent.shutdown = shutdown
+
+    cli.clear_runtime()
+
+    assert cli.runtime is None
+    assert cli.input_router is None
+    shutdown.assert_called_once_with(wait=False)
+
+
 def test_doctor_command_is_removed(cli: AutoPatchCli) -> None:
     cli.command_router.handle_command("/doctor")
 
@@ -206,7 +222,9 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> N
         status="ok",
         message="ok",
         rationale="better fix",
-        target_check_id="F1",
+        associated_finding_id="F1",
+        source_scan_id="scan-1",
+        target_check_id="demo.rule",
     )
 
     def revise_current(*args, **kwargs):
@@ -288,6 +306,24 @@ def test_process_single_finding_does_not_commit_without_staged_patch(cli: AutoPa
     assert cli.agent_runner.run.call_args.kwargs["suppress_answer_output"] is True
 
 
+def test_process_single_finding_rejects_patch_for_different_finding(cli: AutoPatchCli) -> None:
+    finding = _finding("F1")
+    backlog = [finding]
+
+    def run_agent(*args, **kwargs):
+        cli.runtime.agent.session.set_proposed_patch_draft(_patch_draft("wrong-finding", "F2"))
+        return [_tool_message("ok", "F1")]
+
+    cli.agent_runner.run = MagicMock(side_effect=run_agent)
+
+    cli.input_router.code_audit_workflow._process_single_finding(finding, "audit", backlog)
+
+    workspace = cli.runtime.workspace_manager.load()
+    assert workspace.patch_items == []
+    assert finding.status.value == "failed"
+    assert finding.last_error_code == "NO_PROPOSED_PATCH_DRAFT"
+
+
 def test_finding_retry_commits_only_retry_patch(cli: AutoPatchCli) -> None:
     finding = _finding("F1")
     backlog = [finding]
@@ -335,7 +371,7 @@ def test_zero_finding_review_commits_staged_patch(cli: AutoPatchCli) -> None:
     )
 
     def run_agent(*args, **kwargs):
-        cli.runtime.agent.session.set_proposed_patch_draft(_patch_draft("zero-fix", "F1"))
+        cli.runtime.agent.session.set_proposed_patch_draft(_patch_draft("zero-fix", None))
         return [_tool_message("ok", "F1")]
 
     cli.agent_runner.run = MagicMock(side_effect=run_agent)
@@ -346,6 +382,29 @@ def test_zero_finding_review_commits_staged_patch(cli: AutoPatchCli) -> None:
     assert len(workspace.patch_items) == 1
     assert workspace.patch_items[0].draft.new_string == "zero-fix"
     cli.renderer.print_no_issue_panel.assert_not_called()
+
+
+def test_review_apply_failure_keeps_current_patch_pending(cli: AutoPatchCli) -> None:
+    workspace = ReviewWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=CodeScope(
+            kind=CodeScopeKind.PROJECT,
+            source_roots=[],
+            focus_files=[],
+            is_locked=False,
+        ),
+        latest_scan_id="scan-1",
+        patch_items=[_item("item-1")],
+        current_patch_index=0,
+    )
+    cli.runtime.workspace_manager.save(workspace)
+    cli.command_handlers.handle_apply = MagicMock(return_value=False)
+
+    cli.input_router.handle_review_input("apply", workspace.patch_items[0])
+
+    updated = cli.runtime.workspace_manager.load()
+    assert updated.current_patch_index == 0
+    assert updated.patch_items[0].status is PatchReviewStatus.PENDING
 
 
 def test_cli_wires_llm_intent_classifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

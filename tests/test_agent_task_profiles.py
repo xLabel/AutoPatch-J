@@ -180,6 +180,20 @@ def test_reset_history_keeps_memory_unless_explicitly_cleared(tmp_path: Path) ->
     assert memory["working_memory"]["recent_turns"] == []
 
 
+def test_agent_shutdown_discards_and_stops_memory_scheduler(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    agent = _build_agent(tmp_path, mock_llm)
+    scheduler = MagicMock()
+    agent.memory_summary_scheduler = scheduler
+
+    agent.shutdown()
+    agent.shutdown()
+
+    scheduler.discard_pending_results.assert_called_once()
+    scheduler.shutdown.assert_called_once_with(wait=False)
+    assert agent.memory_summary_scheduler is None
+
+
 def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     mock_llm.chat.return_value = LLMResponse(content="done")

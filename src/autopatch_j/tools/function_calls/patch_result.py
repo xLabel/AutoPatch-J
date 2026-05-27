@@ -25,7 +25,9 @@ def build_patch_success_result(
         summary=summary,
         payload={
             "file_path": file_path,
-            "associated_finding_id": associated_finding_id,
+            "associated_finding_id": draft.associated_finding_id or associated_finding_id,
+            "source_scan_id": draft.source_scan_id,
+            "target_check_id": draft.target_check_id,
             "validation": draft.validation.status,
         },
     )

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from typing import Any
 
+from autopatch_j.core.review.finding_lookup import FindingLookupError, FindingLookupResult, resolve_finding_handle
 from autopatch_j.core.patching import (
     OldStringNotFoundError,
     OldStringNotUniqueError,
@@ -57,18 +56,24 @@ class SearchReplaceDraftBuilder:
                 },
             )
 
+        associated_lookup: FindingLookupResult | None = None
+        resolved_associated_finding_id = associated_finding_id
         target_rule: str | None = None
         target_snippet: str | None = None
         if associated_finding_id:
-            finding = self._fetch_associated_finding(associated_finding_id)
-            if finding is not None:
-                target_rule = finding.check_id
-                target_snippet = self.context.code_fetcher.fetch_resolved_snippet(
-                    file_path=finding.path,
-                    start_line=finding.start_line,
-                    end_line=finding.end_line,
-                    fallback_snippet=finding.snippet,
-                )
+            associated_result = self._resolve_associated_finding(associated_finding_id, file_path)
+            if isinstance(associated_result, ToolExecutionResult):
+                return associated_result
+            associated_lookup = associated_result
+            resolved_associated_finding_id = associated_lookup.finding_id
+            finding = associated_lookup.finding
+            target_rule = finding.check_id
+            target_snippet = self.context.code_fetcher.fetch_resolved_snippet(
+                file_path=finding.path,
+                start_line=finding.start_line,
+                end_line=finding.end_line,
+                fallback_snippet=finding.snippet,
+            )
 
         try:
             new_code, patch_diff = self.context.patch_engine.create_draft(
@@ -79,7 +84,7 @@ class SearchReplaceDraftBuilder:
         except TargetFileNotFoundError as exc:
             return self._build_error_result(
                 file_path=file_path,
-                associated_finding_id=associated_finding_id,
+                associated_finding_id=resolved_associated_finding_id,
                 error_code="FILE_NOT_FOUND",
                 error_message=str(exc),
                 resolved_snippet=target_snippet,
@@ -89,7 +94,7 @@ class SearchReplaceDraftBuilder:
         except OldStringNotFoundError as exc:
             return self._build_error_result(
                 file_path=file_path,
-                associated_finding_id=associated_finding_id,
+                associated_finding_id=resolved_associated_finding_id,
                 error_code="OLD_STRING_NOT_FOUND",
                 error_message=str(exc),
                 resolved_snippet=target_snippet,
@@ -100,7 +105,7 @@ class SearchReplaceDraftBuilder:
             error_message = f"old_string 匹配了 {exc.occurrences} 处，匹配不唯一。"
             return self._build_error_result(
                 file_path=file_path,
-                associated_finding_id=associated_finding_id,
+                associated_finding_id=resolved_associated_finding_id,
                 error_code="OLD_STRING_NOT_UNIQUE",
                 error_message=error_message,
                 resolved_snippet=target_snippet,
@@ -116,7 +121,9 @@ class SearchReplaceDraftBuilder:
         else:
             status = "invalid"
 
-        message_status = "补丁起草成功并已通过语法校验。" if status == "ok" else validation_result.message
+        message_status = (
+            "补丁起草成功并已通过语法校验。" if status == "ok" else validation_result.message
+        )
         return SearchReplacePatchDraft(
             file_path=file_path,
             old_string=old_string,
@@ -128,6 +135,8 @@ class SearchReplaceDraftBuilder:
             rationale=rationale,
             source_hint=self.context.patch_source_hint,
             error_code=None,
+            associated_finding_id=associated_lookup.finding_id if associated_lookup else None,
+            source_scan_id=associated_lookup.scan_id if associated_lookup else None,
             target_check_id=target_rule,
             target_snippet=target_snippet,
         )
@@ -162,12 +171,42 @@ class SearchReplaceDraftBuilder:
             },
         )
 
-    def _fetch_associated_finding(self, finding_id: str) -> Any:
-        match = re.match(r"[Ff](\d+)", finding_id)
-        if match is None:
-            return None
-        finding_index = int(match.group(1)) - 1
-        scan_files = sorted(self.context.artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
-        if not scan_files:
-            return None
-        return self.context.artifact_manager.get_finding_by_index(scan_files[0].stem, finding_index)
+    def _resolve_associated_finding(
+        self,
+        finding_id: str,
+        file_path: str,
+    ) -> FindingLookupResult | ToolExecutionResult:
+        try:
+            lookup = resolve_finding_handle(self.context.artifact_manager, self.context.workspace_manager, finding_id)
+        except FindingLookupError as exc:
+            return ToolExecutionResult(
+                status="error",
+                message=f"关联 finding 解析失败：{exc}",
+                summary=f"关联 finding 解析失败: {finding_id}",
+                payload={
+                    "file_path": file_path,
+                    "associated_finding_id": finding_id,
+                    "error_code": exc.code,
+                    "error_message": str(exc),
+                },
+            )
+
+        requested_path = self.context.normalize_repo_path(file_path)
+        finding_path = self.context.normalize_repo_path(lookup.finding.path)
+        if requested_path != finding_path:
+            return ToolExecutionResult(
+                status="error",
+                message=(
+                    f"关联 finding 文件不匹配：{lookup.finding_id} 属于 {finding_path}，"
+                    f"但补丁目标是 {requested_path}。"
+                ),
+                summary=f"关联 finding 文件不匹配: {lookup.finding_id}",
+                payload={
+                    "file_path": requested_path,
+                    "associated_finding_id": lookup.finding_id,
+                    "source_scan_id": lookup.scan_id,
+                    "error_code": "ASSOCIATED_FINDING_FILE_MISMATCH",
+                    "error_message": "关联 finding 文件和补丁目标文件不一致。",
+                },
+            )
+        return lookup

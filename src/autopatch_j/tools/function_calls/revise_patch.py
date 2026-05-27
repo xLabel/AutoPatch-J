@@ -42,7 +42,7 @@ class RevisePatchTool(FunctionTool):
         rationale: Annotated[str, ToolArg("简要说明为什么这样修复，以及修复依据来自哪个 finding 或源码证据。")],
         associated_finding_id: Annotated[
             str | None,
-            ToolArg("关联的 finding 句柄，如 F1。处理扫描 finding 时必须传入；无 finding 的轻量复核可省略。"),
+            ToolArg("当前扫描快照内的 finding 句柄，如 F1。它不是扫描规则 ID；修订扫描 finding 补丁时必须保持当前关联。"),
         ] = None,
     ) -> ToolExecutionResult:
         context = self.require_context()

@@ -21,7 +21,8 @@ class PatchReviewWorkflow:
         normalized = user_input.lower()
 
         if normalized == "apply":
-            self.services.command_handlers.handle_apply(current_draft)
+            if not self.services.command_handlers.handle_apply(current_draft):
+                return True
             with runtime.workspace_manager.edit() as workspace:
                 workspace.mark_current_patch_applied()
                 if not workspace.has_pending_patch():
@@ -71,7 +72,7 @@ class PatchReviewWorkflow:
             self.services.renderer.print_error("当前没有待确认补丁")
             return
 
-        runtime.agent.session.set_focus_paths(self.services.summary_provider.fetch_review_scope_paths(current_item))
+        runtime.agent.session.set_focus_paths([current_item.file_path])
         runtime.agent.session.revised_patch_draft = None
 
         self.services.agent_runner.run(
@@ -86,5 +87,7 @@ class PatchReviewWorkflow:
         if revised_patch is None:
             self.services.renderer.print_agent_text("未生成修订补丁，当前补丁保持不变。")
             return
-        runtime.workspace_manager.replace_current_patch(revised_patch)
+        if not runtime.workspace_manager.replace_current_patch(revised_patch):
+            self.services.renderer.print_error("修订补丁未应用：不能切换当前补丁关联的 finding。")
+            return
         self.services.renderer.print_agent_text("已更新当前补丁，后续补丁保持不变。")

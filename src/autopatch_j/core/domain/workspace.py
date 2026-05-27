@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -40,6 +41,8 @@ class PatchDraftSnapshot:
     validation_errors: list[str] = field(default_factory=list)
     rationale: str | None = None
     source_hint: str | None = None
+    associated_finding_id: str | None = None
+    source_scan_id: str | None = None
     target_check_id: str | None = None
     target_snippet: str | None = None
 
@@ -55,6 +58,8 @@ class PatchDraftSnapshot:
             validation_errors=list(draft.validation.errors),
             rationale=draft.rationale,
             source_hint=draft.source_hint,
+            associated_finding_id=draft.associated_finding_id,
+            source_scan_id=draft.source_scan_id,
             target_check_id=draft.target_check_id,
             target_snippet=draft.target_snippet,
         )
@@ -70,12 +75,21 @@ class PatchDraftSnapshot:
             "validation_errors": list(self.validation_errors),
             "rationale": self.rationale,
             "source_hint": self.source_hint,
+            "associated_finding_id": self.associated_finding_id,
+            "source_scan_id": self.source_scan_id,
             "target_check_id": self.target_check_id,
             "target_snippet": self.target_snippet,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PatchDraftSnapshot:
+        associated_finding_id = (
+            str(data["associated_finding_id"]) if data.get("associated_finding_id") is not None else None
+        )
+        target_check_id = str(data["target_check_id"]) if data.get("target_check_id") is not None else None
+        if associated_finding_id is None and target_check_id and re.fullmatch(r"[Ff][1-9]\d*", target_check_id):
+            associated_finding_id = target_check_id.upper()
+            target_check_id = None
         return cls(
             file_path=str(data["file_path"]),
             old_string=str(data.get("old_string", "")),
@@ -86,7 +100,9 @@ class PatchDraftSnapshot:
             validation_errors=[str(item) for item in data.get("validation_errors", [])],
             rationale=str(data["rationale"]) if data.get("rationale") is not None else None,
             source_hint=str(data["source_hint"]) if data.get("source_hint") is not None else None,
-            target_check_id=str(data["target_check_id"]) if data.get("target_check_id") is not None else None,
+            associated_finding_id=associated_finding_id,
+            source_scan_id=str(data["source_scan_id"]) if data.get("source_scan_id") is not None else None,
+            target_check_id=target_check_id,
             target_snippet=str(data["target_snippet"]) if data.get("target_snippet") is not None else None,
         )
 
@@ -105,6 +121,8 @@ class PatchDraftSnapshot:
             message=self.validation_message,
             rationale=self.rationale,
             source_hint=self.source_hint,
+            associated_finding_id=self.associated_finding_id,
+            source_scan_id=self.source_scan_id,
             target_check_id=self.target_check_id,
             target_snippet=self.target_snippet,
         )
@@ -115,7 +133,8 @@ class ReviewPatchItem:
     """
     人工审核队列中的一个补丁项。
 
-    它把补丁草案、目标文件、关联 finding 和审核状态绑定在一起，供 CLI 展示和 apply/discard 推进。
+    它把补丁草案、目标文件、关联 finding 和审核状态绑定在一起，
+    供 CLI 展示和 apply/discard 推进。
     """
 
     item_id: str

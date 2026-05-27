@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import re
 from typing import Annotated
 
+from autopatch_j.core.review.finding_lookup import FindingLookupError, resolve_finding_handle
 from autopatch_j.tools.contract import (
     FunctionTool,
     ToolArg,
@@ -22,39 +22,22 @@ class GetFindingDetailTool(FunctionTool):
     @function_tool(
         name=FunctionToolName.GET_FINDING_DETAIL,
         description=(
-            "读取最新扫描快照中的单个 finding 详情。用于把 F1/F2 这类逻辑句柄还原为规则 ID、"
-            "文件位置、问题描述和当前源码片段。不会触发新扫描，也不会生成补丁。"
+            "读取当前工作台扫描快照中的单个 finding 详情。用于把当前 scan 内的 F1/F2 这类逻辑句柄"
+            "还原为规则 ID、文件位置、问题描述和当前源码片段。不会触发新扫描，也不会生成补丁。"
         ),
     )
     def execute(self, finding_id: Annotated[str, ToolArg("摘要表中的 finding 句柄，如 F1 或 F2。")]) -> ToolExecutionResult:
         context = self.require_context()
-        artifact_manager = context.artifact_manager
-
-        match = re.match(r"[Ff](\d+)", finding_id)
-        if not match:
+        try:
+            lookup = resolve_finding_handle(context.artifact_manager, context.workspace_manager, finding_id)
+        except FindingLookupError as exc:
             return ToolExecutionResult(
                 status="error",
-                message=f"无效的 finding 句柄格式：{finding_id}。请使用 F1、F2 这种格式。",
+                message=str(exc),
                 summary=f"获取失败: {finding_id}",
+                payload={"finding_id": finding_id, "error_code": exc.code, "error_message": str(exc)},
             )
-
-        finding_index = int(match.group(1)) - 1
-        scan_files = sorted(artifact_manager.findings_dir.glob("scan-*.json"), reverse=True)
-        if not scan_files:
-            return ToolExecutionResult(
-                status="error",
-                message="系统中未找到扫描记录，请先发起一次代码检查。",
-                summary="获取失败: 未找到扫描记录",
-            )
-
-        active_scan_id = scan_files[0].stem
-        finding = artifact_manager.get_finding_by_index(active_scan_id, finding_index)
-        if not finding:
-            return ToolExecutionResult(
-                status="error",
-                message=f"无法从快照 {active_scan_id} 中取回句柄为 {finding_id} 的详情。",
-                summary=f"获取失败: 未找到 finding {finding_id}",
-            )
+        finding = lookup.finding
 
         if not context.is_path_in_focus(finding.path):
             allowed = ", ".join(context.focus_paths)
@@ -71,15 +54,18 @@ class GetFindingDetailTool(FunctionTool):
             fallback_snippet=finding.snippet,
         )
 
-        message = f"漏洞详情取回成功 ({finding_id})\n"
+        message = f"漏洞详情取回成功 ({lookup.finding_id}, scan: {lookup.scan_id})\n"
         message += f"- **规则 ID**: {finding.check_id}\n"
         message += f"- **文件位置**: {finding.path}:{finding.start_line}\n"
         message += f"- **漏洞描述**: {finding.message}\n"
         message += f"- **代码证据**:\n```java\n{finding.snippet}\n```"
+        payload = finding.to_dict()
+        payload["scan_id"] = lookup.scan_id
+        payload["finding_id"] = lookup.finding_id
 
         return ToolExecutionResult(
             status="ok",
             message=message,
-            summary=f"已获取 finding 详情: {finding_id}",
-            payload=finding.to_dict(),
+            summary=f"已获取 finding 详情: {lookup.finding_id}",
+            payload=payload,
         )

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import Agent
+from autopatch_j.core.domain import ReviewWorkspace, WorkspaceStatus
 from autopatch_j.core.review import ProjectArtifactStore
 from autopatch_j.core.project import SourceReader
 from autopatch_j.core.project import SymbolIndex
@@ -117,6 +118,109 @@ def test_get_finding_detail_repairs_legacy_bad_snippet_from_snapshot(tmp_path: P
     assert result.status == "ok"
     assert 'return user.getName().equals("admin");' in result.message
     assert "requires login" not in result.message
+    assert result.payload["finding_id"] == "F1"
+    assert str(result.payload["scan_id"]).startswith("scan-")
+
+
+def test_get_finding_detail_uses_workspace_scan_before_newer_scan(tmp_path: Path) -> None:
+    first_file = tmp_path / "First.java"
+    second_file = tmp_path / "Second.java"
+    first_file.write_text("class First { void run() {} }", encoding="utf-8")
+    second_file.write_text("class Second { void run() {} }", encoding="utf-8")
+
+    agent = _build_agent(tmp_path)
+    first_scan_id = agent.session.artifact_manager.save_scan_result(
+        ScanResult(
+            engine="semgrep",
+            scope=["First.java"],
+            targets=["First.java"],
+            status="ok",
+            message="ok",
+            findings=[
+                Finding(
+                    check_id="first.rule",
+                    path="First.java",
+                    start_line=1,
+                    end_line=1,
+                    severity="warning",
+                    message="first finding",
+                    snippet="class First { void run() {} }",
+                )
+            ],
+        )
+    )
+    agent.session.artifact_manager.save_scan_result(
+        ScanResult(
+            engine="semgrep",
+            scope=["Second.java"],
+            targets=["Second.java"],
+            status="ok",
+            message="ok",
+            findings=[
+                Finding(
+                    check_id="second.rule",
+                    path="Second.java",
+                    start_line=1,
+                    end_line=1,
+                    severity="warning",
+                    message="second finding",
+                    snippet="class Second { void run() {} }",
+                )
+            ],
+        )
+    )
+    agent.session.workspace_manager.save(
+        ReviewWorkspace(
+            mode=WorkspaceStatus.REVIEWING,
+            scope=None,
+            latest_scan_id=first_scan_id,
+            patch_items=[],
+        )
+    )
+
+    result = GetFindingDetailTool(agent.session).execute("F1")
+
+    assert result.status == "ok"
+    assert result.payload["scan_id"] == first_scan_id
+    assert result.payload["check_id"] == "first.rule"
+
+
+def test_get_finding_detail_does_not_fallback_when_workspace_scan_is_missing(tmp_path: Path) -> None:
+    (tmp_path / "Demo.java").write_text("class Demo {}", encoding="utf-8")
+    agent = _build_agent(tmp_path)
+    agent.session.artifact_manager.save_scan_result(
+        ScanResult(
+            engine="semgrep",
+            scope=["Demo.java"],
+            targets=["Demo.java"],
+            status="ok",
+            message="ok",
+            findings=[
+                Finding(
+                    check_id="demo.rule",
+                    path="Demo.java",
+                    start_line=1,
+                    end_line=1,
+                    severity="warning",
+                    message="demo finding",
+                    snippet="class Demo {}",
+                )
+            ],
+        )
+    )
+    agent.session.workspace_manager.save(
+        ReviewWorkspace(
+            mode=WorkspaceStatus.REVIEWING,
+            scope=None,
+            latest_scan_id="scan-missing",
+            patch_items=[],
+        )
+    )
+
+    result = GetFindingDetailTool(agent.session).execute("F1")
+
+    assert result.status == "error"
+    assert result.payload["error_code"] == "SCAN_ARTIFACT_NOT_FOUND"
 
 
 def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_path: Path) -> None:
@@ -166,4 +270,7 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
     pending = agent.session.proposed_patch_draft
     assert result.status in {"ok", "invalid"}
     assert pending is not None
+    assert pending.associated_finding_id == "F1"
+    assert pending.source_scan_id is not None
+    assert pending.target_check_id == "autopatch-j.java.correctness.unsafe-equals-order"
     assert pending.target_snippet == 'return user.getName().equals("admin");'

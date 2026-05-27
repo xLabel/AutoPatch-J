@@ -71,6 +71,32 @@ def test_backlog_manager_detects_retryable_old_string_error() -> None:
     assert decision.error_code == "OLD_STRING_NOT_FOUND"
 
 
+def test_backlog_manager_normalizes_finding_id_before_matching_tool_payload() -> None:
+    service = FindingBacklog()
+    current_item = service.build_from_scan_result(_scan_result())[0]
+
+    decision = service.infer_attempt_decision(
+        current_item=current_item,
+        messages=[
+            {
+                "role": "tool",
+                "name": "propose_patch",
+                "tool_status": "error",
+                "tool_payload": {
+                    "file_path": "src/main/java/demo/AppConfig.java",
+                    "associated_finding_id": "f1",
+                    "error_code": "OLD_STRING_NOT_FOUND",
+                    "error_message": "not found",
+                },
+                "content": "补丁提案生成失败",
+            }
+        ],
+    )
+
+    assert decision.outcome is AuditAttemptOutcome.RETRYABLE_ERROR
+    assert decision.error_code == "OLD_STRING_NOT_FOUND"
+
+
 def test_backlog_manager_marks_patch_ready_and_failure() -> None:
     service = FindingBacklog()
     backlog = service.build_from_scan_result(_scan_result())

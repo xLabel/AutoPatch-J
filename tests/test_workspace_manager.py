@@ -46,7 +46,9 @@ def _item(item_id: str, file_path: str, finding_id: str) -> ReviewPatchItem:
             validation_message="ok",
             validation_errors=[],
             rationale=f"fix {finding_id}",
-            target_check_id=finding_id,
+            associated_finding_id=finding_id,
+            source_scan_id="scan-1",
+            target_check_id="demo.rule",
             target_snippet="snippet",
         ),
     )
@@ -159,7 +161,9 @@ def test_workspace_manager_replace_current_patch_keeps_queue_order(tmp_path: Pat
         status="ok",
         message="ok",
         rationale="better fix",
-        target_check_id="F1",
+        associated_finding_id="F1",
+        source_scan_id="scan-5",
+        target_check_id="demo.rule",
     )
 
     replaced = service.replace_current_patch(replacement)
@@ -171,3 +175,31 @@ def test_workspace_manager_replace_current_patch_keeps_queue_order(tmp_path: Pat
     assert workspace.patch_items[0].draft.new_string == "better"
     assert workspace.patch_items[0].draft.rationale == "better fix"
     assert workspace.patch_items[1].draft.rationale == "fix F2"
+
+
+def test_workspace_manager_rejects_revision_that_switches_finding(tmp_path: Path) -> None:
+    service = ReviewWorkspaceManager(ProjectArtifactStore(tmp_path))
+    service.initialize_review(
+        scope=_scope(),
+        latest_scan_id="scan-6",
+        patch_items=[_item("item-1", "src/main/java/demo/User.java", "F1")],
+    )
+    replacement = SearchReplacePatchDraft(
+        file_path="src/main/java/demo/User.java",
+        old_string="old",
+        new_string="wrong finding",
+        diff="wrong diff",
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+        rationale="wrong finding",
+        associated_finding_id="F2",
+        source_scan_id="scan-6",
+        target_check_id="demo.rule",
+    )
+
+    replaced = service.replace_current_patch(replacement)
+    workspace = service.load()
+
+    assert replaced is False
+    assert workspace.patch_items[0].draft.new_string == "new"

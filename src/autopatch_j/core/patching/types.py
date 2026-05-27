@@ -63,5 +63,7 @@ class SearchReplacePatchDraft:
     rationale: str | None = None
     source_hint: str | None = None
     error_code: str | None = None
+    associated_finding_id: str | None = None
+    source_scan_id: str | None = None
     target_check_id: str | None = None
     target_snippet: str | None = None

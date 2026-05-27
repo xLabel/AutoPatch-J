@@ -180,6 +180,13 @@ class Agent:
         self.messages = []
         self.session.clear_cache(clear_memory=clear_memory)
 
+    def shutdown(self, wait: bool = False) -> None:
+        if self.memory_summary_scheduler is None:
+            return
+        self.memory_summary_scheduler.discard_pending_results()
+        self.memory_summary_scheduler.shutdown(wait=wait)
+        self.memory_summary_scheduler = None
+
     @property
     def model_label(self) -> str:
         return self.llm.model if self.llm else "LLM Not Configured"

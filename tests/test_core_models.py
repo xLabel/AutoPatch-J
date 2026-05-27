@@ -40,7 +40,9 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
                     validation_errors=[],
                     rationale="rationale",
                     source_hint="LLM 二次复核（静态扫描未报出问题）",
-                    target_check_id="F1",
+                    associated_finding_id="F1",
+                    source_scan_id="scan-1",
+                    target_check_id="demo.rule",
                     target_snippet="snippet",
                 ),
             )
@@ -61,8 +63,29 @@ def test_active_workspace_round_trip_preserves_nested_models() -> None:
     assert current is not None
     assert current.status is PatchReviewStatus.PENDING
     assert current.draft.source_hint == "LLM 二次复核（静态扫描未报出问题）"
-    assert current.draft.target_check_id == "F1"
+    assert current.draft.associated_finding_id == "F1"
+    assert current.draft.source_scan_id == "scan-1"
+    assert current.draft.target_check_id == "demo.rule"
     assert current.draft.to_patch_draft().validation.message == "ok"
+
+
+def test_legacy_snapshot_migrates_f_handle_out_of_target_check_id() -> None:
+    snapshot = PatchDraftSnapshot.from_dict(
+        {
+            "file_path": "src/main/java/demo/User.java",
+            "old_string": "old",
+            "new_string": "new",
+            "diff": "diff",
+            "validation_status": "ok",
+            "validation_message": "ok",
+            "target_check_id": "F1",
+        }
+    )
+
+    assert snapshot.associated_finding_id == "F1"
+    assert snapshot.target_check_id is None
+    assert snapshot.to_patch_draft().associated_finding_id == "F1"
+    assert snapshot.to_patch_draft().target_check_id is None
 
 
 def test_fetch_current_patch_item_returns_none_for_out_of_bounds_cursor() -> None:

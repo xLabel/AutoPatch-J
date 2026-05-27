@@ -50,7 +50,7 @@ class ProjectArtifactStore:
         try:
             data = json.loads(target_path.read_text(encoding="utf-8"))
             return ScanResult.from_dict(data)
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             return None
 
     def get_finding_by_index(self, artifact_id: str, index: int) -> Finding | None:

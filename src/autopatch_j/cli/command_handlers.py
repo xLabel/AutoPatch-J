@@ -109,14 +109,14 @@ class CommandHandlers:
         stats = runtime.symbol_indexer.rebuild_index()
         self.host.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
 
-    def handle_apply(self, pending: SearchReplacePatchDraft) -> None:
+    def handle_apply(self, pending: SearchReplacePatchDraft) -> bool:
         runtime = self._require_runtime()
         if runtime is None:
-            return
+            return False
         self.host.renderer.print_step(f"正在应用补丁至 {pending.file_path}...")
         if not runtime.patch_engine.apply_patch(pending):
             self.host.renderer.print_error("应用失败。")
-            return
+            return False
 
         self.host.renderer.print_success("补丁已应用")
 
@@ -126,6 +126,7 @@ class CommandHandlers:
                 self.host.renderer.print_success(result.message)
             else:
                 self.host.renderer.print_error(result.message)
+        return True
 
     def handle_discard(self) -> None:
         self.host.renderer.print_agent_text("已丢弃当前草案")
