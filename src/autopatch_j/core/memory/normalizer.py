@@ -15,6 +15,7 @@ from .constants import (
     MEMORY_VERSION,
     ORDINARY_INTENTS,
 )
+from .models import LongTermMemoryItem, MemoryDocument, MemoryTopic, RecentTurn, RepoProfile
 from .text_utils import (
     clip_text,
     generate_id,
@@ -32,73 +33,52 @@ class MemoryNormalizer:
         if not isinstance(raw, dict) or raw.get("version") != MEMORY_VERSION:
             return self.empty()
 
-        memory = self.empty()
-        memory["version"] = MEMORY_VERSION
-        memory["updated_at"] = str(raw.get("updated_at") or memory["updated_at"])
         working = raw.get("working_memory") if isinstance(raw.get("working_memory"), dict) else {}
         long_term = raw.get("long_term_memory") if isinstance(raw.get("long_term_memory"), dict) else {}
-        memory["working_memory"]["recent_turns"] = self._normalize_recent_turns(working.get("recent_turns"))
-        memory["working_memory"]["active_topics"] = self._normalize_topics(working.get("active_topics"))
-        memory["repo_profile"] = self._normalize_repo_profile(raw.get("repo_profile"))
-        memory["long_term_memory"]["durable_preferences"] = self._normalize_long_term_items(
-            long_term.get("durable_preferences"),
-            "durable_preference",
-        )
-        memory["long_term_memory"]["project_notes"] = self._normalize_long_term_items(
-            long_term.get("project_notes"),
-            "project_note",
-        )
-        return memory
+        return MemoryDocument(
+            updated_at=str(raw.get("updated_at") or now_iso()),
+            recent_turns=self._normalize_recent_turns(working.get("recent_turns")),
+            active_topics=self._normalize_topics(working.get("active_topics")),
+            repo_profile=self._normalize_repo_profile(raw.get("repo_profile")),
+            durable_preferences=self._normalize_long_term_items(
+                long_term.get("durable_preferences"),
+                "durable_preference",
+            ),
+            project_notes=self._normalize_long_term_items(
+                long_term.get("project_notes"),
+                "project_note",
+            ),
+        ).to_dict()
 
     def empty(self) -> dict[str, Any]:
-        return {
-            "version": MEMORY_VERSION,
-            "updated_at": now_iso(),
-            "working_memory": {
-                "active_topics": [],
-                "recent_turns": [],
-            },
-            "repo_profile": {
-                "build_tool": "",
-                "java_version": "",
-                "project_name": "",
-                "modules": [],
-                "frameworks": [],
-                "source_files": [],
-                "updated_at": "",
-            },
-            "long_term_memory": {
-                "durable_preferences": [],
-                "project_notes": [],
-            },
-        }
+        return MemoryDocument.empty().to_dict()
 
-    def _normalize_recent_turns(self, raw_turns: Any) -> list[dict[str, Any]]:
+    def _normalize_recent_turns(self, raw_turns: Any) -> list[RecentTurn]:
         if not isinstance(raw_turns, list):
             return []
-        turns: list[dict[str, Any]] = []
+        turns: list[RecentTurn] = []
         allowed_intents = {intent.value for intent in ORDINARY_INTENTS}
         for raw in raw_turns:
             if not isinstance(raw, dict) or raw.get("intent") not in allowed_intents:
                 continue
             turns.append(
-                {
-                    "id": non_empty(raw.get("id"), generate_id("turn")),
-                    "intent": raw["intent"],
-                    "user_text": clip_text(raw.get("user_text", ""), MAX_USER_TEXT),
-                    "assistant_text": clip_text(raw.get("assistant_text", ""), MAX_ASSISTANT_TEXT),
-                    "summary": clip_text(raw.get("summary", ""), MAX_SUMMARY),
-                    "summary_status": "ready" if raw.get("summary_status") == "ready" else "pending",
-                    "scope_paths": normalize_scope_paths(raw.get("scope_paths")),
-                    "created_at": non_empty(raw.get("created_at"), now_iso()),
-                }
+                RecentTurn(
+                    id=non_empty(raw.get("id"), generate_id("turn")),
+                    intent=raw["intent"],
+                    user_text=clip_text(raw.get("user_text", ""), MAX_USER_TEXT),
+                    assistant_text=clip_text(raw.get("assistant_text", ""), MAX_ASSISTANT_TEXT),
+                    summary=clip_text(raw.get("summary", ""), MAX_SUMMARY),
+                    summary_status="ready" if raw.get("summary_status") == "ready" else "pending",
+                    scope_paths=normalize_scope_paths(raw.get("scope_paths")),
+                    created_at=non_empty(raw.get("created_at"), now_iso()),
+                )
             )
         return turns[-MAX_RECENT_TURNS:]
 
-    def _normalize_topics(self, raw_topics: Any) -> list[dict[str, Any]]:
+    def _normalize_topics(self, raw_topics: Any) -> list[MemoryTopic]:
         if not isinstance(raw_topics, list):
             return []
-        topics: list[dict[str, Any]] = []
+        topics: list[MemoryTopic] = []
         for raw in raw_topics:
             if not isinstance(raw, dict):
                 continue
@@ -107,20 +87,20 @@ class MemoryNormalizer:
             if not label or not summary:
                 continue
             topics.append(
-                {
-                    "id": non_empty(raw.get("id"), generate_id("topic")),
-                    "label": label,
-                    "summary": summary,
-                    "related_turn_ids": normalize_string_list(raw.get("related_turn_ids"), 20, 120),
-                    "last_touched_at": non_empty(raw.get("last_touched_at"), now_iso()),
-                }
+                MemoryTopic(
+                    id=non_empty(raw.get("id"), generate_id("topic")),
+                    label=label,
+                    summary=summary,
+                    related_turn_ids=normalize_string_list(raw.get("related_turn_ids"), 20, 120),
+                    last_touched_at=non_empty(raw.get("last_touched_at"), now_iso()),
+                )
             )
-        return sorted(topics, key=lambda item: item["last_touched_at"])[-MAX_ACTIVE_TOPICS:]
+        return sorted(topics, key=lambda item: item.last_touched_at)[-MAX_ACTIVE_TOPICS:]
 
-    def _normalize_long_term_items(self, raw_items: Any, item_type: str) -> list[dict[str, Any]]:
+    def _normalize_long_term_items(self, raw_items: Any, item_type: str) -> list[LongTermMemoryItem]:
         if not isinstance(raw_items, list):
             return []
-        items: list[dict[str, Any]] = []
+        items: list[LongTermMemoryItem] = []
         for raw in raw_items:
             if not isinstance(raw, dict):
                 continue
@@ -134,42 +114,40 @@ class MemoryNormalizer:
             if source != expected_source:
                 source = expected_source
             items.append(
-                {
-                    "id": non_empty(raw.get("id"), generate_id("mem")),
-                    "type": item_type,
-                    "label": label,
-                    "summary": summary,
-                    "status": "inactive" if raw.get("status") == "inactive" else "active",
-                    "source": source,
-                    "created_at": non_empty(raw.get("created_at"), now),
-                    "updated_at": non_empty(raw.get("updated_at"), now),
-                }
+                LongTermMemoryItem(
+                    id=non_empty(raw.get("id"), generate_id("mem")),
+                    type=item_type,
+                    label=label,
+                    summary=summary,
+                    status="inactive" if raw.get("status") == "inactive" else "active",
+                    source=source,
+                    created_at=non_empty(raw.get("created_at"), now),
+                    updated_at=non_empty(raw.get("updated_at"), now),
+                )
             )
-        return sorted(items, key=lambda item: (item["status"] == "active", item["updated_at"]))[
-            -MAX_LONG_TERM_ITEMS:
-        ]
+        return sorted(items, key=lambda item: (item.status == "active", item.updated_at))[-MAX_LONG_TERM_ITEMS:]
 
-    def _normalize_repo_profile(self, raw_profile: Any) -> dict[str, Any]:
+    def _normalize_repo_profile(self, raw_profile: Any) -> RepoProfile:
         if not isinstance(raw_profile, dict):
-            return self.empty()["repo_profile"]
-        return {
-            "build_tool": clip_text(raw_profile.get("build_tool", ""), MAX_REPO_PROFILE_TEXT),
-            "java_version": clip_text(raw_profile.get("java_version", ""), MAX_REPO_PROFILE_TEXT),
-            "project_name": clip_text(raw_profile.get("project_name", ""), MAX_REPO_PROFILE_TEXT),
-            "modules": normalize_string_list(
+            return RepoProfile()
+        return RepoProfile(
+            build_tool=clip_text(raw_profile.get("build_tool", ""), MAX_REPO_PROFILE_TEXT),
+            java_version=clip_text(raw_profile.get("java_version", ""), MAX_REPO_PROFILE_TEXT),
+            project_name=clip_text(raw_profile.get("project_name", ""), MAX_REPO_PROFILE_TEXT),
+            modules=normalize_string_list(
                 raw_profile.get("modules"),
                 MAX_REPO_PROFILE_ITEMS,
                 MAX_REPO_PROFILE_TEXT,
             ),
-            "frameworks": normalize_string_list(
+            frameworks=normalize_string_list(
                 raw_profile.get("frameworks"),
                 MAX_REPO_PROFILE_ITEMS,
                 MAX_REPO_PROFILE_TEXT,
             ),
-            "source_files": normalize_string_list(
+            source_files=normalize_string_list(
                 raw_profile.get("source_files"),
                 MAX_REPO_PROFILE_ITEMS,
                 MAX_REPO_PROFILE_TEXT,
             ),
-            "updated_at": non_empty(raw_profile.get("updated_at"), ""),
-        }
+            updated_at=non_empty(raw_profile.get("updated_at"), ""),
+        )
