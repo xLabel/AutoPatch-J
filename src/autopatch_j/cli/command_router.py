@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from autopatch_j.cli.commands import CLI_COMMAND_BY_NAME
 from autopatch_j.cli.command_handlers import CommandHandlers
 
 
@@ -20,19 +21,9 @@ class CommandRouter:
         parts = raw_cmd.split()
         cmd = parts[0].lower()
 
-        if cmd == "/init":
-            self.handlers.handle_init()
-        elif cmd == "/status":
-            self.handlers.handle_status()
-        elif cmd == "/reindex":
-            self.handlers.handle_reindex()
-        elif cmd == "/scanner":
-            self.handlers.handle_scanners()
-        elif cmd == "/reset":
-            self.handlers.handle_reset()
-        elif cmd == "/help":
-            self.handlers.handle_help()
-        elif cmd == "/quit":
-            self.handlers.host.request_exit()
-        else:
+        command = CLI_COMMAND_BY_NAME.get(cmd)
+        if command is None:
             self.renderer.print_error(f"未知命令：{cmd}")
+            return
+
+        getattr(self.handlers, command.handler_name)()

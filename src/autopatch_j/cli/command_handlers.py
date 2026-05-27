@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from rich.table import Table
 
+from autopatch_j.cli.commands import CLI_COMMANDS
 from autopatch_j.cli.render import DECISION_STYLE, SYSTEM_STYLE
 from autopatch_j.cli.runtime import CliRuntime
 from autopatch_j.cli.status_presenter import StatusPresenter
@@ -43,13 +44,9 @@ class CommandHandlers:
         sys_table = Table(show_header=True, header_style=f"bold {SYSTEM_STYLE}", box=None)
         sys_table.add_column("系统命令", style=SYSTEM_STYLE, width=15)
         sys_table.add_column("功能描述")
-        sys_table.add_row("/init", "初始化当前目录为 Java 项目并建立索引")
-        sys_table.add_row("/status", "查看当前项目状态与运行诊断")
-        sys_table.add_row("/scanner", "查看扫描器状态")
-        sys_table.add_row("/reindex", "重建代码索引")
-        sys_table.add_row("/reset", "重置工作台状态与对话历史")
-        sys_table.add_row("/help", "显示命令帮助")
-        sys_table.add_row("/quit", "安全退出程序")
+        for command in CLI_COMMANDS:
+            if command.show_in_help:
+                sys_table.add_row(command.name, command.help_description)
 
         act_table = Table(show_header=True, header_style=f"bold {DECISION_STYLE}", box=None)
         act_table.add_column("交互关键字", style=DECISION_STYLE, width=15)
@@ -71,6 +68,9 @@ class CommandHandlers:
 
     def handle_scanners(self) -> None:
         StatusPresenter(self.host.renderer).render_scanners(self.host.repo_root)
+
+    def handle_quit(self) -> None:
+        self.host.request_exit()
 
     def handle_init(self) -> None:
         if self.host.repo_root is None:

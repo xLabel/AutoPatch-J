@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from autopatch_j.cli.app import AutoPatchCli
+from autopatch_j.cli.commands import CLI_COMMANDS
 from autopatch_j.cli.command_router import CommandRouter
 from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.core.patching import SyntaxCheckResult
@@ -168,6 +169,22 @@ def test_doctor_command_is_removed(cli: AutoPatchCli) -> None:
     cli.command_router.handle_command("/doctor")
 
     cli.renderer.print_error.assert_called_once_with("未知命令：/doctor")
+
+
+def test_help_uses_registered_command_descriptions(cli: AutoPatchCli) -> None:
+    cli.command_handlers.handle_help()
+
+    table = cli.renderer.print_table.call_args_list[0].args[0]
+    cells = [str(cell) for column in table.columns for cell in column._cells]
+    expected = [
+        item
+        for command in CLI_COMMANDS
+        if command.show_in_help
+        for item in (command.name, command.help_description)
+    ]
+
+    for item in expected:
+        assert item in cells
 
 
 def test_handle_patch_explain_does_not_crash(cli: AutoPatchCli) -> None:

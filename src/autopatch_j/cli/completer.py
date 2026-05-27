@@ -4,6 +4,7 @@ import re
 from typing import Iterable, Callable
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent
 from prompt_toolkit.document import Document
+from autopatch_j.cli.commands import CLI_COMMANDS
 from autopatch_j.core.project import SymbolIndexEntry
 
 
@@ -23,15 +24,10 @@ class AutoPatchCompleter(Completer):
         self.mention_pattern = re.compile(r'@[\w\.]*')
         self.command_pattern = re.compile(r'/[\w]*')
         
-        # 定义所有可用指令及其描述
         self.commands = {
-            "/init": "初始化项目环境",
-            "/status": "查看系统状态",
-            "/scanner": "查看扫描器状态",
-            "/reindex": "刷新代码符号索引",
-            "/reset": "重置工作台状态与对话历史",
-            "/help": "显示命令帮助",
-            "/quit": "退出程序"
+            command.name: command.completion_description
+            for command in CLI_COMMANDS
+            if command.show_in_completion
         }
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterable[Completion]:
