@@ -153,6 +153,22 @@ def test_handle_status_renders_without_runtime(cli: AutoPatchCli) -> None:
     assert "Tree-sitter" in cells
 
 
+def test_scanner_command_separates_active_and_planned_scanners(cli: AutoPatchCli) -> None:
+    cli.command_handlers.handle_scanners()
+
+    active_table = cli.renderer.print_table.call_args_list[0].args[0]
+    planned_table = cli.renderer.print_table.call_args_list[1].args[0]
+    active_cells = [str(cell) for column in active_table.columns for cell in column._cells]
+    planned_cells = [str(cell) for column in planned_table.columns for cell in column._cells]
+
+    assert active_table.title == "当前扫描器"
+    assert planned_table.title == "计划接入"
+    assert "Semgrep" in active_cells
+    assert "SpotBugs" in planned_cells
+    assert "PMD" in planned_cells
+    assert "Checkstyle" in planned_cells
+
+
 def test_clear_runtime_shuts_down_agent(cli: AutoPatchCli) -> None:
     assert cli.runtime is not None
     shutdown = MagicMock()

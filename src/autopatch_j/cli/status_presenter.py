@@ -63,22 +63,46 @@ class StatusPresenter:
         return self._value(f"{scanner_meta.status} - {scanner_meta.reason or scanner_meta.description}")
 
     def render_scanners(self, repo_root: Path | None) -> None:
-        table = Table(title="扫描器状态", show_header=True, header_style=f"bold {SYSTEM_STYLE}")
+        table = Table(title="当前扫描器", show_header=True, header_style=f"bold {SYSTEM_STYLE}")
         table.add_column("名称", style=SYSTEM_STYLE, width=12)
         table.add_column("状态", width=25)
         table.add_column("版本", justify="center")
         table.add_column("说明")
 
-        for scanner in DEFAULT_SCANNER_CATALOG.all():
+        for scanner in DEFAULT_SCANNER_CATALOG.implemented():
             meta = scanner.get_meta(repo_root)
             table.add_row(
-                meta.name,
+                self._scanner_label(meta.name.value),
                 self._scanner_status_text(meta),
-                meta.version if meta.is_implemented else "-",
+                meta.version,
                 meta.reason or meta.description,
             )
 
         self.renderer.print_table(table)
+        self._render_planned_scanners()
+
+    def _render_planned_scanners(self) -> None:
+        planned_scanners = DEFAULT_SCANNER_CATALOG.planned()
+        if not planned_scanners:
+            return
+
+        table = Table(title="计划接入", show_header=True, header_style=f"bold {MUTED_STYLE}")
+        table.add_column("名称", style=MUTED_STYLE, width=12)
+        table.add_column("方向", style=MUTED_STYLE)
+
+        for scanner in planned_scanners:
+            meta = scanner.get_meta()
+            table.add_row(self._scanner_label(meta.name.value), meta.description)
+
+        self.renderer.print_table(table)
+
+    def _scanner_label(self, scanner_name: str) -> str:
+        return {
+            "semgrep": "Semgrep",
+            "spotbugs": "SpotBugs",
+            "pmd": "PMD",
+            "checkstyle": "Checkstyle",
+        }.get(scanner_name, scanner_name)
 
     def _scanner_status_text(self, meta: ScannerMeta) -> str:
         if meta.availability == "ready":
