@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
 
@@ -10,6 +11,13 @@ from autopatch_j.core.patching.types import (
     TargetFileNotFoundError,
 )
 from autopatch_j.core.project.repo_path import UnsafeRepoPathError, resolve_repo_path
+
+
+@dataclass(frozen=True, slots=True)
+class _DecodedFile:
+    content: str
+    encoding: str
+    safe_to_write: bool
 
 
 class SearchReplacePatchEngine:
@@ -35,7 +43,8 @@ class SearchReplacePatchEngine:
         if not target_path.exists() or not target_path.is_file():
             raise TargetFileNotFoundError("目标文件不存在。")
 
-        content = self._read_file_content(target_path)
+        decoded = self._read_file(target_path)
+        content = decoded.content
         norm_content = content.replace("\r\n", "\n")
         norm_old = old_string.replace("\r\n", "\n")
         norm_new = new_string.replace("\r\n", "\n")
@@ -55,7 +64,10 @@ class SearchReplacePatchEngine:
         if not target_path.exists():
             return False
 
-        content = self._read_file_content(target_path)
+        decoded = self._read_file(target_path)
+        if not decoded.safe_to_write:
+            return False
+        content = decoded.content
         newline = "\r\n" if "\r\n" in content else "\n"
 
         norm_content = content.replace("\r\n", "\n")
@@ -65,8 +77,11 @@ class SearchReplacePatchEngine:
             return False
 
         updated_norm = norm_content.replace(norm_old, norm_new, 1)
-        with open(target_path, "w", encoding="utf-8", newline=newline) as handle:
-            handle.write(updated_norm)
+        try:
+            with open(target_path, "w", encoding=decoded.encoding, newline=newline) as handle:
+                handle.write(updated_norm)
+        except (OSError, UnicodeEncodeError):
+            return False
         return True
 
     def _resolve_safe_path(self, file_path: str) -> Path:
@@ -75,15 +90,15 @@ class SearchReplacePatchEngine:
         except UnsafeRepoPathError as exc:
             raise PermissionError(f"安全风险拦截：路径 '{file_path}' 超出了项目根目录范围。") from exc
 
-    def _read_file_content(self, path: Path) -> str:
+    def _read_file(self, path: Path) -> _DecodedFile:
         raw_bytes = path.read_bytes()
         try:
-            return raw_bytes.decode("utf-8")
+            return _DecodedFile(raw_bytes.decode("utf-8"), "utf-8", True)
         except UnicodeDecodeError:
             try:
-                return raw_bytes.decode("gbk")
+                return _DecodedFile(raw_bytes.decode("gbk"), "gbk", True)
             except UnicodeDecodeError:
-                return raw_bytes.decode("utf-8", errors="replace")
+                return _DecodedFile(raw_bytes.decode("utf-8", errors="replace"), "utf-8", False)
 
     def _generate_unified_diff(self, file_path: str, old_text: str, new_text: str) -> str:
         old_lines = old_text.splitlines(keepends=True)

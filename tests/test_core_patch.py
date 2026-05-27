@@ -71,6 +71,51 @@ def test_windows_crlf_matching(tmp_path: Path):
     final_content = java_file.read_text(encoding="utf-8")
     assert "// Fixed" in final_content
 
+
+def test_apply_patch_preserves_gbk_encoding(tmp_path: Path):
+    java_file = tmp_path / "Legacy.java"
+    content = 'public class Legacy {\n    String label = "中文";\n    String mode = "old";\n}\n'
+    java_file.write_bytes(content.encode("gbk"))
+
+    engine = SearchReplacePatchEngine(tmp_path)
+    old_code = 'String mode = "old";'
+    new_code = 'String mode = "new";'
+    _, diff_c = engine.create_draft("Legacy.java", old_code, new_code)
+    draft = SearchReplacePatchDraft(
+        file_path="Legacy.java",
+        old_string=old_code,
+        new_string=new_code,
+        diff=diff_c,
+        validation=SyntaxCheckResult(status="ok", message=""),
+        status="ok",
+        message="",
+    )
+
+    assert engine.apply_patch(draft) is True
+    final_content = java_file.read_bytes().decode("gbk")
+    assert 'String label = "中文";' in final_content
+    assert 'String mode = "new";' in final_content
+
+
+def test_apply_patch_refuses_replacement_decoded_file(tmp_path: Path):
+    binary_like = tmp_path / "Broken.java"
+    binary_like.write_bytes(b'class Broken {\n    byte[] bad = "\\xff";\n}\xff')
+    engine = SearchReplacePatchEngine(tmp_path)
+    old_code = "class Broken"
+    new_code = "class Fixed"
+    _, diff_c = engine.create_draft("Broken.java", old_code, new_code)
+    draft = SearchReplacePatchDraft(
+        file_path="Broken.java",
+        old_string=old_code,
+        new_string=new_code,
+        diff=diff_c,
+        validation=SyntaxCheckResult(status="ok", message=""),
+        status="ok",
+        message="",
+    )
+
+    assert engine.apply_patch(draft) is False
+
 def test_create_draft_failures(tmp_path: Path):
     """验证物理门禁的拦截逻辑"""
     java_file = tmp_path / "Test.java"
