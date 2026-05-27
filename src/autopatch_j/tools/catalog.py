@@ -24,7 +24,7 @@ class FunctionToolCatalog:
     """
 
     def __init__(self, tools: Iterable[FunctionTool]) -> None:
-        self.tools: dict[str, FunctionTool] = {tool.name: tool for tool in tools}
+        self.tools = self._build_tool_map(tools)
 
     @classmethod
     def for_context(cls, context: ToolRuntimeContext) -> FunctionToolCatalog:
@@ -42,6 +42,17 @@ class FunctionToolCatalog:
 
     def get(self, name: ToolNameLike) -> FunctionTool | None:
         return self.tools.get(tool_name_value(name))
+
+    def _build_tool_map(self, tools: Iterable[FunctionTool]) -> dict[str, FunctionTool]:
+        result: dict[str, FunctionTool] = {}
+        for tool in tools:
+            # Touch the generated schema during catalog construction so tool
+            # contract errors fail fast in development, not during an LLM call.
+            tool.parameters
+            if tool.name in result:
+                raise ValueError(f"重复的 function_call 工具名：{tool.name}")
+            result[tool.name] = tool
+        return result
 
     def schemas(self, allowed_tool_names: Iterable[ToolNameLike]) -> list[dict[str, Any]]:
         schemas: list[dict[str, Any]] = []
