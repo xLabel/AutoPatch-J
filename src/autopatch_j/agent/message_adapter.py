@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+from autopatch_j.agent.messages import AgentMessage
 from autopatch_j.llm.dialects import ToolCall
 from autopatch_j.config import GlobalConfig
 from autopatch_j.tools.catalog import FunctionToolCatalog
@@ -30,14 +31,15 @@ class AgentMessageAdapter:
         result: list[dict[str, Any]] = [{"role": "system", "content": current_system_prompt}]
 
         for i, message in enumerate(messages):
-            new_message = self.fetch_llm_message(message)
+            agent_message = AgentMessage.from_record(message)
+            new_message = self.fetch_llm_message(agent_message)
 
-            if message.get("role") == "tool":
+            if agent_message.role == "tool":
                 is_recent = i >= len(messages) - 5
-                is_scan = message.get("name") == "scan_project"
+                is_scan = agent_message.name == "scan_project"
 
                 if not is_recent and not is_scan:
-                    content = str(message.get("content", ""))
+                    content = agent_message.content
                     if len(content) > 200:
                         new_message["content"] = content[:100] + "\n... [已脱水压缩] ..."
 
@@ -45,33 +47,33 @@ class AgentMessageAdapter:
 
         return result
 
-    def fetch_llm_message(self, message: dict[str, Any]) -> dict[str, Any]:
-        role = str(message.get("role", ""))
-        if role == "assistant":
+    def fetch_llm_message(self, message: AgentMessage | dict[str, Any]) -> dict[str, Any]:
+        agent_message = message if isinstance(message, AgentMessage) else AgentMessage.from_record(message)
+        if agent_message.role == "assistant":
             llm_message: dict[str, Any] = {
                 "role": "assistant",
-                "content": message.get("content", ""),
+                "content": agent_message.content,
             }
-            if message.get("tool_calls") is not None:
-                llm_message["tool_calls"] = message["tool_calls"]
+            if agent_message.tool_calls is not None:
+                llm_message["tool_calls"] = agent_message.tool_calls
 
-            reasoning = message.get("reasoning_content")
+            reasoning = agent_message.reasoning_content
             if reasoning is not None:
                 llm_message["reasoning_content"] = reasoning
             elif GlobalConfig.llm_reasoning_effort or "thinking" in GlobalConfig.llm_extra_body:
                 llm_message["reasoning_content"] = ""
             return llm_message
 
-        if role == "tool":
+        if agent_message.role == "tool":
             return {
                 "role": "tool",
-                "tool_call_id": message.get("tool_call_id", ""),
-                "content": message.get("content", ""),
+                "tool_call_id": agent_message.tool_call_id or "",
+                "content": agent_message.content,
             }
 
         return {
-            "role": role,
-            "content": message.get("content", ""),
+            "role": agent_message.role,
+            "content": agent_message.content,
         }
 
     def tool_schemas(self, allowed_tool_names: Iterable[ToolNameLike]) -> list[dict[str, Any]]:

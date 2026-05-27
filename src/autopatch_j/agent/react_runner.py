@@ -4,6 +4,7 @@ from typing import Any
 
 from autopatch_j.agent.callbacks import AgentCallbacks
 from autopatch_j.agent.message_adapter import AgentMessageAdapter
+from autopatch_j.agent.messages import AgentMessage
 from autopatch_j.agent.progress_guard import ReactProgressGuard, build_react_step_trace
 from autopatch_j.agent.tool_executor import ToolExecutor
 from autopatch_j.llm.client import LLMClient
@@ -43,7 +44,7 @@ class ReActRunner:
         if not self.llm:
             return "LLM 配置缺失。请设置 AUTOPATCH_LLM_API_KEY 后重启。"
 
-        self.messages.append({"role": "user", "content": user_text})
+        self.messages.append(AgentMessage.user(user_text).to_record())
         progress_guard = ReactProgressGuard()
         allowed_tools = set(allowed_tool_names)
 
@@ -58,16 +59,15 @@ class ReActRunner:
             )
 
             self.messages.append(
-                {
-                    "role": "assistant",
-                    "content": response.content or "...",
-                    "tool_calls": (
+                AgentMessage.assistant(
+                    content=response.content or "...",
+                    tool_calls=(
                         self.message_adapter.serialize_tool_calls(response.tool_calls)
                         if response.tool_calls
                         else None
                     ),
-                    "reasoning_content": response.reasoning_content,
-                }
+                    reasoning_content=response.reasoning_content,
+                ).to_record()
             )
 
             if not response.tool_calls:
@@ -82,14 +82,13 @@ class ReActRunner:
                     callbacks.on_observation(observation.message, observation.summary)
 
                 self.messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.call_id,
-                        "name": call.name,
-                        "content": observation.message,
-                        "tool_status": observation.status,
-                        "tool_payload": observation.payload,
-                    }
+                    AgentMessage.tool(
+                        tool_call_id=call.call_id,
+                        name=call.name,
+                        content=observation.message,
+                        status=observation.status,
+                        payload=observation.payload,
+                    ).to_record()
                 )
 
                 guard_result = progress_guard.record(build_react_step_trace(call, observation))
