@@ -53,5 +53,6 @@ target/
 .pdm-build/
 
 # Local-only workspace artifacts
+.codegraph/
 AGENTS.local.md
 CLAUDE.local.md
