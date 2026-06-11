@@ -98,7 +98,7 @@ def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
     llm = FakeLLM()
     service = ReviewRouteClassifier(llm=llm)  # type: ignore[arg-type]
 
-    route = service.classify_route(
+    result = service.classify_route_with_diagnostics(
         user_text="重新检查一下",
         has_pending_review=True,
         requested_scope=None,
@@ -106,7 +106,9 @@ def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
         current_scope=_scope(),
     )
 
-    assert route is ConversationRoute.NEW_TASK
+    assert result.route is ConversationRoute.NEW_TASK
+    assert result.source == "llm"
+    assert "react fallback used" in result.fallback_reason
     assert llm.purposes == [LLMCallPurpose.CLASSIFIER, LLMCallPurpose.REACT]
 
 
@@ -126,3 +128,14 @@ def test_continuity_judge_falls_back_when_llm_classifier_fails() -> None:
     )
 
     assert route is ConversationRoute.REVIEW_CONTINUE
+
+    result = service.classify_route_with_diagnostics(
+        user_text="解释一下",
+        has_pending_review=True,
+        requested_scope=None,
+        current_patch_file="src/main/java/demo/UserService.java",
+        current_scope=_scope(),
+    )
+    assert result.route is ConversationRoute.REVIEW_CONTINUE
+    assert result.source == "fallback"
+    assert "exception" in result.fallback_reason

@@ -24,9 +24,32 @@ class SourceReadToolBase(FunctionTool):
 
         if not full_path.exists():
             filename = Path(normalized_path).name
-            results = context.symbol_indexer.search(filename, limit=1)
-            if results:
-                normalized_path = results[0].path
+            results = context.symbol_indexer.search(filename, limit=20)
+            candidate_paths = []
+            for entry in results:
+                if Path(entry.path).name == filename and context.is_path_in_focus(entry.path):
+                    candidate_paths.append(entry.path)
+            candidate_paths = sorted(set(candidate_paths))
+            if len(candidate_paths) == 1:
+                normalized_path = candidate_paths[0]
+            elif len(candidate_paths) > 1:
+                candidates = "\n".join(f"- {path}" for path in candidate_paths[:10])
+                return ToolExecutionResult(
+                    status="error",
+                    message=(
+                        f"读取失败：路径不存在且同名候选不唯一：{normalized_path}\n"
+                        f"请改用明确路径：\n{candidates}"
+                    ),
+                    summary=f"读取失败: 同名候选不唯一 {filename}",
+                    payload={"path": normalized_path, "candidates": candidate_paths},
+                )
+            else:
+                return ToolExecutionResult(
+                    status="error",
+                    message=f"读取失败：找不到文件：{normalized_path}",
+                    summary=f"读取失败: {normalized_path}",
+                    payload={"path": normalized_path, "candidates": []},
+                )
 
         if not context.is_path_in_focus(normalized_path):
             allowed = ", ".join(context.focus_paths)

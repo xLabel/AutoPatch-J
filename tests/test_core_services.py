@@ -9,6 +9,7 @@ from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.user_input import (
     UserIntentClassifier,
     build_llm_user_intent_classifier,
+    build_llm_user_intent_classifier_with_diagnostics,
     parse_intent_label,
 )
 from autopatch_j.core.user_input.prompts import INTENT_CLASSIFIER_PROMPT, build_intent_classifier_user_prompt
@@ -65,6 +66,21 @@ def test_intent_detector_falls_back_when_llm_classifier_fails() -> None:
 
     assert service.classify("扫描代码", has_pending_review=False) is IntentType.GENERAL_CHAT
     assert service.classify("解释一下", has_pending_review=True) is IntentType.PATCH_EXPLAIN
+
+    result = service.classify_with_diagnostics("扫描代码", has_pending_review=False)
+    assert result.intent is IntentType.GENERAL_CHAT
+    assert result.source == "fallback"
+    assert "classifier exception" in result.fallback_reason
+
+
+def test_intent_detector_diagnostics_reports_rejected_patch_intent_without_pending_review() -> None:
+    service = UserIntentClassifier(classify_with_llm=lambda text, has_pending_review: IntentType.PATCH_REVISE)
+
+    result = service.classify_with_diagnostics("重写这个补丁", has_pending_review=False)
+
+    assert result.intent is IntentType.GENERAL_CHAT
+    assert result.source == "fallback"
+    assert "patch-only intent rejected" in result.fallback_reason
 
 
 def test_parse_llm_intent_accepts_single_valid_label() -> None:
@@ -141,6 +157,27 @@ def test_llm_intent_classifier_falls_back_to_react_when_fast_path_is_empty() -> 
     assert classifier is not None
     assert classifier("@LegacyConfig.java 检查代码", False) is IntentType.CODE_AUDIT
     assert llm.purposes == [LLMCallPurpose.CLASSIFIER, LLMCallPurpose.REACT]
+
+
+def test_intent_diagnostics_reports_successful_react_fallback() -> None:
+    class FakeResponse:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class FakeLLM:
+        def chat(self, messages, **kwargs):
+            if kwargs["purpose"] is LLMCallPurpose.CLASSIFIER:
+                return FakeResponse("")
+            return FakeResponse("code_audit")
+
+    classifier = build_llm_user_intent_classifier_with_diagnostics(FakeLLM())
+    service = UserIntentClassifier(classify_with_llm=classifier)
+
+    result = service.classify_with_diagnostics("@LegacyConfig.java 检查代码", has_pending_review=False)
+
+    assert result.intent is IntentType.CODE_AUDIT
+    assert result.source == "llm"
+    assert "react fallback used" in result.fallback_reason
 
 
 def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> None:

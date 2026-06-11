@@ -72,6 +72,57 @@ def test_read_source_file_keeps_full_file_guard(tmp_path: Path) -> None:
     assert "read_source_block/read_source_context" in result.message
 
 
+def test_read_source_file_corrects_missing_path_only_when_candidate_is_unique(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "demo" / "User.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("public class User {}", encoding="utf-8")
+
+    agent = _build_agent(tmp_path)
+    result = ReadSourceFileTool(agent.session).execute("wrong/User.java")
+
+    assert result.status == "ok"
+    assert "src/main/java/demo/User.java" in result.message
+
+
+def test_read_source_file_rejects_ambiguous_missing_path_candidates(tmp_path: Path) -> None:
+    first = tmp_path / "module-a" / "src" / "main" / "java" / "demo" / "User.java"
+    second = tmp_path / "module-b" / "src" / "main" / "java" / "demo" / "User.java"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_text("public class User {}", encoding="utf-8")
+    second.write_text("public class User {}", encoding="utf-8")
+
+    agent = _build_agent(tmp_path)
+    result = ReadSourceFileTool(agent.session).execute("wrong/User.java")
+
+    assert result.status == "error"
+    assert "同名候选不唯一" in result.message
+    assert "module-a/src/main/java/demo/User.java" in result.message
+    assert "module-b/src/main/java/demo/User.java" in result.message
+    assert result.payload["candidates"] == [
+        "module-a/src/main/java/demo/User.java",
+        "module-b/src/main/java/demo/User.java",
+    ]
+
+
+def test_read_source_file_filters_missing_path_candidates_by_focus(tmp_path: Path) -> None:
+    focused = tmp_path / "module-a" / "src" / "main" / "java" / "demo" / "User.java"
+    outside = tmp_path / "module-b" / "src" / "main" / "java" / "demo" / "User.java"
+    focused.parent.mkdir(parents=True)
+    outside.parent.mkdir(parents=True)
+    focused.write_text("public class User { String scope() { return \"focused\"; } }", encoding="utf-8")
+    outside.write_text("public class User { String scope() { return \"outside\"; } }", encoding="utf-8")
+
+    agent = _build_agent(tmp_path)
+    agent.session.set_focus_paths(["module-a/src/main/java/demo/User.java"])
+    result = ReadSourceFileTool(agent.session).execute("wrong/User.java")
+
+    assert result.status == "ok"
+    assert "focused" in result.message
+    assert "outside" not in result.message
+    assert "module-a/src/main/java/demo/User.java" in result.message
+
+
 def test_read_source_block_finds_method_when_line_is_inside_body(tmp_path: Path) -> None:
     source = tmp_path / "src" / "Demo.java"
     source.parent.mkdir(parents=True)
