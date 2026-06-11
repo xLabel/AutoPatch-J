@@ -86,15 +86,8 @@ class StatusPresenter:
         if not planned_scanners:
             return
 
-        table = Table(title="计划接入", show_header=True, header_style=f"bold {MUTED_STYLE}")
-        table.add_column("名称", style=MUTED_STYLE, width=12)
-        table.add_column("方向", style=MUTED_STYLE)
-
-        for scanner in planned_scanners:
-            meta = scanner.get_meta()
-            table.add_row(self._scanner_label(meta.name.value), meta.description)
-
-        self.renderer.print_table(table)
+        names = "、".join(self._scanner_label(scanner.name.value) for scanner in planned_scanners)
+        self.renderer.print_agent_text(f"计划接入：{names}")
 
     def _scanner_label(self, scanner_name: str) -> str:
         return {

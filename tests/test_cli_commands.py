@@ -8,6 +8,7 @@ import pytest
 from autopatch_j.cli.app import AutoPatchCli
 from autopatch_j.cli.commands import CLI_COMMANDS
 from autopatch_j.cli.command_router import CommandRouter
+from autopatch_j.config import GlobalConfig
 from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.core.patching import SyntaxCheckResult
 from autopatch_j.core.domain import (
@@ -22,6 +23,7 @@ from autopatch_j.core.domain import (
     PatchReviewStatus,
     WorkspaceStatus,
 )
+from autopatch_j.core.user_input import IntentClassificationResult, RouteClassificationResult
 
 
 @pytest.fixture
@@ -157,16 +159,12 @@ def test_scanner_command_separates_active_and_planned_scanners(cli: AutoPatchCli
     cli.command_handlers.handle_scanners()
 
     active_table = cli.renderer.print_table.call_args_list[0].args[0]
-    planned_table = cli.renderer.print_table.call_args_list[1].args[0]
     active_cells = [str(cell) for column in active_table.columns for cell in column._cells]
-    planned_cells = [str(cell) for column in planned_table.columns for cell in column._cells]
 
+    assert cli.renderer.print_table.call_count == 1
     assert active_table.title == "当前扫描器"
-    assert planned_table.title == "计划接入"
     assert "Semgrep" in active_cells
-    assert "SpotBugs" in planned_cells
-    assert "PMD" in planned_cells
-    assert "Checkstyle" in planned_cells
+    cli.renderer.print_agent_text.assert_any_call("计划接入：SpotBugs、PMD、Checkstyle")
 
 
 def test_clear_runtime_shuts_down_agent(cli: AutoPatchCli) -> None:
@@ -357,6 +355,28 @@ def test_process_single_finding_rejects_patch_for_different_finding(cli: AutoPat
     assert finding.last_error_code == "NO_PROPOSED_PATCH_DRAFT"
 
 
+def test_code_audit_stops_at_batch_limit(cli: AutoPatchCli, monkeypatch: pytest.MonkeyPatch) -> None:
+    backlog = [_finding("F1"), _finding("F2"), _finding("F3")]
+    workflow = cli.input_router.code_audit_workflow
+    workflow._prepare_audit_workspace = MagicMock(return_value=backlog)  # type: ignore[method-assign]
+
+    def mark_failed(finding: FindingTask, text: str, backlog: list[FindingTask]) -> None:
+        cli.runtime.backlog_manager.mark_failed(backlog, finding.finding_id, None, None)
+
+    workflow._process_single_finding = MagicMock(side_effect=mark_failed)  # type: ignore[method-assign]
+    monkeypatch.setattr(GlobalConfig, "audit_batch_limit", 2)
+
+    workflow.handle_code_audit("audit")
+
+    assert workflow._process_single_finding.call_count == 2
+    assert backlog[0].status.value == "failed"
+    assert backlog[1].status.value == "failed"
+    assert backlog[2].is_pending()
+    cli.renderer.print_agent_text.assert_any_call(
+        "本轮已处理 2 个 finding，仍有 1 个待处理。请确认当前补丁后再次发起检查继续处理。"
+    )
+
+
 def test_finding_retry_commits_only_retry_patch(cli: AutoPatchCli) -> None:
     finding = _finding("F1")
     backlog = [finding]
@@ -518,9 +538,15 @@ def test_handle_chat_switches_new_task_with_pending_review(cli: AutoPatchCli) ->
     )
     cli.runtime.workspace_manager.save(workspace)
     cli.runtime.conversation_router = MagicMock()
-    cli.runtime.conversation_router.classify_route.return_value = ConversationRoute.NEW_TASK
+    cli.runtime.conversation_router.classify_route_with_diagnostics.return_value = RouteClassificationResult(
+        route=ConversationRoute.NEW_TASK,
+        source="test",
+    )
     cli.runtime.intent_detector = MagicMock()
-    cli.runtime.intent_detector.classify.return_value = IntentType.GENERAL_CHAT
+    cli.runtime.intent_detector.classify_with_diagnostics.return_value = IntentClassificationResult(
+        intent=IntentType.GENERAL_CHAT,
+        source="test",
+    )
     cli.input_router.handle_general_chat = MagicMock()
 
     cli.input_router.handle_chat("@Foo.java explain code")
@@ -609,9 +635,15 @@ def test_handle_chat_maps_pending_code_explain_without_scope_to_patch_explain(cl
     )
     cli.runtime.workspace_manager.save(workspace)
     cli.runtime.conversation_router = MagicMock()
-    cli.runtime.conversation_router.classify_route.return_value = ConversationRoute.REVIEW_CONTINUE
+    cli.runtime.conversation_router.classify_route_with_diagnostics.return_value = RouteClassificationResult(
+        route=ConversationRoute.REVIEW_CONTINUE,
+        source="test",
+    )
     cli.runtime.intent_detector = MagicMock()
-    cli.runtime.intent_detector.classify.return_value = IntentType.CODE_EXPLAIN
+    cli.runtime.intent_detector.classify_with_diagnostics.return_value = IntentClassificationResult(
+        intent=IntentType.CODE_EXPLAIN,
+        source="test",
+    )
     cli.input_router.handle_patch_explain = MagicMock()
     cli.input_router.handle_code_explain = MagicMock()
 
@@ -636,9 +668,15 @@ def test_handle_chat_keeps_pending_patch_revise_route(cli: AutoPatchCli) -> None
     )
     cli.runtime.workspace_manager.save(workspace)
     cli.runtime.conversation_router = MagicMock()
-    cli.runtime.conversation_router.classify_route.return_value = ConversationRoute.REVIEW_CONTINUE
+    cli.runtime.conversation_router.classify_route_with_diagnostics.return_value = RouteClassificationResult(
+        route=ConversationRoute.REVIEW_CONTINUE,
+        source="test",
+    )
     cli.runtime.intent_detector = MagicMock()
-    cli.runtime.intent_detector.classify.return_value = IntentType.PATCH_REVISE
+    cli.runtime.intent_detector.classify_with_diagnostics.return_value = IntentClassificationResult(
+        intent=IntentType.PATCH_REVISE,
+        source="test",
+    )
     cli.input_router.handle_patch_revise = MagicMock()
 
     cli.input_router.handle_chat("重新写这个补丁")

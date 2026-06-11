@@ -7,6 +7,7 @@ from autopatch_j.cli.workflows.chat import ChatWorkflow
 from autopatch_j.cli.workflows.code_audit import CodeAuditWorkflow
 from autopatch_j.cli.workflows.patch_review import PatchReviewWorkflow
 from autopatch_j.core.domain import ConversationRoute, IntentType, ReviewPatchItem
+from autopatch_j.core.user_input import IntentClassificationResult, RouteClassificationResult
 
 
 class UserInputRouter:
@@ -49,25 +50,43 @@ class UserInputRouter:
         has_pending_review = workspace.has_pending_patch()
         requested_scope = runtime.scope_service.resolve(text, default_to_project=False)
         current_item = workspace.current_patch() if has_pending_review else None
-        route = runtime.conversation_router.classify_route(
+        route_result = runtime.conversation_router.classify_route_with_diagnostics(
             user_text=text,
             has_pending_review=has_pending_review,
             requested_scope=requested_scope,
             current_patch_file=current_item.file_path if current_item else None,
             current_scope=workspace.scope if has_pending_review else None,
         )
+        self._render_route_diagnostic(route_result)
+        route = route_result.route
 
         if route is ConversationRoute.COMMAND:
             return InputRoutingDecision(route=route, intent=None)
 
         if route is ConversationRoute.NEW_TASK:
             self.switch_to_new_task_if_needed(has_pending_review)
-            intent = runtime.intent_detector.classify(text, has_pending_review=False)
+            intent_result = runtime.intent_detector.classify_with_diagnostics(text, has_pending_review=False)
         else:
-            intent = runtime.intent_detector.classify(text, has_pending_review=True)
-            if intent is IntentType.CODE_EXPLAIN and has_pending_review and "@" not in text:
-                intent = IntentType.PATCH_EXPLAIN
+            intent_result = runtime.intent_detector.classify_with_diagnostics(text, has_pending_review=True)
+        intent = intent_result.intent
+        self._render_intent_diagnostic(intent_result)
+        if route is not ConversationRoute.NEW_TASK and intent is IntentType.CODE_EXPLAIN and has_pending_review and "@" not in text:
+            intent = IntentType.PATCH_EXPLAIN
         return InputRoutingDecision(route=route, intent=intent)
+
+    def _render_route_diagnostic(self, result: RouteClassificationResult) -> None:
+        if not self.services.debug_mode() or not result.used_fallback:
+            return
+        self.services.renderer.print_agent_text(
+            f"路由诊断：route 使用 fallback {result.route.value}，原因：{result.fallback_reason}"
+        )
+
+    def _render_intent_diagnostic(self, result: IntentClassificationResult) -> None:
+        if not self.services.debug_mode() or not result.used_fallback:
+            return
+        self.services.renderer.print_agent_text(
+            f"路由诊断：intent 使用 fallback {result.intent.value}，原因：{result.fallback_reason}"
+        )
 
     def switch_to_new_task_if_needed(self, has_pending_review: bool) -> None:
         runtime = self.services.runtime

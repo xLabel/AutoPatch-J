@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from autopatch_j.cli.agent_stream_presenter import AgentStreamPresenter
 from autopatch_j.core.domain import IntentType
+from autopatch_j.llm.options import LLMCallDiagnostic, LLMCallPurpose, LLMReasoningMode
 
 
 class _Workspace:
@@ -28,14 +29,28 @@ class _ChatFilter:
 
 
 class _Agent:
-    def __init__(self, session=None) -> None:
+    def __init__(self, session=None, llm=None) -> None:
         self.messages = []
         self.session = session
+        self.llm = llm
 
 
 class _Session:
     def build_memory_debug_summary(self, intent, user_text):
         return f"Memory 注入：{intent.value}:{user_text}"
+
+
+class _LlmWithDiagnostics:
+    diagnostics = [
+        LLMCallDiagnostic(
+            purpose=LLMCallPurpose.REACT,
+            stream=True,
+            reasoning=LLMReasoningMode.INHERIT,
+            max_tokens=None,
+            temperature=None,
+            status="ok",
+        )
+    ]
 
 
 def _build_agent_stream_presenter(
@@ -201,4 +216,18 @@ def test_agent_stream_presenter_shows_memory_debug_summary_only_in_debug_mode() 
     )
 
     stream.renderer.print_agent_text.assert_called_once_with("Memory 注入：code_explain:这个项目是干什么的")
+    stream.renderer.print.assert_not_called()
+
+
+def test_agent_stream_presenter_shows_llm_diagnostics_only_in_debug_mode() -> None:
+    stream = _build_agent_stream_presenter(debug_mode=True, agent=_Agent(llm=_LlmWithDiagnostics()))
+
+    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+        return ""
+
+    stream.run(prompt="check", agent_call=agent_call)
+
+    stream.renderer.print_agent_text.assert_called_once_with(
+        "LLM 调用诊断：purpose=react, stream=on, reasoning=inherit, status=ok"
+    )
     stream.renderer.print.assert_not_called()

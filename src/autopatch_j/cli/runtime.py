@@ -12,7 +12,11 @@ from autopatch_j.core.review import ProjectArtifactStore
 from autopatch_j.core.review import FindingBacklog
 from autopatch_j.core.chat_filter import ChatFilter
 from autopatch_j.core.project import SourceReader
-from autopatch_j.core.user_input import ReviewRouteClassifier, UserIntentClassifier, build_llm_user_intent_classifier
+from autopatch_j.core.user_input import (
+    ReviewRouteClassifier,
+    UserIntentClassifier,
+    build_llm_user_intent_classifier_with_diagnostics,
+)
 from autopatch_j.core.memory import MemoryManager
 from autopatch_j.core.patching import SearchReplacePatchEngine
 from autopatch_j.core.patching import PatchQualityVerifier
@@ -60,7 +64,9 @@ def build_cli_runtime(
     symbol_indexer = SymbolIndex(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
     patch_engine = SearchReplacePatchEngine(repo_root)
     code_fetcher = SourceReader(repo_root)
-    intent_detector = UserIntentClassifier(classify_with_llm=build_llm_user_intent_classifier(shared_llm))
+    intent_detector = UserIntentClassifier(
+        classify_with_llm=build_llm_user_intent_classifier_with_diagnostics(shared_llm)
+    )
     backlog_manager = FindingBacklog()
     chat_filter = ChatFilter()
     conversation_router = ReviewRouteClassifier(llm=shared_llm)

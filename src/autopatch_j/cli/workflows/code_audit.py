@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
+from autopatch_j.config import GlobalConfig
 from autopatch_j.core.domain import AuditAttemptOutcome, FindingTask, CodeScope
 
 
@@ -23,11 +24,25 @@ class CodeAuditWorkflow:
             return
 
         runtime = self.services.runtime
+        processed_count = 0
         while finding := runtime.backlog_manager.current(backlog):
+            if processed_count >= GlobalConfig.audit_batch_limit:
+                self._render_batch_limit_hint(backlog)
+                break
             self._process_single_finding(finding, text, backlog)
+            processed_count += 1
 
         if not runtime.workspace_manager.load().has_pending_patch():
             runtime.workspace_manager.clear()
+
+    def _render_batch_limit_hint(self, backlog: list[FindingTask]) -> None:
+        remaining = sum(1 for finding in backlog if finding.is_pending())
+        if remaining <= 0:
+            return
+        self.services.renderer.print_agent_text(
+            f"本轮已处理 {GlobalConfig.audit_batch_limit} 个 finding，仍有 {remaining} 个待处理。"
+            "请确认当前补丁后再次发起检查继续处理。"
+        )
 
     def _prepare_audit_workspace(self, text: str) -> list[FindingTask] | None:
         runtime = self.services.runtime

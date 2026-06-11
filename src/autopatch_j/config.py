@@ -71,6 +71,9 @@ class AppConfig:
     # 索引器配置
     ignored_dirs: set[str] = field(default_factory=lambda: set(IGNORED_DIRS))
 
+    # 审计配置
+    audit_batch_limit: int = 4
+
     @classmethod
     def from_env(cls) -> "AppConfig":
         llm_extra_body = os.getenv("AUTOPATCH_LLM_EXTRA_BODY", "{}")
@@ -86,6 +89,7 @@ class AppConfig:
             semgrep_version = "1.160.0",
             semgrep_install_lock_timeout = 600,
             scanner_timeout = 300,
+            audit_batch_limit = cls._positive_int_env("AUTOPATCH_AUDIT_BATCH_LIMIT", 4),
         )
 
     def is_llm_ready(self) -> bool:
@@ -110,6 +114,14 @@ class AppConfig:
         if not isinstance(parsed, dict):
             return "AUTOPATCH_LLM_EXTRA_BODY 必须是 JSON object"
         return None
+
+    @staticmethod
+    def _positive_int_env(name: str, default: int) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+        except ValueError:
+            return default
+        return value if value > 0 else default
 
 
 GlobalConfig = AppConfig.from_env()

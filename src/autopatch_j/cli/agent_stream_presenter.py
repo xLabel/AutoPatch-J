@@ -29,6 +29,37 @@ class ReActDisplayPolicy:
         return self.force_compact_observation or not self.debug_mode
 
 
+class _ReasoningRenderState:
+    """单次 ReAct 调用中的 reasoning 展示状态。"""
+
+    def __init__(self, renderer: CliRenderer, policy: ReActDisplayPolicy) -> None:
+        self.renderer = renderer
+        self.policy = policy
+        self.in_reasoning = False
+        self.visible = False
+
+    def on_reasoning(self, token: str) -> None:
+        if self.policy.compact_reasoning:
+            if not self.in_reasoning:
+                self.in_reasoning = True
+                self.visible = True
+                self.renderer.print_reasoning_status(0)
+            return
+
+        if not self.in_reasoning:
+            self.renderer.print_reasoning_text("-- 深度思考中 --\n")
+        self.in_reasoning = True
+        self.visible = True
+        self.renderer.print_reasoning_text(token)
+
+    def finish_if_visible(self) -> None:
+        if not self.visible:
+            return
+        self.renderer.finish_reasoning_status()
+        self.visible = False
+        self.in_reasoning = False
+
+
 class _AgentStreamExecution:
     """
     单次 Agent 调用期间的流式渲染状态。
@@ -41,33 +72,17 @@ class _AgentStreamExecution:
         self.presenter = presenter
         self.renderer = presenter.renderer
         self.policy = policy
+        self.reasoning = _ReasoningRenderState(self.renderer, policy)
 
-        self.in_reasoning: bool = False
-        self.answer_after_reasoning: bool = False
-        self.reasoning_visible: bool = False
         self.current_tool_name: str | None = None
         self.buffered_answer_parts: list[str] = []
 
     def on_token(self, token: str) -> None:
-        if self.in_reasoning:
-            self.answer_after_reasoning = True
-            self.in_reasoning = False
         self.finish_reasoning_status_if_visible()
         self.buffered_answer_parts.append(token)
 
     def on_reasoning(self, token: str) -> None:
-        if self.policy.compact_reasoning:
-            if not self.in_reasoning:
-                self.in_reasoning = True
-                self.reasoning_visible = True
-                self.renderer.print_reasoning_status(0)
-            return
-
-        if not self.in_reasoning:
-            self.renderer.print_reasoning_text("-- 深度思考中 --\n")
-        self.in_reasoning = True
-        self.reasoning_visible = True
-        self.renderer.print_reasoning_text(token)
+        self.reasoning.on_reasoning(token)
 
     def on_tool_start(self, tool_name: str) -> None:
         self.finish_reasoning_status_if_visible()
@@ -84,9 +99,7 @@ class _AgentStreamExecution:
         self.renderer.print_agent_text(message)
 
     def finish_reasoning_status_if_visible(self) -> None:
-        if self.reasoning_visible:
-            self.renderer.finish_reasoning_status()
-            self.reasoning_visible = False
+        self.reasoning.finish_if_visible()
 
 
 class AgentStreamPresenter:
@@ -162,6 +175,8 @@ class AgentStreamPresenter:
         )
         new_messages = list(agent.messages[start_index:])
         execution.finish_reasoning_status_if_visible()
+        if policy.debug_mode:
+            self._render_llm_debug_context(agent)
 
         if render_no_issue_panel:
             self.renderer.print_no_issue_panel(
@@ -230,3 +245,21 @@ class AgentStreamPresenter:
         summary = session.build_memory_debug_summary(answer_intent, user_text)
         if summary:
             self.renderer.print_agent_text(summary)
+
+    def _render_llm_debug_context(self, agent: Any) -> None:
+        llm = getattr(agent, "llm", None)
+        diagnostics = getattr(llm, "diagnostics", None)
+        if not diagnostics:
+            return
+
+        diagnostic = diagnostics[-1]
+        purpose = getattr(diagnostic.purpose, "name", str(diagnostic.purpose)).lower()
+        reasoning = getattr(diagnostic.reasoning, "name", str(diagnostic.reasoning)).lower()
+        stream = "on" if diagnostic.stream else "off"
+        detail = (
+            f"LLM 调用诊断：purpose={purpose}, stream={stream}, "
+            f"reasoning={reasoning}, status={diagnostic.status}"
+        )
+        if diagnostic.error:
+            detail += f", error={diagnostic.error}"
+        self.renderer.print_agent_text(detail)
