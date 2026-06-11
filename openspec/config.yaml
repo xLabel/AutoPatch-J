@@ -1,0 +1,31 @@
+schema: spec-driven
+
+context: |
+  AutoPatch-J 是一个 Python 3.10+ CLI Agent，用于基于证据修复 Java 代码。
+  产品链路结合静态扫描 finding、受控 LLM function_call 工具、ReAct 推理，以及 Human-in-the-loop 补丁确认。
+
+  核心架构：
+  - cli/ 负责命令路由、用户输入路由、工作流和终端渲染。
+  - agent/ 负责任务画像、ReAct 执行、LLM 消息适配和工具执行。
+  - tools/function_calls/ 包含暴露给 LLM 的工具。
+  - core/ 负责领域模型、补丁与 review 状态、项目索引、用户输入分类和 memory。
+  - llm/ 负责 OpenAI-compatible 请求响应处理和供应商 dialect。
+  - scanners/ 负责 Java 静态扫描器集成。
+
+  工程规则：
+  - 生成补丁必须基于证据，并受当前 scope/focus 约束。
+  - 不得绕过待确认补丁 review。
+  - 优先使用程序侧 guardrail，不只依赖提示词约束。
+  - 行为变更必须增加聚焦 pytest 覆盖。
+  - 用户明确要求 commit 时，commit message 使用 "<type>: <lowercase english phrase>"。
+
+rules:
+  proposal:
+    - 说明用户可感知的问题和工程边界。
+    - 将行为需求和实现细节分开描述。
+  design:
+    - 优先在子系统边界使用小而明确的类型接口。
+    - 当选择程序侧 guardrail 而不是只依赖 LLM prompt 时，记录取舍原因。
+  tasks:
+    - 将实现拆成可 review 的小块。
+    - 为每个行为簇列出验证命令。
