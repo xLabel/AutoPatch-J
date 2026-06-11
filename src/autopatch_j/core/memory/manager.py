@@ -16,7 +16,7 @@ from .constants import (
     SOFT_FILE_BYTES,
 )
 from .signals import LONG_TERM_SIGNALS
-from .models import MemoryDocument, RecentTurn
+from .models import MemoryDocument, MemoryEpisode
 from .text_utils import (
     clip_text,
     generate_id,
@@ -77,23 +77,30 @@ class MemoryManager:
 
         with self._lock:
             memory = self.store.load_document()
-            turn = RecentTurn(
-                id=generate_id("turn"),
+            episode = MemoryEpisode(
+                id=generate_id("episode"),
                 intent=intent.value,
-                user_text=clip_text(user_text, MAX_USER_TEXT),
-                assistant_text=clip_text(assistant_text, MAX_ASSISTANT_TEXT),
+                user_goal=clip_text(user_text, MAX_USER_TEXT),
+                assistant_result=clip_text(assistant_text, MAX_ASSISTANT_TEXT),
                 summary="",
                 summary_status="pending",
                 scope_paths=[clip_text(path, 240) for path in (scope_paths or [])[:MAX_SCOPE_PATHS]],
+                importance=3,
                 created_at=now_iso(),
+                last_accessed_at=now_iso(),
+                access_count=0,
             )
             updated_memory = MemoryDocument(
                 updated_at=memory.updated_at,
-                recent_turns=[*memory.recent_turns, turn],
                 active_topics=memory.active_topics,
+                pending_episode_ids=[*memory.pending_episode_ids, episode.id],
+                episodes=[*memory.episodes, episode],
                 repo_profile=memory.repo_profile,
-                durable_preferences=memory.durable_preferences,
+                user_preferences=memory.user_preferences,
                 project_notes=memory.project_notes,
+                codebase_concepts=memory.codebase_concepts,
+                collaboration_preferences=memory.collaboration_preferences,
+                maintenance=memory.maintenance,
                 version=memory.version,
             )
             self.store.save_document(updated_memory)
@@ -121,12 +128,11 @@ class MemoryManager:
 
         with self._lock:
             memory = self.store.load_document()
-            recent_turns = memory.recent_turns
-            pending_count = sum(1 for turn in recent_turns if turn.summary_status == "pending")
+            pending_count = len(memory.pending_episode_ids)
             if pending_count >= 2:
-                return MemorySummaryTrigger.PENDING_TURNS
-            if len(recent_turns) >= 6:
-                return MemorySummaryTrigger.RECENT_TURNS
+                return MemorySummaryTrigger.PENDING_EPISODES
+            if len(memory.episodes) >= 6:
+                return MemorySummaryTrigger.RECENT_EPISODES
             if self.store.file_size() > SOFT_FILE_BYTES:
                 return MemorySummaryTrigger.FILE_SIZE
             if any(signal in last_user_text for signal in LONG_TERM_SIGNALS):

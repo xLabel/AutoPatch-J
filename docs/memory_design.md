@@ -1,406 +1,333 @@
 # AutoPatch-J Agent Memory 设计说明
 
-> 面向 `code_explain` / `general_chat` 的项目级普通问答记忆。它不是全局 Agent 记忆，也不是补丁修复记忆。
+> 面向 `code_explain` / `general_chat` 的项目级 Context Engine。它不是全局 Agent 记忆，也不是补丁修复记忆。
 
-## 1. 为什么需要 Memory
+## 1. 设计目标
 
-AutoPatch-J 的主要工作不是聊天，而是围绕 Java 仓库完成代码解释、代码审计、补丁生成和人工确认。
+AutoPatch-J 的核心工作是围绕 Java 仓库做代码解释、代码审计、补丁生成和人工确认。普通问答需要连续性，但补丁修复链路必须只相信当前 scope、静态扫描 finding 和源码证据。
 
-普通问答仍然需要连续性：用户可能先问项目结构，再追问某个模块，
-再切到 Java 语法或工程实践。如果每一轮都完全失忆，体验会很割裂。
+因此 Memory 的目标不是“让 Agent 永远记住一切”，而是：
 
-但把完整历史直接塞进 Prompt 也会带来问题：
-
-- 上下文变长，成本和延迟上升。
-- 无关历史会干扰当前问题。
-- 历史解释、旧状态或算法题讨论可能污染补丁修复判断。
-
-因此 Memory 的目标不是保存所有对话，而是在清晰边界内沉淀少量有用上下文，让普通问答更连续，同时保证代码修复链路仍然只相信当前证据。
+- 让普通问答能继承用户关注点、协作偏好和项目讨论结论。
+- 让长期记忆有来源、有边界、可裁剪、可审查。
+- 让主 LLM 读到自然的 Markdown 结构化上下文，而不是直接吞 JSON。
+- 让补丁相关流程完全不受普通聊天历史污染。
 
 ## 2. IntentType 边界
 
-AutoPatch-J 的自然语言输入最终会进入五类 `IntentType`。Memory 的第一条设计原则是按意图划清边界。
+| IntentType | 读 Memory | 写 Memory | 原因 |
+|---|---:|---:|---|
+| `code_audit` | 否 | 否 | 代码修复必须以当前 finding 和源码证据为准 |
+| `code_explain` | 是 | 是 | 需要继承用户对项目、目录、文件和代码的关注点 |
+| `general_chat` | 是 | 是 | 需要继承工程问答中的用户偏好和近期话题 |
+| `patch_explain` | 否 | 否 | 只解释当前待确认补丁，不读取普通问答历史 |
+| `patch_revise` | 否 | 否 | 只重写当前补丁，不让历史偏好改变修订边界 |
 
-| IntentType | 场景 | 读 Memory | 写 Memory | 原因 |
-|---|---|---:|---:|---|
-| `code_audit` | 检查代码并生成补丁 | 否 | 否 | 必须以当前 scope、finding 和源码证据为准 |
-| `code_explain` | 解释项目、目录、文件或代码 | 是 | 是 | 需要继承用户对项目的关注点 |
-| `general_chat` | Java、算法、调试、架构和工程常识问答 | 是 | 是 | 需要继承用户偏好和近期话题 |
-| `patch_explain` | 解释当前待确认补丁 | 否 | 否 | 只应围绕当前补丁，不被普通聊天污染 |
-| `patch_revise` | 重写当前待确认补丁 | 否 | 否 | 修订范围必须锁定当前补丁 |
+这个边界是 Memory 设计里最重要的取舍。普通问答可以更聪明，但审计和修复必须可复核、可解释、可控。
 
-这个边界比“让 Agent 更懂用户”更重要。审计和修复必须围绕当前代码证据、扫描 finding、补丁队列和用户反馈推进；普通问答 Memory 可以帮助回答更连贯，但不能参与决定补丁是否正确。
-
-## 3. 设计原则
+## 3. 核心原则
 
 ```text
-raw 是材料，不是记忆。
-summary 是上下文，不是事实。
-长期记忆是沉淀资产，必须经过治理。
+JSON 是事实源，Markdown 结构化上下文是注入格式。
+Episode 是材料，长期记忆必须有来源。
 LLM 负责理解，程序负责约束。
 普通问答有记忆，补丁修复保持隔离。
 ```
 
-### 边界优先
+### JSON 存储，Markdown 结构化注入
 
-Memory 只服务 `code_explain` 和 `general_chat`。补丁相关流程不读取、不写入普通问答 Memory。
+`memory.json` 是唯一持久化事实源。它方便程序做类型校验、长度裁剪、来源校验、状态失效和原子写入。
 
-这会牺牲一点全局个性化，但换来更关键的工程收益：审计和修复链路不会被历史聊天、旧偏好、算法题讨论或无关项目解释污染。
+主 LLM 看到的不是原始 JSON，而是程序筛选后渲染出来的 Markdown：
 
-### 摘要优先
+```md
+## Memory Context
 
-可注入 Prompt 的内容应该是仓库元信息、摘要、近期话题、用户偏好和项目讨论笔记，而不是完整历史。
+### 用户协作偏好
+- answer style: 用户偏好中文、直接、工程化的回答。
 
-完整历史太长、太杂，而且混有示例、推测、临时问题和旧状态。`assistant_text` 可以作为后续摘要材料保存，但不会直接注入下一轮 Prompt。
+### 当前项目画像
+- build tool: maven
+- java version: 17
+
+### 相关项目理解
+- review module: 用户关注 review 模块如何管理 finding 队列。
+```
+
+这个组合比“全 JSON”更好读，也比“全 Markdown 存储”更可控。
+
+### Episode Provenance
+
+每轮普通问答先写成 episode。长期记忆不是短 LLM 凭空生成的结论，必须引用合法 `source_episode_ids`。
+
+这使得长期记忆可以回答三个问题：
+
+- 它从哪次对话沉淀而来？
+- 它是否仍然 active？
+- 如果用户否定它，应该失效哪一条？
 
 ### 程序治理
 
-短 LLM 只负责把近期问答压缩成 Memory Delta。它不能输出完整 `memory.json`，也不能随意决定最终写入内容。
+短 LLM 只能输出 Memory Delta，不能输出完整 `memory.json`。程序负责：
 
-程序负责 JSON 解析、字段校验、id 校验、来源白名单、长度裁剪、容量裁剪和原子写文件。LLM 的语义能力可以被使用，但最终状态必须由程序约束。
+- JSON 解析。
+- id 校验。
+- `source_episode_ids` 校验。
+- 类型、状态、置信度和长度校验。
+- 容量治理和原子写文件。
 
-### 失败降级
-
-Memory 失败不能影响主流程。
-
-摘要失败、Memory Delta 非法、写入失败都应安静降级。
-坏 JSON 会备份为 `memory.corrupt*.json` 并回退为空文档。
-`/reset` 会清理 Memory，并丢弃尚未写回的后台摘要结果。
+非法 delta 被丢弃，不影响主流程。
 
 ## 4. 分层模型
 
-Memory 在概念上分为仓库元信息、工作记忆和长期记忆；落到 JSON 文件中，对应 `repo_profile`、`working_memory` 和 `long_term_memory`。
+Memory 当前使用单个本地 JSON 文件：`.autopatch-j/memory.json`。
 
-`repo_profile` 是程序侧从仓库文件中提取的窄元信息：
+顶层结构：
 
-- 构建工具、Java 版本、项目名、模块名。
+```json
+{
+  "version": 1,
+  "updated_at": "",
+  "repo_profile": {},
+  "working_memory": {
+    "active_topics": [],
+    "pending_episode_ids": []
+  },
+  "episodic_memory": {
+    "episodes": []
+  },
+  "semantic_memory": {
+    "user_preferences": [],
+    "project_notes": [],
+    "codebase_concepts": []
+  },
+  "procedural_memory": {
+    "collaboration_preferences": []
+  },
+  "maintenance": {
+    "last_consolidated_at": "",
+    "last_compacted_at": ""
+  }
+}
+```
+
+### repo_profile
+
+`repo_profile` 是程序侧保守提取的仓库元信息：
+
+- 构建工具。
+- Java 版本。
+- 项目名。
+- 模块名。
 - 明确依赖特征，例如 Spring Boot、MyBatis。
-- 信息来源文件，例如 `pom.xml`、`build.gradle`、`settings.gradle`。
+- 来源文件，例如 `pom.xml`、`build.gradle`、`settings.gradle`。
 
-`working_memory` 解决近期上下文连续：
+构建文件只能支撑构建事实，不会被推断成业务用途。
 
-- `recent_turns`：近期问答材料。
-- `active_topics`：由多轮问答压缩出的近期话题。
+### working_memory
 
-长期记忆保存更稳定的资产：
+`working_memory` 保存当前会话仍活跃的轻量上下文：
 
-- `durable_preferences`：用户明确表达的长期偏好或协作规则。
-- `project_notes`：围绕当前仓库持续讨论后沉淀的项目讨论笔记。
+- `active_topics`：近期话题。
+- `pending_episode_ids`：尚未被 consolidation 处理的 episode。
 
-这些层次避免把构建元信息、一次性问题、近期话题、稳定偏好和项目讨论笔记混在同一个历史列表里。
+它可以被快速裁剪，不承担长期事实职责。
 
-### recent_turns：近期材料层
+### episodic_memory
 
-`recent_turns` 保存最近的普通问答材料。它不是长期记忆，而是摘要器的输入和短期兜底上下文。
+`episodic_memory` 保存普通问答发生过的精简经历。
 
-典型结构：
-
-```json
-{
-  "id": "turn_20260501_123000_001",
-  "intent": "general_chat",
-  "user_text": "Optional 怎么用？",
-  "assistant_text": "Optional 是 Java 8 引入的容器类型...",
-  "summary": "用户关注 Java Optional 的空值建模、常用 API，以及避免直接 get 的安全用法。",
-  "summary_status": "ready",
-  "scope_paths": [],
-  "created_at": "2026-05-01T12:30:00+08:00"
-}
-```
-
-约束：
-
-- `intent` 只允许 `code_explain` 或 `general_chat`。
-- `user_text` 最多 1000 字符。
-- `assistant_text` 最多 2000 字符，只供摘要，不直接注入 Prompt。
-- `summary` 最多 300 字符。
-- `scope_paths` 最多 10 个路径。
-- 总数最多 12 条。
-
-### active_topics：短期工作记忆
-
-`active_topics` 是多个 recent turn summary 合并后的近期话题。它解决几轮内的话题连续，不承诺永久保存。
-
-典型结构：
+典型 episode：
 
 ```json
 {
-  "id": "topic_20260501_001",
-  "label": "Java Optional",
-  "summary": "用户近期关注 Optional 的正确用法，以及项目中是否存在 optional-get-without-check 类问题。",
-  "related_turn_ids": ["turn_20260501_123000_001"],
-  "last_touched_at": "2026-05-01T12:30:00+08:00"
-}
-```
-
-`active_topics` 最多 8 条。旧话题会被新话题淘汰，避免工作记忆变成主题仓库。
-
-### durable_preferences：稳定用户偏好
-
-`durable_preferences` 保存用户明确表达的稳定规则和协作偏好。
-
-典型结构：
-
-```json
-{
-  "id": "mem_20260501_001",
-  "type": "durable_preference",
-  "label": "commit message format",
-  "summary": "提交信息必须使用 <type>: <lowercase english phrase> 格式。",
-  "status": "active",
-  "source": "user_explicit",
-  "created_at": "2026-05-01T12:30:00+08:00",
-  "updated_at": "2026-05-01T12:30:00+08:00"
-}
-```
-
-可以进入长期偏好的内容：
-
-- 用户明确说“以后、每次、必须、不要、我希望、我不喜欢、优先、规则、守则、记住”等。
-- 稳定交互偏好。
-- 稳定输出格式偏好。
-- 稳定协作规则。
-
-不能进入长期偏好的内容：
-
-- 单次算法题。
-- 临时问题。
-- LLM 推测出的用户意图。
-- 补丁细节。
-- 源码片段。
-- 日志内容。
-
-### repo_profile：仓库元信息
-
-`repo_profile` 由程序侧保守提取，不由 LLM 自由生成。它只记录构建文件或 README 标题能直接支撑的窄信息，不推断项目业务用途。
-
-典型结构：
-
-```json
-{
-  "build_tool": "maven",
-  "java_version": "17",
-  "project_name": "demo-service",
-  "modules": ["api", "service"],
-  "frameworks": ["spring boot"],
-  "source_files": ["pom.xml"],
-  "updated_at": "2026-05-01T12:31:00+08:00"
-}
-```
-
-`pom.xml`、`build.gradle`、`settings.gradle` 只能支撑构建工具、Java 版本、模块名和明确依赖特征。README 缺失时，系统不会从构建文件里总结“这个项目是做什么的”。
-
-### project_notes：项目讨论笔记
-
-`project_notes` 保存用户和 Agent 围绕当前仓库持续讨论后沉淀的上下文。它帮助普通问答更连续，但不是修复证据，也不能替代源码读取。
-
-典型结构：
-
-```json
-{
-  "id": "mem_20260501_002",
-  "type": "project_note",
-  "label": "review module",
+  "id": "episode_20260611_001",
+  "intent": "code_explain",
+  "user_goal": "用户想理解 review 模块职责",
+  "assistant_result": "解释了 finding 队列、补丁确认和 workspace 的关系",
   "summary": "用户关注 review 模块如何管理 finding 队列和补丁确认。",
-  "status": "active",
-  "source": "conversation_summary",
-  "created_at": "2026-05-01T12:31:00+08:00",
-  "updated_at": "2026-05-01T12:31:00+08:00"
+  "summary_status": "ready",
+  "scope_paths": ["src/autopatch_j/core/review"],
+  "importance": 3,
+  "created_at": "",
+  "last_accessed_at": "",
+  "access_count": 0
 }
 ```
 
-短 LLM 只能通过 `conversation_summary` 创建或更新 `project_note`。它不能把 `repo_profile` 里的构建信息改写成业务事实，也不能把项目讨论笔记注入补丁修复链路。
+它不是完整聊天历史，也不保存 reasoning、源码全文、补丁 diff 或工具原始输出。
 
-## 5. 阈值设计
+### semantic_memory
 
-V1 的阈值不是理论最优值，而是一组保守、可解释、可测试的工程默认值。它们服务三个目标：
+`semantic_memory` 保存更稳定的语义记忆：
 
-- 控制短 LLM 调用成本。
-- 减少无关历史对 Prompt 的污染。
-- 避免过早把临时问题沉淀为长期记忆。
+- `user_preferences`：用户长期偏好。
+- `project_notes`：围绕当前仓库持续讨论后沉淀的项目笔记。
+- `codebase_concepts`：代码库高层概念，例如关键模块职责和流程关系。
 
-### 摘要触发
+每条都必须带 `source_episode_ids`。
 
-`pending_turns >= 2` 触发摘要。
+### procedural_memory
 
-每轮都摘要会增加短 LLM 成本；完全不摘要又会让下一轮缺少稳定上下文。2 条 pending turn 把短期失忆窗口控制在 1 到 2 轮内，是成本和连续性的折中。
+`procedural_memory` 保存协作方式和回答风格：
 
-`recent_turns >= 6` 触发摘要。
+- 用户偏好中文输出。
+- 用户希望先讨论计划再执行。
+- 用户不喜欢过度设计。
+- 用户希望修改前明确询问授权。
 
-一两轮对话往往只是临时问题，不足以判断稳定话题。6 轮左右通常已经能看出用户是否围绕同一主题持续追问。
+这些是“以后怎么协作”的规则，不和项目事实混在一起。
 
-项目级 `code_explain` 触发摘要。
+## 5. 写入与 Consolidation
 
-项目级解释往往包含模块职责、目录结构和用户关注点。它值得尽早尝试摘要，但只能写入 `project_notes`；仓库构建元信息由程序侧刷新到 `repo_profile`。
-
-`LONG_TERM_SIGNAL` 触发摘要。
-
-当用户输入中出现明显长期偏好信号时，系统会尝试尽快摘要，避免“以后都这样”这类规则只停留在短期上下文里。
-
-### 保存容量
-
-| 项 | 阈值 | 设计理由 |
-|---|---:|---|
-| `recent_turns` | 12 | 覆盖一段自然 CLI 对话，超过后旧 turn 更适合压缩 |
-| `active_topics` | 8 | 覆盖几个并行关注点，避免变成主题仓库 |
-| `long_term_memory` | 50 | 保持长期偏好和项目讨论笔记可读、可审查、可人工 diff |
-| `scope_paths` | 10 | 保留代码解释范围线索，避免路径列表膨胀 |
-| `user_text` | 1000 | 保留问题主体，不把长日志完整写入 Memory |
-| `assistant_text` | 2000 | 供摘要器理解回答，不直接注入 Prompt |
-| `label` | 60 | 保持列表可读 |
-| `summary` | 300 | 控制 Prompt 注入噪声 |
-
-### Prompt 注入
-
-进入 `code_explain` / `general_chat` 前，系统会构造 Memory Context，最多注入：
-
-- 相关 `durable_preferences`：5 条。
-- 当前 `repo_profile`：有值时注入。
-- 相关 `project_notes`：5 条。
-- 相关 `active_topics`：3 条。
-- ready 的 recent turn summaries：3 条。
-- pending recent turn 的 `user_text`：2 条。
-
-注入顺序体现优先级：稳定偏好和仓库元信息优先，项目讨论笔记、近期话题和问答摘要次之，未摘要用户原文只作为兜底线索。
-
-严格禁止注入：
-
-- `assistant_text`
-- 源码全文
-- 补丁 diff
-- 工具 observation
-- reasoning
-
-### 文件大小
-
-`24KB` 是软限制，超过后触发整理。`32KB` 是硬限制，超过后必须裁剪 `working_memory` 或拒绝本轮写入。
-
-优先保留 `long_term_memory`，因为它是治理后的沉淀资产；优先裁剪 `working_memory`，因为它本来就是近期材料。
-
-## 6. 运行链路
-
-普通问答 Memory 的主链路如下：
+普通问答链路：
 
 ```text
 code_explain/general_chat 完成
--> 写入 recent_turn，summary_status=pending
--> 判断是否触发摘要
--> 单线程后台调度 MemorySummarizer
--> RepoProfileCollector 刷新 repo_profile 仓库元信息
--> 短 LLM 生成 Memory Delta
--> MemoryDeltaParser 解析 JSON
--> MemoryDeltaApplier 做程序侧硬校验
--> MemoryStore 原子写回 `memory.json`
--> 下一轮普通问答构造 Prompt 时只注入相关摘要
+-> append pending episode
+-> 判断是否触发 consolidation
+-> 后台短 LLM 读取 pending episodes 和现有 memory 摘要
+-> 输出 Memory Delta
+-> 程序校验并写回 memory.json
+-> 下一轮普通问答注入 Markdown 结构化 Memory Context
 ```
 
-摘要是被动触发的。AutoPatch-J 启动时不会自动后台总结，也不会监听文件变化。
+触发条件：
 
-后台调度器使用单线程执行，避免多个摘要任务并发写同一个 Memory 文件。
+- pending episodes >= 2。
+- 已有 episodes >= 6。
+- 用户输入包含明显长期偏好信号。
+- 项目级 `code_explain`。
+- memory 文件超过软限制。
 
-如果上一轮摘要任务尚未完成，本轮不会重复提交。
-`/reset` 会提升 generation，旧任务即使完成也会被丢弃，避免状态清空后又写回旧结果。
+这不是理论最优阈值，而是一组保守工程默认值：既避免每轮都调用短 LLM，又把短期失忆窗口控制在可接受范围内。
 
-## 7. 短 LLM 与 Memory Delta
+## 6. Memory Delta
 
-短 LLM 不输出完整 Memory 文件，只输出 Memory Delta。
-
-示例：
+短 LLM 输出示例：
 
 ```json
 {
-  "turn_summaries": [
+  "episode_summaries": [
     {
-      "turn_id": "turn_20260501_123000_001",
-      "summary": "用户关注 Java Optional 的空值建模和安全用法。"
+      "episode_id": "episode_20260611_001",
+      "summary": "用户关注 review 模块如何管理 finding 队列。"
     }
   ],
-  "topic_operations": [
-    {
-      "operation": "create_new",
-      "label": "Java Optional",
-      "summary": "用户近期关注 Optional 的正确用法。",
-      "related_turn_ids": ["turn_20260501_123000_001"]
-    }
-  ],
-  "long_term_operations": [
-    {
-      "operation": "create_new",
-      "type": "durable_preference",
-      "label": "answer style",
-      "summary": "用户偏好中文、工程化、直接的回答。",
-      "source": "user_explicit"
-    },
+  "semantic_operations": [
     {
       "operation": "create_new",
       "type": "project_note",
       "label": "review module",
       "summary": "用户关注 review 模块如何管理 finding 队列和补丁确认。",
-      "source": "conversation_summary"
+      "source_episode_ids": ["episode_20260611_001"],
+      "confidence": "high"
     }
-  ]
-}
-```
-
-更新已有长期记忆时，LLM 必须使用程序提供的 `target_id`：
-
-```json
-{
-  "long_term_operations": [
+  ],
+  "procedural_operations": [
     {
-      "operation": "update_existing",
-      "target_id": "mem_20260501_001",
-      "summary": "提交信息必须使用 <type>: <lowercase english phrase> 格式。"
+      "operation": "create_new",
+      "type": "collaboration_preference",
+      "label": "answer style",
+      "summary": "用户偏好中文、直接、工程化的回答。",
+      "source_episode_ids": ["episode_20260611_001"],
+      "confidence": "high"
     }
   ]
 }
 ```
 
-如果 LLM 输出不存在的 id、非法类型、非法来源或过长字段，程序会拒绝对应 operation。这套机制的价值是：
+如果 delta 引用不存在的 episode id、target id、非法类型或过长字段，程序拒绝对应 operation。
 
-- LLM 不能随意改坏整个 Memory 文件。
-- 长期记忆不依赖 LLM 自由生成 key。
-- 非法 Memory Delta 可以丢弃，不影响已有记忆。
-- 构建元信息由程序提取，LLM 只能沉淀项目讨论笔记，不能把构建文件脑补成业务事实。
+## 7. Prompt 注入
+
+进入 `code_explain` / `general_chat` 前，系统会做轻量相关性评分。当前实现优先使用本地可解释信号：
+
+```text
+score =
+  lexical match
++ scope path match
++ access count
++ importance
++ confidence
+```
+
+scope path 会参与 episode 文本匹配；后续如果需要更强召回，再考虑 recency、staleness 或 embedding。当前阶段不引入向量库。
+
+注入预算：
+
+- procedural memory 最多 5 条。
+- repo profile 有值时注入。
+- semantic memory 最多 5 条。
+- related episodes 最多 3 条。
+- active topics 最多 3 条。
+- pending user inputs 最多 2 条。
+
+严格禁止注入：
+
+- `assistant_result` 原文。
+- 源码全文。
+- 补丁 diff。
+- 工具 observation。
+- reasoning。
+- 密钥或日志全文。
 
 ## 8. 存储与恢复
 
-Memory 使用项目级 JSON 文件存储，位置在当前仓库的 `.autopatch-j/memory.json`。
+Memory 使用项目级 JSON 文件存储，位置是 `.autopatch-j/memory.json`。
 
 选择 JSON 的原因：
 
-- 数据量小，没必要一开始引入数据库。
+- 数据量小，没必要引入数据库。
 - 文件可读、可 diff，方便人工审查。
-- 写坏时可以备份和回退。
-- `/reset` 可以把它作为可重建状态一起清理。
+- 程序容易校验字段和裁剪容量。
+- `/reset` 可以清理它并丢弃后台未写回结果。
 
-如果读取失败或 JSON 损坏，系统会尝试把坏文件移动为 `memory.corrupt.json` 或带时间戳的 `memory.corrupt.*.json`，然后使用空 Memory 继续运行。
+如果 JSON 损坏，系统会把坏文件移动为 `memory.corrupt.json` 或带时间戳的备份，然后用空 Memory 继续运行。
 
-如果 JSON 版本号和当前 `MEMORY_VERSION` 不一致，系统不做迁移兼容，直接按空 Memory 处理。项目尚未正式上线，优先保证当前结构清晰，不保留旧结构读取逻辑。
+如果版本号和当前 `MEMORY_VERSION` 不一致，系统不做 migration，直接按空 Memory 处理。项目未正式上线，优先保持当前结构干净。
 
-## 9. 当前明确不做
+## 9. 容量治理
 
-V1 明确不做：
+当前阈值：
+
+| 项 | 阈值 |
+|---|---:|
+| episodes | 80 |
+| active topics | 8 |
+| semantic memory 每类 | 50 |
+| procedural memory | 30 |
+| scope paths | 10 |
+| user goal | 1000 字符 |
+| assistant result | 2000 字符 |
+| label | 60 字符 |
+| summary | 300 字符 |
+| soft file size | 64KB |
+| hard file size | 96KB |
+
+超过软限制时优先裁剪 `episodic_memory` 和 `working_memory`；长期语义记忆和协作偏好是治理后的资产，优先保留。
+
+## 10. 当前明确不做
 
 - 跨项目记忆。
 - 补丁记忆。
 - 源码全文记忆。
 - 工具输出记忆。
 - reasoning 记忆。
-- 数据库、embedding、RAG。
+- MySQL、Redis、向量数据库等服务级中间件。
 - 用户手动编辑 Memory 的复杂 UI。
 - 自动把 LLM 猜测沉淀为长期记忆。
 - 从构建文件推断业务用途。
 
-这些限制不是能力缺失，而是架构边界。Memory 先服务普通问答连续性，同时保持代码修复链路稳定可控。
+这些限制不是能力缺失，而是当前阶段的边界。Memory 先把普通问答连续性做好，同时保持代码修复链路稳定可控。
 
-## 10. 后续演进
+## 11. 后续演进
 
-如果真实使用中出现 Memory 条目增长、简单相关性检索不够准确、多项目偏好需要共享、仓库元信息需要更强解析能力等问题，可以逐步演进：
+如果真实使用中出现 Memory 条目明显增长、简单相关性评分不够准确、多项目偏好需要共享、仓库画像需要更强解析能力等问题，可以逐步演进：
 
-- 将存储从 JSON 迁移到 SQLite。
+- 增加 `/memory` 命令族，让用户查看、禁用或清理某条记忆。
+- 使用本地 SQLite 替代单 JSON 文件。
 - 给长期记忆增加 embedding 检索。
-- 增加 `/memory` 命令族。
-- 将 `repo_profile` 和代码索引、README、构建文件建立更明确的证据链接。
+- 让 code index、README、构建文件和 memory 之间建立更明确的证据链接。
 
-这些增强不应改变当前最重要的边界：普通问答 Memory 不进入 `code_audit` / `patch_explain` / `patch_revise` 修复链路。
+这些增强不应改变最重要的边界：普通问答 Memory 不进入 `code_audit` / `patch_explain` / `patch_revise` 修复链路。

@@ -7,7 +7,7 @@ from typing import Any
 
 from .constants import (
     HARD_FILE_BYTES,
-    KEEP_RECENT_TURNS_AFTER_COMPACTION,
+    KEEP_EPISODES_AFTER_COMPACTION,
     SOFT_FILE_BYTES,
 )
 from .normalizer import MemoryNormalizer
@@ -68,13 +68,20 @@ class MemoryStore:
         if len(self._dump(memory).encode("utf-8")) <= SOFT_FILE_BYTES:
             return memory
 
-        memory["working_memory"]["recent_turns"] = memory["working_memory"]["recent_turns"][
-            -KEEP_RECENT_TURNS_AFTER_COMPACTION:
+        memory["episodic_memory"]["episodes"] = memory["episodic_memory"]["episodes"][
+            -KEEP_EPISODES_AFTER_COMPACTION:
+        ]
+        episode_ids = {episode["id"] for episode in memory["episodic_memory"]["episodes"]}
+        memory["working_memory"]["pending_episode_ids"] = [
+            episode_id
+            for episode_id in memory["working_memory"]["pending_episode_ids"]
+            if episode_id in episode_ids
         ]
         if len(self._dump(memory).encode("utf-8")) <= HARD_FILE_BYTES:
             return memory
 
-        memory["working_memory"]["recent_turns"] = []
+        memory["episodic_memory"]["episodes"] = []
+        memory["working_memory"]["pending_episode_ids"] = []
         if len(self._dump(memory).encode("utf-8")) <= HARD_FILE_BYTES:
             return memory
 

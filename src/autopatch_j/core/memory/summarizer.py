@@ -14,7 +14,7 @@ from .prompts import MEMORY_SUMMARY_SYSTEM_PROMPT
 from .repo_profile import RepoProfileCollector
 from .triggers import MemorySummaryTrigger
 
-MAX_SUMMARY_PENDING_TURNS = 4
+MAX_SUMMARY_PENDING_EPISODES = 4
 MAX_SUMMARY_EXISTING_ITEMS = 20
 
 
@@ -60,7 +60,7 @@ class MemorySummarizer:
 
         repo_profile = self.repo_profile_collector.collect()
         payload = self._build_payload(effective_trigger, repo_profile)
-        if not payload["pending_turns"]:
+        if not payload["pending_episodes"]:
             return None
 
         try:
@@ -92,29 +92,40 @@ class MemorySummarizer:
         repo_profile: dict[str, Any],
     ) -> dict[str, Any]:
         memory = self.memory_manager.load()
-        pending_turns = [
-            self._turn_payload(turn)
-            for turn in memory["working_memory"]["recent_turns"]
-            if turn.get("summary_status") == "pending"
-        ][-MAX_SUMMARY_PENDING_TURNS:]
+        pending_ids = set(memory["working_memory"]["pending_episode_ids"])
+        pending_episodes = [
+            self._episode_payload(episode)
+            for episode in memory["episodic_memory"]["episodes"]
+            if episode.get("id") in pending_ids
+        ][-MAX_SUMMARY_PENDING_EPISODES:]
 
         return {
             "trigger": trigger.name.lower(),
-            "pending_turns": pending_turns,
+            "pending_episodes": pending_episodes,
             "active_topics": memory["working_memory"]["active_topics"][-MAX_SUMMARY_EXISTING_ITEMS:],
-            "durable_preferences": memory["long_term_memory"]["durable_preferences"][
-                -MAX_SUMMARY_EXISTING_ITEMS:
-            ],
-            "project_notes": memory["long_term_memory"]["project_notes"][-MAX_SUMMARY_EXISTING_ITEMS:],
+            "semantic_memory": {
+                "user_preferences": memory["semantic_memory"]["user_preferences"][
+                    -MAX_SUMMARY_EXISTING_ITEMS:
+                ],
+                "project_notes": memory["semantic_memory"]["project_notes"][-MAX_SUMMARY_EXISTING_ITEMS:],
+                "codebase_concepts": memory["semantic_memory"]["codebase_concepts"][
+                    -MAX_SUMMARY_EXISTING_ITEMS:
+                ],
+            },
+            "procedural_memory": {
+                "collaboration_preferences": memory["procedural_memory"]["collaboration_preferences"][
+                    -MAX_SUMMARY_EXISTING_ITEMS:
+                ],
+            },
             "repo_profile": repo_profile,
         }
 
-    def _turn_payload(self, turn: dict[str, Any]) -> dict[str, Any]:
+    def _episode_payload(self, episode: dict[str, Any]) -> dict[str, Any]:
         return {
-            "id": turn.get("id", ""),
-            "intent": turn.get("intent", ""),
-            "user_text": turn.get("user_text", ""),
-            "assistant_text": turn.get("assistant_text", ""),
-            "scope_paths": turn.get("scope_paths", []),
-            "created_at": turn.get("created_at", ""),
+            "id": episode.get("id", ""),
+            "intent": episode.get("intent", ""),
+            "user_goal": episode.get("user_goal", ""),
+            "assistant_result": episode.get("assistant_result", ""),
+            "scope_paths": episode.get("scope_paths", []),
+            "created_at": episode.get("created_at", ""),
         }

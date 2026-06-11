@@ -193,7 +193,7 @@ def test_memory_summary_purpose_uses_short_non_stream_response() -> None:
     )
     client.client = MagicMock()
     client.client.chat.completions.create.return_value = _non_stream_response(
-        content='{"turn_summaries": []}',
+        content='{"episode_summaries": []}',
     )
 
     response = client.chat(
@@ -211,7 +211,7 @@ def test_memory_summary_purpose_uses_short_non_stream_response() -> None:
         "thinking": {"type": "disabled"},
         "enable_thinking": False,
     }
-    assert response.content == '{"turn_summaries": []}'
+    assert response.content == '{"episode_summaries": []}'
 
 
 def test_classifier_purpose_retries_without_disabled_thinking_when_unsupported() -> None:

@@ -96,7 +96,7 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 
 原则：`Scanner provides evidence, LLM performs triage` / `Patch is a review item, not a chat reply`
 
-**隔离的上下文能力**：项目级 Memory 只服务 `code_explain` 和 `general_chat`，用于注入仓库元信息、项目讨论笔记和用户偏好，不进入 `code_audit`、`patch_explain`、`patch_revise`，避免历史偏好污染修复证据链。业务代码只声明 `LLMCallPurpose`，是否关闭 reasoning、是否流式输出、如何适配 DeepSeek、百炼、OpenAI 兼容接口，统一由 LLM 层处理。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
+**隔离的上下文能力**：项目级 Memory 只服务 `code_explain` 和 `general_chat`，用 JSON 沉淀 episode、项目理解和协作偏好，再渲染成 Markdown 结构化上下文注入主 LLM；它不进入 `code_audit`、`patch_explain`、`patch_revise`，避免历史偏好污染修复证据链。业务代码只声明 `LLMCallPurpose`，是否关闭 reasoning、是否流式输出、如何适配 DeepSeek、百炼、OpenAI 兼容接口，统一由 LLM 层处理。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
 
 原则：`Memory helps chat, not repair` / `LLM calls are purpose driven`
 
@@ -138,12 +138,12 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 
 ```text
 code_explain/general_chat 完成
--> 写入 recent_turn，summary_status=pending
--> 满足触发条件后提交后台摘要任务
+-> 写入 pending episode
+-> 满足触发条件后提交后台 consolidation 任务
 -> 程序刷新 repo_profile 仓库元信息
 -> 短 LLM 输出 Memory Delta
--> 程序校验并写入 active_topics / project_notes
--> 下一轮普通问答只注入少量相关摘要
+-> 程序校验 source_episode_ids 并写入 semantic/procedural memory
+-> 下一轮普通问答注入少量 Markdown 结构化 Memory Context
 ```
 
 ## 目录结构
