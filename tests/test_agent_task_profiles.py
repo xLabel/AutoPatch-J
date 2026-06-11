@@ -13,10 +13,12 @@ from autopatch_j.llm.client import LLMClient
 from autopatch_j.llm.dialects import ToolCall
 from autopatch_j.llm.models import LLMResponse
 from autopatch_j.agent.prompts import (
+    build_code_audit_user_prompt,
     build_code_explain_user_prompt,
     build_patch_explain_user_prompt,
     build_patch_revise_user_prompt,
     build_task_system_prompt,
+    build_zero_finding_review_user_prompt,
 )
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.core.review import ProjectArtifactStore
@@ -24,6 +26,7 @@ from autopatch_j.core.project import SourceReader
 from autopatch_j.core.domain import (
     CodeScope,
     CodeScopeKind,
+    FindingTask,
     IntentType,
     PatchDraftSnapshot,
     ReviewPatchItem,
@@ -96,6 +99,19 @@ def test_task_system_prompt_declares_java_context() -> None:
     assert "## 禁止事项" in prompt
 
 
+def test_task_system_prompt_wraps_memory_context_once() -> None:
+    prompt = build_task_system_prompt(
+        intent=IntentType.CODE_EXPLAIN,
+        pending_file=None,
+        last_scan=None,
+        memory_context="### 用户协作偏好\n- 输出简洁中文",
+    )
+
+    assert prompt.count("## Memory Context") == 1
+    assert "仅在当前问题相关时使用" in prompt
+    assert "### 用户协作偏好" in prompt
+
+
 def test_task_profiles_define_tool_boundaries() -> None:
     assert fetch_task_profile(IntentType.CODE_AUDIT).tool_names == (
         FunctionToolName.GET_FINDING_DETAIL,
@@ -152,16 +168,16 @@ def test_memory_is_shared_by_code_explain_and_general_chat(tmp_path: Path) -> No
     agent.perform_general_chat("Optional 怎么用")
 
     second_messages = mock_llm.chat.call_args_list[1].kwargs["messages"]
-    assert "普通问答记忆" in second_messages[0]["content"]
+    assert "## Memory Context" in second_messages[0]["content"]
     assert "这个项目是干什么的" in second_messages[0]["content"]
 
     memory = agent.session.memory_manager.load()
-    recent_turns = memory["working_memory"]["recent_turns"]
-    assert len(recent_turns) == 2
-    assert recent_turns[0]["intent"] == IntentType.CODE_EXPLAIN.value
-    assert recent_turns[0]["scope_paths"] == ["src/main/java/demo/Demo.java"]
-    assert recent_turns[1]["intent"] == IntentType.GENERAL_CHAT.value
-    assert "Optional" in recent_turns[1]["user_text"]
+    episodes = memory["episodic_memory"]["episodes"]
+    assert len(episodes) == 2
+    assert episodes[0]["intent"] == IntentType.CODE_EXPLAIN.value
+    assert episodes[0]["scope_paths"] == ["src/main/java/demo/Demo.java"]
+    assert episodes[1]["intent"] == IntentType.GENERAL_CHAT.value
+    assert "Optional" in episodes[1]["user_goal"]
 
 
 def test_reset_history_keeps_memory_unless_explicitly_cleared(tmp_path: Path) -> None:
@@ -173,12 +189,12 @@ def test_reset_history_keeps_memory_unless_explicitly_cleared(tmp_path: Path) ->
     agent.reset_history()
 
     memory = agent.session.memory_manager.load()
-    assert "Java Optional" in memory["working_memory"]["recent_turns"][0]["user_text"]
+    assert "Java Optional" in memory["episodic_memory"]["episodes"][0]["user_goal"]
 
     agent.reset_history(clear_memory=True)
 
     memory = agent.session.memory_manager.load()
-    assert memory["working_memory"]["recent_turns"] == []
+    assert memory["episodic_memory"]["episodes"] == []
 
 
 def test_agent_shutdown_discards_and_stops_memory_scheduler(tmp_path: Path) -> None:
@@ -280,7 +296,8 @@ def test_patch_explain_prompt_keeps_cli_answer_compact() -> None:
     assert "先直接回答用户问题" in prompt
     assert "不要重复粘贴补丁 diff" in prompt
     assert "不要输出长篇 Markdown 报告" in prompt
-    assert "用户问题:\n这个补丁是什么意思" in prompt
+    assert "## 用户问题\n这个补丁是什么意思" in prompt
+    assert "## 补丁差异\n```diff" in prompt
 
 
 def test_patch_explain_system_prompt_limits_report_style() -> None:
@@ -318,7 +335,8 @@ def test_patch_revise_prompt_avoids_tool_call_for_explain_feedback() -> None:
 
     prompt = build_patch_revise_user_prompt(item, "这个补丁是什么意思")
 
-    assert "请只重写当前补丁" in prompt
+    assert "## 用户反馈\n这个补丁是什么意思" in prompt
+    assert "- 只重写当前补丁" in prompt
     assert "如果用户反馈只是要求解释补丁，请直接回答，不要调用 revise_patch" in prompt
 
 
@@ -337,9 +355,40 @@ def test_project_code_explain_prompt_uses_lightweight_project_context() -> None:
     )
 
     assert "项目级代码讲解" in prompt
+    assert "## 项目上下文" in prompt
+    assert "## 项目 Java 文件清单" in prompt
+    assert "## 用户问题" in prompt
     assert "项目轻量上下文" in prompt
     assert "scan-xxxx" in prompt
     assert "src/main/java/demo/App.java" in prompt
+
+
+def test_code_audit_user_prompt_separates_sections() -> None:
+    finding = FindingTask(
+        finding_id="F1",
+        file_path="src/main/java/demo/LegacyConfig.java",
+        check_id="autopatch-j.java.security.weak-crypto-md5",
+        start_line=12,
+        end_line=12,
+        message="检测到使用 MD5 弱哈希算法。",
+        snippet='MessageDigest md = MessageDigest.getInstance("MD5");',
+    )
+
+    prompt = build_code_audit_user_prompt("@LegacyConfig.java 检查代码", finding, force_reread=True)
+
+    assert "## 当前目标" in prompt
+    assert "## 代码证据\n```java" in prompt
+    assert "## 执行要求" in prompt
+    assert "## 重试要求" in prompt
+    assert "## 用户原始请求\n@LegacyConfig.java 检查代码" in prompt
+
+
+def test_zero_finding_review_user_prompt_separates_sections() -> None:
+    prompt = build_zero_finding_review_user_prompt("检查代码", "src/main/java/demo/App.java")
+
+    assert "## 当前目标" in prompt
+    assert "## 执行要求" in prompt
+    assert "## 用户原始请求\n检查代码" in prompt
 
 
 def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:

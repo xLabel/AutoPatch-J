@@ -95,14 +95,13 @@ def build_workbench_prompt(
     focus_paths: list[str] | None = None,
 ) -> str:
     lines = [
-        "## 当前工作台",
         f"- 最近扫描: {last_scan or '尚未扫描'}",
         f"- 待确认补丁: {pending_file or '无'}",
     ]
     if focus_paths:
         lines.append(f"- 焦点文件: {', '.join(focus_paths)}")
         lines.append("- 严禁扫描、读取或修复焦点范围之外的路径。")
-    return "\n".join(lines)
+    return PromptSection("当前工作台", "\n".join(lines)).render()
 
 
 def build_task_system_prompt(
@@ -119,7 +118,16 @@ def build_task_system_prompt(
     if intent in {IntentType.CODE_EXPLAIN, IntentType.GENERAL_CHAT}:
         parts.append(ORDINARY_CHAT_STYLE_PROMPT)
         if memory_context:
-            parts.append(f"普通问答记忆（仅在相关时使用）：\n{memory_context}")
+            parts.append(
+                PromptSection(
+                    "Memory Context",
+                    "使用规则：\n"
+                    "- 仅在当前问题相关时使用。\n"
+                    "- 它用于保持用户偏好和项目讨论连续性。\n"
+                    "- 它不是源码证据；涉及代码事实时仍以当前读取到的源码为准。\n\n"
+                    f"{memory_context}",
+                )
+            )
     parts.append(
         build_workbench_prompt(
             pending_file=pending_file,
