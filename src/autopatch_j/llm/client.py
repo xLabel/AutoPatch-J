@@ -4,7 +4,7 @@ from typing import Any, Callable
 
 from .dialects import MessageDialect, StandardDialect, DeepSeekAliyunDialect
 from .models import LLMResponse
-from .options import LLMCallPurpose, resolve_request_options
+from .options import LLMCallDiagnostic, LLMCallPurpose, resolve_request_options
 from .parser import LLMResponseParser
 from .request import LLMRequestBuilder
 from .transport import OpenAIChatTransport
@@ -34,6 +34,7 @@ class LLMClient:
         self.transport = OpenAIChatTransport(api_key=api_key, base_url=base_url)
         self.request_builder = LLMRequestBuilder(model=model, reasoning_effort=reasoning_effort)
         self.response_parser = LLMResponseParser(self._create_dialect)
+        self.diagnostics: list[LLMCallDiagnostic] = []
 
     @property
     def client(self) -> Any:
@@ -57,12 +58,17 @@ class LLMClient:
         on_reasoning_delta: Callable[[str], None] | None = None,
     ) -> LLMResponse:
         options = resolve_request_options(purpose)
-        kwargs = self.request_builder.build_request_kwargs(
-            messages=messages,
-            tools=tools,
-            options=options,
-        )
-        response = self.transport.create_completion(kwargs=kwargs, options=options)
+        try:
+            kwargs = self.request_builder.build_request_kwargs(
+                messages=messages,
+                tools=tools,
+                options=options,
+            )
+            response = self.transport.create_completion(kwargs=kwargs, options=options)
+        except Exception as exc:
+            self._record_diagnostic(purpose, "error", str(exc))
+            raise
+        self._record_diagnostic(purpose, "ok")
         if not options.stream:
             return self.response_parser.parse_non_stream_response(response, on_content_delta=on_content_delta)
 
@@ -71,3 +77,18 @@ class LLMClient:
             on_content_delta=on_content_delta,
             on_reasoning_delta=on_reasoning_delta,
         )
+
+    def _record_diagnostic(self, purpose: LLMCallPurpose, status: str, error: str = "") -> None:
+        options = resolve_request_options(purpose)
+        self.diagnostics.append(
+            LLMCallDiagnostic(
+                purpose=purpose,
+                stream=options.stream,
+                reasoning=options.reasoning,
+                max_tokens=options.max_tokens,
+                temperature=options.temperature,
+                status=status,
+                error=error[:200],
+            )
+        )
+        self.diagnostics = self.diagnostics[-20:]

@@ -16,6 +16,7 @@ from .constants import (
     SOFT_FILE_BYTES,
 )
 from .signals import LONG_TERM_SIGNALS
+from .models import MemoryDocument, RecentTurn
 from .text_utils import (
     clip_text,
     generate_id,
@@ -54,14 +55,14 @@ class MemoryManager:
         if intent not in ORDINARY_INTENTS:
             return ""
         with self._lock:
-            memory = self.store.load()
+            memory = self.store.load_document()
             return self.prompt_context_builder.build(memory, intent, current_user_text)
 
     def build_prompt_context_debug_summary(self, intent: IntentType, current_user_text: str = "") -> str:
         if intent not in ORDINARY_INTENTS:
             return ""
         with self._lock:
-            memory = self.store.load()
+            memory = self.store.load_document()
             return self.prompt_context_builder.build_debug_summary(memory, intent, current_user_text)
 
     def append_recent_turn(
@@ -75,20 +76,27 @@ class MemoryManager:
             return
 
         with self._lock:
-            memory = self.store.load()
-            memory["working_memory"]["recent_turns"].append(
-                {
-                    "id": generate_id("turn"),
-                    "intent": intent.value,
-                    "user_text": clip_text(user_text, MAX_USER_TEXT),
-                    "assistant_text": clip_text(assistant_text, MAX_ASSISTANT_TEXT),
-                    "summary": "",
-                    "summary_status": "pending",
-                    "scope_paths": [clip_text(path, 240) for path in (scope_paths or [])[:MAX_SCOPE_PATHS]],
-                    "created_at": now_iso(),
-                }
+            memory = self.store.load_document()
+            turn = RecentTurn(
+                id=generate_id("turn"),
+                intent=intent.value,
+                user_text=clip_text(user_text, MAX_USER_TEXT),
+                assistant_text=clip_text(assistant_text, MAX_ASSISTANT_TEXT),
+                summary="",
+                summary_status="pending",
+                scope_paths=[clip_text(path, 240) for path in (scope_paths or [])[:MAX_SCOPE_PATHS]],
+                created_at=now_iso(),
             )
-            self.store.save(memory)
+            updated_memory = MemoryDocument(
+                updated_at=memory.updated_at,
+                recent_turns=[*memory.recent_turns, turn],
+                active_topics=memory.active_topics,
+                repo_profile=memory.repo_profile,
+                durable_preferences=memory.durable_preferences,
+                project_notes=memory.project_notes,
+                version=memory.version,
+            )
+            self.store.save_document(updated_memory)
 
     def apply_delta(self, delta: dict[str, Any], repo_profile: dict[str, Any] | None = None) -> bool:
         with self._lock:
@@ -112,9 +120,9 @@ class MemoryManager:
             return MemorySummaryTrigger.PROJECT_CODE_EXPLAIN
 
         with self._lock:
-            memory = self.store.load()
-            recent_turns = memory["working_memory"]["recent_turns"]
-            pending_count = sum(1 for turn in recent_turns if turn.get("summary_status") == "pending")
+            memory = self.store.load_document()
+            recent_turns = memory.recent_turns
+            pending_count = sum(1 for turn in recent_turns if turn.summary_status == "pending")
             if pending_count >= 2:
                 return MemorySummaryTrigger.PENDING_TURNS
             if len(recent_turns) >= 6:
@@ -129,9 +137,17 @@ class MemoryManager:
         with self._lock:
             return self.store.load()
 
+    def load_document(self) -> MemoryDocument:
+        with self._lock:
+            return self.store.load_document()
+
     def save(self, memory: dict[str, Any]) -> bool:
         with self._lock:
             return self.store.save(memory)
+
+    def save_document(self, memory: MemoryDocument) -> bool:
+        with self._lock:
+            return self.store.save_document(memory)
 
     def clear(self) -> None:
         with self._lock:

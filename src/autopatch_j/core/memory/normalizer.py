@@ -30,8 +30,11 @@ class MemoryNormalizer:
     """Builds a safe memory document for the current memory JSON schema only."""
 
     def normalize(self, raw: Any) -> dict[str, Any]:
+        return self.normalize_document(raw).to_dict()
+
+    def normalize_document(self, raw: Any) -> MemoryDocument:
         if not isinstance(raw, dict) or raw.get("version") != MEMORY_VERSION:
-            return self.empty()
+            return MemoryDocument.empty()
 
         working = raw.get("working_memory") if isinstance(raw.get("working_memory"), dict) else {}
         long_term = raw.get("long_term_memory") if isinstance(raw.get("long_term_memory"), dict) else {}
@@ -48,7 +51,7 @@ class MemoryNormalizer:
                 long_term.get("project_notes"),
                 "project_note",
             ),
-        ).to_dict()
+        )
 
     def empty(self) -> dict[str, Any]:
         return MemoryDocument.empty().to_dict()

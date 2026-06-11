@@ -9,15 +9,17 @@ from .constants import (
     MAX_PROMPT_READY_SUMMARIES,
     ORDINARY_INTENTS,
 )
+from .models import MemoryDocument
 from .signals import LONG_TERM_SIGNALS, PROJECT_SIGNALS
 
 
 class MemoryPromptContextBuilder:
     """从已保存的 memory 中挑选少量相关内容注入普通问答提示词。"""
 
-    def build(self, memory: dict[str, Any], intent: IntentType, current_user_text: str = "") -> str:
+    def build(self, memory: MemoryDocument | dict[str, Any], intent: IntentType, current_user_text: str = "") -> str:
         if intent not in ORDINARY_INTENTS:
             return ""
+        memory = self._as_dict(memory)
 
         sections: list[str] = []
         durable_preferences = self._select_relevant_items(
@@ -70,9 +72,15 @@ class MemoryPromptContextBuilder:
 
         return "\n\n".join(sections)
 
-    def build_debug_summary(self, memory: dict[str, Any], intent: IntentType, current_user_text: str = "") -> str:
+    def build_debug_summary(
+        self,
+        memory: MemoryDocument | dict[str, Any],
+        intent: IntentType,
+        current_user_text: str = "",
+    ) -> str:
         if intent not in ORDINARY_INTENTS:
             return ""
+        memory = self._as_dict(memory)
 
         lines = ["Memory 注入："]
         durable_preferences = self._select_relevant_items(
@@ -122,6 +130,11 @@ class MemoryPromptContextBuilder:
         if len(lines) == 1:
             lines.append("- 无匹配内容")
         return "\n".join(lines)
+
+    def _as_dict(self, memory: MemoryDocument | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(memory, MemoryDocument):
+            return memory.to_dict()
+        return memory
 
     def _select_relevant_items(
         self,

@@ -14,6 +14,7 @@ from autopatch_j.core.memory import (
     MemoryManager,
 )
 from autopatch_j.core.memory.scheduler import MemorySummaryScheduler
+from autopatch_j.core.memory.models import MemoryDocument
 from autopatch_j.core.memory.prompts import MEMORY_SUMMARY_SYSTEM_PROMPT
 from autopatch_j.core.memory.repo_profile import RepoProfileCollector
 from autopatch_j.core.memory.summarizer import MemorySummarizer
@@ -51,6 +52,21 @@ def test_append_recent_turn_writes_project_memory_file(tmp_path: Path) -> None:
     assert turn["summary_status"] == "pending"
     assert turn["summary"] == ""
     assert turn["scope_paths"] == ["src/main/java/demo/App.java"]
+
+
+def test_memory_manager_exposes_typed_document(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+    manager.append_recent_turn(
+        intent=IntentType.GENERAL_CHAT,
+        user_text="Optional 怎么用",
+        assistant_text="Optional answer",
+    )
+
+    document = manager.load_document()
+
+    assert isinstance(document, MemoryDocument)
+    assert document.recent_turns[0].intent == IntentType.GENERAL_CHAT.value
+    assert document.recent_turns[0].user_text == "Optional 怎么用"
 
 
 def test_memory_manager_serializes_concurrent_recent_turn_appends(tmp_path: Path) -> None:
@@ -260,6 +276,9 @@ def test_recent_turns_are_capped(tmp_path: Path) -> None:
     turns = manager.load()["working_memory"]["recent_turns"]
     assert len(turns) == MAX_RECENT_TURNS
     assert turns[0]["user_text"] == "question 3"
+    document = manager.load_document()
+    assert len(document.recent_turns) == MAX_RECENT_TURNS
+    assert document.recent_turns[0].user_text == "question 3"
 
 
 def test_invalid_delta_does_not_modify_memory(tmp_path: Path) -> None:

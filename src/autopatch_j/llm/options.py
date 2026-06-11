@@ -29,6 +29,19 @@ class LLMRequestOptions:
     temperature: float | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class LLMCallDiagnostic:
+    """单次 LLM 调用的轻量诊断信息，不包含 prompt、token 或密钥。"""
+
+    purpose: LLMCallPurpose
+    stream: bool
+    reasoning: LLMReasoningMode
+    max_tokens: int | None
+    temperature: float | None
+    status: str
+    error: str = ""
+
+
 _PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
     LLMCallPurpose.REACT: LLMRequestOptions(
         stream=True,

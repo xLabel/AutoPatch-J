@@ -8,7 +8,7 @@ import pytest
 import autopatch_j.config as config_module
 from autopatch_j.config import AppConfig, GlobalConfig
 from autopatch_j.llm.client import LLMClient
-from autopatch_j.llm.options import LLMCallPurpose, resolve_request_options
+from autopatch_j.llm.options import LLMCallPurpose, LLMReasoningMode, resolve_request_options
 
 
 def _chunk(
@@ -129,6 +129,26 @@ def test_react_purpose_inherits_reasoning_and_streams_deltas(monkeypatch) -> Non
     assert response.reasoning_content == "先判断"
     assert content_deltas == ["可见回答"]
     assert reasoning_deltas == ["先判断"]
+
+
+def test_llm_client_records_call_diagnostics_for_classifier() -> None:
+    client = LLMClient(api_key="test-key", base_url="https://example.invalid/v1", model="test-model")
+    client.client = MagicMock()
+    client.client.chat.completions.create.return_value = _non_stream_response("code_audit")
+
+    response = client.chat(
+        messages=[{"role": "user", "content": "检查代码"}],
+        tools=None,
+        purpose=LLMCallPurpose.CLASSIFIER,
+    )
+
+    assert response.content == "code_audit"
+    diagnostic = client.diagnostics[-1]
+    assert diagnostic.purpose is LLMCallPurpose.CLASSIFIER
+    assert diagnostic.stream is False
+    assert diagnostic.reasoning is LLMReasoningMode.DISABLED
+    assert diagnostic.max_tokens == 128
+    assert diagnostic.status == "ok"
 
 
 def test_classifier_purpose_uses_non_stream_response_without_reasoning_effort() -> None:

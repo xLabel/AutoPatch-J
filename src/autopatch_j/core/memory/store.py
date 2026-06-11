@@ -11,6 +11,7 @@ from .constants import (
     SOFT_FILE_BYTES,
 )
 from .normalizer import MemoryNormalizer
+from .models import MemoryDocument
 from .text_utils import now_iso
 
 
@@ -22,17 +23,23 @@ class MemoryStore:
         self.normalizer = MemoryNormalizer()
 
     def load(self) -> dict[str, Any]:
+        return self.load_document().to_dict()
+
+    def load_document(self) -> MemoryDocument:
         if not self.memory_file.exists():
-            return self.normalizer.empty()
+            return MemoryDocument.empty()
         try:
             raw = json.loads(self.memory_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             self._backup_corrupt_file()
-            return self.normalizer.empty()
-        return self.normalizer.normalize(raw)
+            return MemoryDocument.empty()
+        return self.normalizer.normalize_document(raw)
 
     def save(self, memory: dict[str, Any]) -> bool:
-        normalized = self.normalizer.normalize(memory)
+        return self.save_document(self.normalizer.normalize_document(memory))
+
+    def save_document(self, memory: MemoryDocument) -> bool:
+        normalized = self.normalizer.normalize_document(memory.to_dict()).to_dict()
         normalized["updated_at"] = now_iso()
         normalized = self._fit_size(normalized)
         payload = self._dump(normalized)
