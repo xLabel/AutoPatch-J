@@ -144,6 +144,7 @@ class ToolRuntimeContext(Protocol):
     patch_engine: Any
     code_fetcher: Any
     patch_verifier: Any
+    memory_manager: Any
     focus_paths: list[str]
     patch_source_hint: str | None
 

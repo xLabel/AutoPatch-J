@@ -80,7 +80,12 @@ class CliRenderer:
         self.console.print(f"[bold {SUCCESS_STYLE}]{message}[/]")
 
     def print_error(self, message: str) -> None:
-        self.console.print(f"[bold {ERROR_STYLE}]{message}[/]")
+        self.console.print(
+            message,
+            highlight=False,
+            markup=False,
+            style=f"bold {ERROR_STYLE}",
+        )
 
     def print_diff(self, diff: str, title: str = "预览") -> None:
         """渲染带语法高亮的补丁差异"""

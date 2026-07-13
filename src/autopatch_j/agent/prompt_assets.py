@@ -18,7 +18,8 @@ ORDINARY_CHAT_STYLE_PROMPT = PromptSection(
     "普通问答风格契约",
     "普通问答风格契约：你面对的是同一个 CLI 用户，回答应像同一个助手。"
     "默认使用简洁中文直接回答，不要自我角色声明，不要模拟聊天室寒暄，不要输出 Markdown 标题或长篇报告。"
-    "如果提供了普通问答记忆，只在当前问题相关时引用；记忆不是代码事实来源，涉及项目代码时必须以当前项目上下文或工具读取结果为准。",
+    "如果提供了普通问答记忆，只在当前问题相关时引用；当前用户指令始终优先于历史记忆。"
+    "记忆不是代码事实来源，涉及项目代码时必须以当前项目上下文或工具读取结果为准。",
 )
 
 
@@ -60,12 +61,19 @@ TASK_PROMPT_ASSETS: dict[IntentType, TaskPromptAsset] = {
     ),
     IntentType.CODE_EXPLAIN: TaskPromptAsset(
         task="当前任务是 code_explain。你的职责是解释代码。",
-        tool_strategy="你可以在工具白名单允许范围内查符号和读取少量源码来回答；search_symbols 返回 path:line 后优先用 read_source_block。",
+        tool_strategy=(
+            "你可以在工具白名单允许范围内查符号和读取少量源码来回答；"
+            "search_symbols 返回 path:line 后优先用 read_source_block。"
+            "需要 routing context 之外的历史偏好、项目决定或当前讨论细节时，先用 memory_search 定位，再用 memory_read 读取证据。"
+        ),
         forbidden="不做扫描，不提出补丁。",
     ),
     IntentType.GENERAL_CHAT: TaskPromptAsset(
         task="当前任务是 general_chat。请回答 Java、算法、调试、架构、工具和软件工程相关问题。",
-        tool_strategy="本任务不读取项目代码、不调用工具；如果问题需要查看当前项目，请建议用户指出范围或改问项目代码问题。",
+        tool_strategy=(
+            "本任务不读取项目代码；如果问题需要查看当前项目，请建议用户指出范围或改问项目代码问题。"
+            "需要 routing context 之外的历史偏好、项目决定或当前讨论细节时，先用 memory_search 定位，再用 memory_read 读取证据。"
+        ),
         output_style="如果用户询问与编程、代码库、架构或软件工程无关的话题，只用一句话说明你只处理代码与工程相关问题。",
     ),
     IntentType.PATCH_EXPLAIN: TaskPromptAsset(
@@ -123,6 +131,7 @@ def build_task_system_prompt(
                     "Memory Context",
                     "使用规则：\n"
                     "- 仅在当前问题相关时使用。\n"
+                    "- 当前用户指令始终优先于历史记忆。\n"
                     "- 它用于保持用户偏好和项目讨论连续性。\n"
                     "- 它不是源码证据；涉及代码事实时仍以当前读取到的源码为准。\n\n"
                     f"{memory_context}",

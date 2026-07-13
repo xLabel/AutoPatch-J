@@ -142,7 +142,7 @@ class CodeAuditWorkflow:
         runtime.agent.reset_history()
         runtime.agent.session.clear_proposed_patch_draft()
         try:
-            return self.services.agent_runner.run(
+            result = self.services.agent_runner.run(
                 prompt=text,
                 agent_call=lambda p, **kwargs: runtime.agent.perform_code_audit(
                     raw_user_text=text,
@@ -151,7 +151,8 @@ class CodeAuditWorkflow:
                     **kwargs,
                 ),
                 suppress_answer_output=True,
-            ) or []
+            )
+            return result.trace_messages
         except Exception:
             runtime.agent.session.clear_proposed_patch_draft()
             raise

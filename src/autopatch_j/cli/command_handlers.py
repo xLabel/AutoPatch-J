@@ -6,9 +6,11 @@ from typing import Any, Protocol
 from rich.table import Table
 
 from autopatch_j.cli.commands import CLI_COMMANDS
+from autopatch_j.cli.memory_presenter import MemoryPresenter
 from autopatch_j.cli.render import DECISION_STYLE, SYSTEM_STYLE
 from autopatch_j.cli.runtime import CliRuntime
 from autopatch_j.cli.status_presenter import StatusPresenter
+from autopatch_j.config import GlobalConfig
 from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 
@@ -40,7 +42,7 @@ class CommandHandlers:
     def __init__(self, host: CliHostActions) -> None:
         self.host = host
 
-    def handle_help(self) -> None:
+    def handle_help(self, args: list[str] | None = None) -> None:
         sys_table = Table(show_header=True, header_style=f"bold {SYSTEM_STYLE}", box=None)
         sys_table.add_column("系统命令", style=SYSTEM_STYLE, width=15)
         sys_table.add_column("功能描述")
@@ -62,17 +64,20 @@ class CommandHandlers:
         self.host.renderer.print_heading("交互说明")
         self.host.renderer.print_table(act_table)
 
-    def handle_reset(self) -> None:
+    def handle_reset(self, args: list[str] | None = None) -> None:
         self.host.reset_project_state()
-        self.host.renderer.print_success("项目状态已重置，请执行 /init 重新初始化。")
+        self.host.renderer.print_success(
+            "项目工作台已重置；Memory、Memory 导出和 CLI history 已保留。"
+            "如需清空 Memory，请执行 /memory clear --confirm。"
+        )
 
-    def handle_scanners(self) -> None:
+    def handle_scanners(self, args: list[str] | None = None) -> None:
         StatusPresenter(self.host.renderer).render_scanners(self.host.repo_root)
 
-    def handle_quit(self) -> None:
+    def handle_quit(self, args: list[str] | None = None) -> None:
         self.host.request_exit()
 
-    def handle_init(self) -> None:
+    def handle_init(self, args: list[str] | None = None) -> None:
         if self.host.repo_root is None:
             self.host.renderer.print_error("未检测到项目根目录，无法初始化。")
             return
@@ -98,16 +103,109 @@ class CommandHandlers:
                 style="bold yellow",
             )
 
-    def handle_status(self) -> None:
+    def handle_status(self, args: list[str] | None = None) -> None:
         StatusPresenter(self.host.renderer).render_status(self.host.runtime, self.host.repo_root)
 
-    def handle_reindex(self) -> None:
+    def handle_reindex(self, args: list[str] | None = None) -> None:
         runtime = self._require_runtime()
         if runtime is None:
             return
         self.host.renderer.print_step("正在重新构建索引...")
         stats = runtime.symbol_indexer.rebuild_index()
         self.host.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
+
+    def handle_new(self, args: list[str] | None = None) -> None:
+        runtime = self._require_runtime()
+        if runtime is None:
+            return
+
+        old_thread = runtime.memory_manager.ensure_active_thread()
+        self._flush_memory_once(runtime, reason="new", thread_id=old_thread.id)
+        had_pending_patch = runtime.workspace_manager.load().has_pending_patch()
+        runtime.workspace_manager.clear()
+        runtime.agent.reset_history()
+        new_thread = runtime.memory_manager.start_new_thread(expected_thread_id=old_thread.id)
+        if had_pending_patch:
+            self.host.renderer.print_agent_text("已中止待确认补丁并清空 review workspace。")
+        self.host.renderer.print_success(f"已创建新的普通对话 thread：{new_thread.id}")
+
+    def handle_memory(self, args: list[str] | None = None) -> None:
+        runtime = self._require_runtime()
+        if runtime is None:
+            return
+        command_args = args or []
+        if not command_args:
+            self._render_memory_usage()
+            return
+
+        subcommand = command_args[0].lower()
+        rest = command_args[1:]
+        presenter = MemoryPresenter(
+            self.host.renderer,
+            show_raw_errors=GlobalConfig.debug_mode,
+        )
+        try:
+            if subcommand == "status" and not rest:
+                presenter.render_status(runtime.memory_manager.status())
+                return
+            if subcommand == "list" and not rest:
+                presenter.render_list(runtime.memory_manager.list_items())
+                return
+            if subcommand == "show" and len(rest) == 1:
+                presenter.render_detail(runtime.memory_manager.show_item(rest[0]))
+                return
+            if subcommand == "forget" and len(rest) == 1:
+                result = runtime.memory_manager.forget(rest[0])
+                if result.forgotten:
+                    self.host.renderer.print_success(
+                        f"已忘记派生 Memory {result.memory_id}；原始 turn 仍被保留用于审计。"
+                    )
+                return
+            if subcommand == "clear":
+                if rest != ["--confirm"]:
+                    self.host.renderer.print_error(
+                        "清空会删除全部 thread、turn、派生 Memory 和 job；"
+                        "确认执行请使用 /memory clear --confirm。"
+                    )
+                    return
+                result = runtime.memory_manager.clear()
+                runtime.agent.reset_history()
+                self.host.renderer.print_success(
+                    "Memory 已清空并创建新 thread "
+                    f"{result.active_thread_id}；既有导出与 CLI history 未删除。"
+                )
+                return
+            if subcommand == "export" and not rest:
+                result = runtime.memory_manager.export()
+                self.host.renderer.print_success(
+                    f"RAW Memory 已导出至 {result.path}（未脱敏，不会覆盖既有导出）。"
+                )
+                return
+        except LookupError as exc:
+            self.host.renderer.print_error(f"未找到 Memory：{exc}")
+            return
+        except Exception as exc:
+            self.host.renderer.print_error(f"Memory 命令执行失败：{exc}")
+            return
+
+        self._render_memory_usage()
+
+    def _flush_memory_once(self, runtime: CliRuntime, reason: str, thread_id: str | None = None) -> None:
+        try:
+            result = runtime.flush_memory_once(reason=reason, thread_id=thread_id)
+        except Exception as exc:
+            self.host.renderer.print_error(f"Memory 本次处理失败，任务已保留：{exc}")
+            return
+        if result.failed or result.pending:
+            self.host.renderer.print_error(
+                f"Memory 本次处理未完全成功（failed={result.failed}, pending={result.pending}），"
+                "剩余任务已保留。"
+            )
+
+    def _render_memory_usage(self) -> None:
+        self.host.renderer.print_error(
+            "用法：/memory status|list|show <id>|forget <id>|clear --confirm|export"
+        )
 
     def handle_apply(self, pending: SearchReplacePatchDraft) -> bool:
         runtime = self._require_runtime()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from autopatch_j.agent.react_runner import AgentRunResult
 from autopatch_j.cli.render import CliRenderer
 from autopatch_j.core.chat_filter import ChatFilter
 from autopatch_j.core.domain import IntentType
@@ -27,6 +28,15 @@ class ReActDisplayPolicy:
     @property
     def compact_observation(self) -> bool:
         return self.force_compact_observation or not self.debug_mode
+
+
+@dataclass(frozen=True, slots=True)
+class PresentedAgentResult:
+    """Request result after CLI display filtering, with the original trace preserved."""
+
+    raw_answer: str
+    display_answer: str
+    trace_messages: list[dict[str, Any]]
 
 
 class _ReasoningRenderState:
@@ -135,7 +145,7 @@ class AgentStreamPresenter:
     def run(
         self,
         prompt: str,
-        agent_call: Callable[..., str],
+        agent_call: Callable[..., AgentRunResult],
         scope_paths: list[str] | None = None,
         render_no_issue_panel: bool = False,
         compact_observation: bool = False,
@@ -144,10 +154,10 @@ class AgentStreamPresenter:
         show_chat_anchors: bool = False,
         plain_answer: bool = False,
         suppress_answer_output: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> PresentedAgentResult:
         if self.agent is None or self.workspace_manager is None or self.chat_filter is None:
             self.renderer.print_error("系统未初始化，请先执行 /init")
-            return []
+            return PresentedAgentResult(raw_answer="", display_answer="", trace_messages=[])
         agent = self.agent
         workspace_manager = self.workspace_manager
         chat_filter = self.chat_filter
@@ -158,7 +168,6 @@ class AgentStreamPresenter:
         )
 
         execution = _AgentStreamExecution(self, policy)
-        start_index = len(agent.messages)
         if policy.debug_mode:
             self._render_memory_debug_context(
                 agent=agent,
@@ -166,14 +175,19 @@ class AgentStreamPresenter:
                 user_text=raw_user_text or prompt,
             )
 
-        final_answer = agent_call(
-            prompt,
-            on_token=execution.on_token,
-            on_reasoning=execution.on_reasoning,
-            on_observation=execution.on_observation,
-            on_tool_start=execution.on_tool_start,
-        )
-        new_messages = list(agent.messages[start_index:])
+        try:
+            run_result = agent_call(
+                prompt,
+                on_token=execution.on_token,
+                on_reasoning=execution.on_reasoning,
+                on_observation=execution.on_observation,
+                on_tool_start=execution.on_tool_start,
+            )
+        except Exception:
+            execution.finish_reasoning_status_if_visible()
+            if policy.debug_mode:
+                self._render_llm_debug_context(agent)
+            raise
         execution.finish_reasoning_status_if_visible()
         if policy.debug_mode:
             self._render_llm_debug_context(agent)
@@ -184,10 +198,18 @@ class AgentStreamPresenter:
                 scanner_summary=self._build_static_scan_summary(),
                 llm_summary=self._build_local_no_issue_summary(),
             )
-            return new_messages
+            return PresentedAgentResult(
+                raw_answer=run_result.final_answer,
+                display_answer="",
+                trace_messages=run_result.trace_messages,
+            )
 
         if suppress_answer_output:
-            return new_messages
+            return PresentedAgentResult(
+                raw_answer=run_result.final_answer,
+                display_answer="",
+                trace_messages=run_result.trace_messages,
+            )
 
         has_pending_patches = workspace_manager.load().has_pending_patch()
         answer_allowed_with_pending_patch = {
@@ -196,45 +218,35 @@ class AgentStreamPresenter:
             IntentType.GENERAL_CHAT,
         }
         if has_pending_patches and answer_intent not in answer_allowed_with_pending_patch:
-            return new_messages
-
-        buffered_answer = "".join(execution.buffered_answer_parts)
-        if buffered_answer:
-            rendered_answer = (
-                chat_filter.build_display_answer(
-                    user_text=raw_user_text or "",
-                    answer=buffered_answer,
-                    intent=answer_intent,
-                )
-                if answer_intent
-                else buffered_answer
+            return PresentedAgentResult(
+                raw_answer=run_result.final_answer,
+                display_answer="",
+                trace_messages=run_result.trace_messages,
             )
+
+        answer = "".join(execution.buffered_answer_parts) or run_result.final_answer
+        rendered_answer = (
+            chat_filter.build_display_answer(
+                user_text=raw_user_text or "",
+                answer=answer,
+                intent=answer_intent,
+            )
+            if answer_intent
+            else answer
+        )
+        if rendered_answer:
             if show_chat_anchors:
                 self.renderer.print_assistant_anchor()
             if plain_answer:
                 self.renderer.print_plain(rendered_answer)
             else:
                 self.renderer.print_agent_text(rendered_answer)
-        else:
-            sanitized_final_answer = final_answer or ""
-            if sanitized_final_answer:
-                rendered_answer = (
-                    chat_filter.build_display_answer(
-                        user_text=raw_user_text or "",
-                        answer=sanitized_final_answer,
-                        intent=answer_intent,
-                    )
-                    if answer_intent
-                    else sanitized_final_answer
-                )
-                if show_chat_anchors:
-                    self.renderer.print_assistant_anchor()
-                if plain_answer:
-                    self.renderer.print_plain(rendered_answer)
-                else:
-                    self.renderer.print_agent_text(rendered_answer)
 
-        return new_messages
+        return PresentedAgentResult(
+            raw_answer=run_result.final_answer,
+            display_answer=rendered_answer,
+            trace_messages=run_result.trace_messages,
+        )
 
     def _render_memory_debug_context(self, agent: Any, answer_intent: IntentType | None, user_text: str) -> None:
         if answer_intent is None:
@@ -260,6 +272,11 @@ class AgentStreamPresenter:
             f"LLM 调用诊断：purpose={purpose}, stream={stream}, "
             f"reasoning={reasoning}, status={diagnostic.status}"
         )
+        if purpose in {"memory_extraction", "memory_consolidation"}:
+            detail += (
+                f", max_tokens={getattr(diagnostic, 'max_tokens', None)}, "
+                f"timeout={getattr(diagnostic, 'timeout_seconds', None)}s"
+            )
         if diagnostic.error:
             detail += f", error={diagnostic.error}"
         self.renderer.print_agent_text(detail)

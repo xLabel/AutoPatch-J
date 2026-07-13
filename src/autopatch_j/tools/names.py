@@ -11,6 +11,8 @@ class FunctionToolName(str, Enum):
     READ_SOURCE_BLOCK = "read_source_block"
     READ_SOURCE_CONTEXT = "read_source_context"
     SEARCH_SYMBOLS = "search_symbols"
+    MEMORY_SEARCH = "memory_search"
+    MEMORY_READ = "memory_read"
     PROPOSE_PATCH = "propose_patch"
     REVISE_PATCH = "revise_patch"
 

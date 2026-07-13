@@ -8,6 +8,7 @@ from autopatch_j.core.domain.scope import CodeScope
 from autopatch_j.core.user_input.diagnostics import RouteClassificationResult
 from autopatch_j.core.user_input.prompts import REVIEW_ROUTE_CLASSIFIER_PROMPT, build_review_route_user_prompt
 from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.diagnostics import format_raw_llm_exception
 from autopatch_j.llm.options import LLMCallPurpose
 
 
@@ -110,7 +111,9 @@ class ReviewRouteClassifier:
                 purpose=purpose,
             )
         except Exception as exc:
-            return None, f"{purpose.name.lower()} exception: {exc}"
+            return None, (
+                f"{purpose.name.lower()} exception: {format_raw_llm_exception(exc)}"
+            )
         route = self._parse_route(str(response.content))
         if route is None:
             return None, f"{purpose.name.lower()} returned invalid route"

@@ -4,6 +4,14 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
+class CliSubcommand:
+    """Nested slash-command declaration used by help and completion."""
+
+    name: str
+    completion_description: str
+
+
+@dataclass(frozen=True, slots=True)
 class CliCommand:
     """CLI slash command declaration shared by routing, help and completion."""
 
@@ -13,6 +21,18 @@ class CliCommand:
     completion_description: str
     show_in_help: bool = True
     show_in_completion: bool = True
+    accepts_arguments: bool = False
+    subcommands: tuple[CliSubcommand, ...] = ()
+
+
+MEMORY_SUBCOMMANDS: tuple[CliSubcommand, ...] = (
+    CliSubcommand("status", "查看 Memory 运行状态"),
+    CliSubcommand("list", "列出 active Memory"),
+    CliSubcommand("show", "查看单条 Memory 与来源"),
+    CliSubcommand("forget", "忘记单条派生 Memory"),
+    CliSubcommand("clear", "清空 Memory 数据集"),
+    CliSubcommand("export", "导出一次性 RAW JSON 快照"),
+)
 
 
 CLI_COMMANDS: tuple[CliCommand, ...] = (
@@ -43,8 +63,22 @@ CLI_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand(
         name="/reset",
         handler_name="handle_reset",
-        help_description="清空工作台状态、Agent 对话历史和普通问答记忆",
-        completion_description="重置工作台状态与对话历史",
+        help_description="重置工作台状态（保留 Memory、导出和 CLI history）",
+        completion_description="重置工作台并保留 Memory",
+    ),
+    CliCommand(
+        name="/new",
+        handler_name="handle_new",
+        help_description="结束当前工作状态并创建新的普通对话 thread",
+        completion_description="新建普通对话 thread",
+    ),
+    CliCommand(
+        name="/memory",
+        handler_name="handle_memory",
+        help_description="管理 Memory：status/list/show/forget/clear/export",
+        completion_description="查看和管理 Memory",
+        accepts_arguments=True,
+        subcommands=MEMORY_SUBCOMMANDS,
     ),
     CliCommand(
         name="/help",

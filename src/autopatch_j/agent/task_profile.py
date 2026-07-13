@@ -10,6 +10,10 @@ SOURCE_READING_TOOLS = (
     FunctionToolName.READ_SOURCE_BLOCK,
     FunctionToolName.READ_SOURCE_CONTEXT,
 )
+MEMORY_READING_TOOLS = (
+    FunctionToolName.MEMORY_SEARCH,
+    FunctionToolName.MEMORY_READ,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,11 +45,12 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
         tool_names=(
             FunctionToolName.SEARCH_SYMBOLS,
             *SOURCE_READING_TOOLS,
+            *MEMORY_READING_TOOLS,
         ),
     ),
     IntentType.GENERAL_CHAT: TaskProfile(
         intent=IntentType.GENERAL_CHAT,
-        tool_names=(),
+        tool_names=MEMORY_READING_TOOLS,
     ),
     IntentType.PATCH_EXPLAIN: TaskProfile(
         intent=IntentType.PATCH_EXPLAIN,
@@ -67,7 +72,7 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
 
 CODE_EXPLAIN_SINGLE_FILE_PROFILE = TaskProfile(
     intent=IntentType.CODE_EXPLAIN,
-    tool_names=SOURCE_READING_TOOLS,
+    tool_names=(*SOURCE_READING_TOOLS, *MEMORY_READING_TOOLS),
 )
 ZERO_FINDING_REVIEW_PROFILE = TaskProfile(
     intent=IntentType.CODE_AUDIT,

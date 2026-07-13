@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
-from autopatch_j.cli.agent_stream_presenter import AgentStreamPresenter
+from autopatch_j.agent.react_runner import AgentRunResult
+from autopatch_j.cli.agent_stream_presenter import AgentStreamPresenter, PresentedAgentResult
 from autopatch_j.core.domain import IntentType
 
 
@@ -20,7 +21,7 @@ class AgentRequestRunner:
     def run(
         self,
         prompt: str,
-        agent_call: Callable[..., str],
+        agent_call: Callable[..., AgentRunResult],
         scope_paths: list[str] | None = None,
         render_no_issue_panel: bool = False,
         compact_observation: bool = False,
@@ -29,7 +30,7 @@ class AgentRequestRunner:
         show_chat_anchors: bool = False,
         plain_answer: bool = False,
         suppress_answer_output: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> PresentedAgentResult:
         return self.presenter.run(
             prompt=prompt,
             agent_call=agent_call,
@@ -42,4 +43,3 @@ class AgentRequestRunner:
             plain_answer=plain_answer,
             suppress_answer_output=suppress_answer_output,
         )
-

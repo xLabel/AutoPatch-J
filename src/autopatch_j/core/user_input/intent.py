@@ -7,6 +7,7 @@ from autopatch_j.core.domain.intent import IntentType
 from autopatch_j.core.user_input.diagnostics import IntentClassificationResult
 from autopatch_j.core.user_input.intent_parser import parse_intent_label
 from autopatch_j.core.user_input.prompts import INTENT_CLASSIFIER_PROMPT, build_intent_classifier_user_prompt
+from autopatch_j.llm.diagnostics import format_raw_llm_exception
 from autopatch_j.llm.options import LLMCallPurpose
 
 
@@ -80,7 +81,9 @@ def _classify_intent_with_purpose_diagnostics(
             purpose=purpose,
         )
     except Exception as exc:
-        return None, f"{purpose.name.lower()} exception: {exc}"
+        return None, (
+            f"{purpose.name.lower()} exception: {format_raw_llm_exception(exc)}"
+        )
 
     intent = parse_intent_label(str(response.content))
     if intent is None:
@@ -149,7 +152,7 @@ class UserIntentClassifier:
         try:
             result = self.classify_with_llm(user_text, has_pending_review)
         except Exception as exc:
-            return None, f"classifier exception: {exc}"
+            return None, f"classifier exception: {format_raw_llm_exception(exc)}"
         if isinstance(result, tuple):
             return result
         return result, ""

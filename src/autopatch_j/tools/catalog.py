@@ -6,6 +6,8 @@ from typing import Any
 from autopatch_j.tools.contract import FunctionTool, ToolRuntimeContext
 from autopatch_j.tools.function_calls import (
     GetFindingDetailTool,
+    MemoryReadTool,
+    MemorySearchTool,
     ProposePatchTool,
     ReadSourceBlockTool,
     ReadSourceContextTool,
@@ -35,6 +37,8 @@ class FunctionToolCatalog:
                 ReadSourceBlockTool(context),
                 ReadSourceContextTool(context),
                 SearchSymbolsTool(context),
+                MemorySearchTool(context),
+                MemoryReadTool(context),
                 ProposePatchTool(context),
                 RevisePatchTool(context),
             ]

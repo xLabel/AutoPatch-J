@@ -18,6 +18,7 @@ from autopatch_j.cli.runtime import CliRuntime, build_cli_runtime
 from autopatch_j.cli.welcome_presenter import WelcomePresenter
 from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
 from autopatch_j.config import GlobalConfig, discover_repo_root
+from autopatch_j.llm.diagnostics import format_raw_llm_exception
 from autopatch_j.llm.factory import build_default_llm_client
 
 
@@ -49,6 +50,7 @@ class AutoPatchCli:
         )
         self.prompt_session: PromptSession[str] | None = None
         self.is_first_run: bool = False
+        self._exit_finalized = False
 
         if self.repo_root:
             index_db_path = self.repo_root / ".autopatch-j" / "index.db"
@@ -60,30 +62,47 @@ class AutoPatchCli:
     def _handle_interrupt(self, signum: int, frame: Any) -> None:
         self.request_exit(f"\n[bold {DECISION_STYLE}]收到中断信号，正在退出...[/]")
 
-    def reset_agent_session(self) -> None:
-        if self.runtime is not None:
-            self.runtime.agent.reset_history()
-
     def reset_project_state(self) -> None:
         if self.runtime is not None:
-            self.runtime.agent.shutdown(wait=False)
-            self.runtime.agent.reset_history(clear_memory=True)
+            self.runtime.agent.reset_history()
+            self.runtime.close()
             self.runtime.artifact_manager.clear_project_state()
-        self.clear_runtime()
+        self._detach_runtime()
         self.is_first_run = True
 
     def clear_runtime(self) -> None:
         if self.runtime is not None:
-            self.runtime.agent.shutdown(wait=False)
+            self.runtime.close()
+        self._detach_runtime()
+
+    def _detach_runtime(self) -> None:
         self.runtime = None
         self.input_router = None
         self.agent_presenter = None
         self.agent_runner = None
 
     def _finalize_cli_exit(self, message: str | None = None) -> None:
-        self.reset_agent_session()
-        if self.runtime is not None:
-            self.runtime.agent.shutdown(wait=False)
+        if self._exit_finalized:
+            return
+        self._exit_finalized = True
+        runtime = self.runtime
+        if runtime is not None:
+            try:
+                result = runtime.flush_memory_once(reason="exit")
+                failed = result.failed
+                pending = result.pending
+                if failed or pending:
+                    self.renderer.print_error(
+                        f"Memory 退出处理未完全成功（failed={failed}, pending={pending}），"
+                        "任务已保留，将在下次启动恢复。"
+                    )
+            except Exception as exc:
+                self.renderer.print_error(f"Memory 退出处理失败，任务将在下次启动恢复：{exc}")
+            finally:
+                try:
+                    runtime.close()
+                except Exception as exc:
+                    self.renderer.print_error(f"Memory runtime 关闭失败：{exc}")
         if message:
             self.renderer.print(message)
 
@@ -93,8 +112,8 @@ class AutoPatchCli:
 
     def run(self) -> int:
         if not self._ensure_prompt_session():
+            self._finalize_cli_exit()
             return 1
-        self.reset_agent_session()
 
         self.welcome_presenter.render(self.repo_root, self.is_first_run, self.runtime)
         while True:
@@ -145,7 +164,12 @@ class AutoPatchCli:
         return 0
 
     def _render_runtime_error(self, exc: Exception) -> None:
-        error_message = str(exc)
+        raw_error = format_raw_llm_exception(exc)
+        if GlobalConfig.debug_mode:
+            self.renderer.print_error(f"指令执行异常: {raw_error}")
+            return
+
+        error_message = raw_error
         if "401" in error_message or "AuthenticationError" in error_message:
             self.renderer.print_error("LLM 认证失败 (401)，请检查 AUTOPATCH_LLM_API_KEY。")
         elif "403" in error_message or "AccessDenied" in error_message:
@@ -153,7 +177,9 @@ class AutoPatchCli:
         elif "404" in error_message or "NotFoundError" in error_message:
             self.renderer.print_error("LLM 接口未找到 (404)，请检查 AUTOPATCH_LLM_BASE_URL 或 AUTOPATCH_LLM_MODEL。")
         else:
-            self.renderer.print_error(f"指令执行异常: {error_message}")
+            self.renderer.print_error(
+                "指令执行异常；启用 AUTOPATCH_DEBUG=true 查看 RAW 详情。"
+            )
 
     def _ensure_prompt_session(self) -> bool:
         if self.prompt_session is not None:
@@ -166,7 +192,10 @@ class AutoPatchCli:
             return False
 
     def initialize_runtime(self, repo_root: Path) -> None:
+        if self.runtime is not None:
+            self.runtime.close()
         self.runtime = build_cli_runtime(repo_root, llm_factory=build_default_llm_client)
+        self._exit_finalized = False
         self.input_controller.set_repo_root(repo_root)
         self.agent_presenter = AgentStreamPresenter(
             renderer=self.renderer,

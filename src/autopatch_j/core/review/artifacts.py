@@ -77,17 +77,31 @@ class ProjectArtifactStore:
 
     def clear_project_state(self) -> None:
         """
-        清空当前项目的 .autopatch-j 状态目录。
+        清空当前项目的工作台状态，保留独立的 Memory 与 CLI history。
 
-        /reset 需要回到未初始化状态，因此不能只删除 workspace.json；
-        扫描快照、索引库、命令历史、运行时缓存和 memory 都属于可重建状态。
+        `/reset` 只负责 review、scan、index 和运行时缓存；Memory 数据库、
+        一次性导出与终端输入历史有各自的显式管理命令。
         """
 
         if not self._is_expected_state_dir():
             raise ValueError(f"拒绝清理非项目状态目录: {self.state_dir}")
         if self.state_dir.exists():
-            shutil.rmtree(self.state_dir)
+            for child in self.state_dir.iterdir():
+                if self._should_preserve_on_reset(child):
+                    continue
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
         self.state_dir.mkdir(parents=True, exist_ok=True)
+
+    def _should_preserve_on_reset(self, path: Path) -> bool:
+        name = path.name
+        return (
+            name == "history.txt"
+            or name.startswith("memory.db")
+            or name.startswith("memory-export")
+        )
 
     def _is_expected_state_dir(self) -> bool:
         return self.state_dir.name == ".autopatch-j" and self.state_dir.parent == self.repo_root.resolve()

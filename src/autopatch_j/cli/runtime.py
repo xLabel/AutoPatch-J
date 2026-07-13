@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -18,6 +18,7 @@ from autopatch_j.core.user_input import (
     build_llm_user_intent_classifier_with_diagnostics,
 )
 from autopatch_j.core.memory import MemoryManager
+from autopatch_j.core.memory.models import FlushResult
 from autopatch_j.core.patching import SearchReplacePatchEngine
 from autopatch_j.core.patching import PatchQualityVerifier
 from autopatch_j.core.review import StaticScanRunner
@@ -53,6 +54,19 @@ class CliRuntime:
     memory_manager: MemoryManager
     agent: Agent
     summary_provider: CliSummaryProvider
+    _closed: bool = field(default=False, init=False, repr=False)
+
+    def flush_memory_once(self, reason: str, thread_id: str | None = None) -> FlushResult:
+        return self.memory_manager.flush_once(reason=reason, thread_id=thread_id)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self.agent.shutdown(wait=False)
+        finally:
+            self.memory_manager.close()
 
 
 def build_cli_runtime(
@@ -60,6 +74,7 @@ def build_cli_runtime(
     llm_factory: Callable[[], LLMClient | None] = build_default_llm_client,
 ) -> CliRuntime:
     shared_llm = llm_factory()
+    background_llm = llm_factory()
     artifact_manager = ProjectArtifactStore(repo_root)
     symbol_indexer = SymbolIndex(repo_root, ignored_dirs=GlobalConfig.ignored_dirs)
     patch_engine = SearchReplacePatchEngine(repo_root)
@@ -73,7 +88,11 @@ def build_cli_runtime(
     scope_service = ScopeResolver(repo_root, symbol_indexer, ignored_dirs=GlobalConfig.ignored_dirs)
     scanner_runner = StaticScanRunner(repo_root, artifact_manager)
     workspace_manager = ReviewWorkspaceManager(artifact_manager)
-    memory_manager = MemoryManager(artifact_manager.state_dir / "memory.json")
+    memory_manager = MemoryManager(
+        db_path=artifact_manager.state_dir / "memory.db",
+        llm=background_llm,
+    )
+    memory_manager.start()
 
     scanner = DEFAULT_SCANNER_CATALOG.get(DEFAULT_SCANNER_NAME)
     patch_verifier = PatchQualityVerifier(repo_root, scanner) if scanner else None
@@ -88,7 +107,11 @@ def build_cli_runtime(
         patch_verifier=patch_verifier,
         memory_manager=memory_manager,
     )
-    agent = Agent(session=agent_session, llm=shared_llm)
+    try:
+        agent = Agent(session=agent_session, llm=shared_llm)
+    except Exception:
+        memory_manager.close()
+        raise
     summary_provider = CliSummaryProvider(
         repo_root=repo_root,
         artifact_manager=artifact_manager,

@@ -29,12 +29,36 @@ class AutoPatchCompleter(Completer):
             for command in CLI_COMMANDS
             if command.show_in_completion
         }
+        self.subcommands = {
+            command.name: {
+                subcommand.name: subcommand.completion_description
+                for subcommand in command.subcommands
+            }
+            for command in CLI_COMMANDS
+            if command.subcommands
+        }
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterable[Completion]:
         text = document.text_before_cursor
 
         # --- 场景 A: 系统指令补全 (/) ---
         if text.startswith('/'):
+            command_name, separator, argument_text = text.partition(" ")
+            nested = self.subcommands.get(command_name.lower())
+            if separator and nested is not None:
+                query = argument_text.lstrip().lower()
+                if " " in query:
+                    return
+                for subcommand, description in nested.items():
+                    if subcommand.startswith(query):
+                        yield Completion(
+                            subcommand,
+                            start_position=-len(query),
+                            display=f"{command_name.lower()} {subcommand}",
+                            display_meta=description,
+                        )
+                return
+
             cmd_match = self.command_pattern.search(text)
             if cmd_match:
                 query = cmd_match.group(0).lower()
