@@ -1,8 +1,4 @@
-## Purpose
-
-定义 LLM 调用在普通与 debug 模式下的诊断边界：普通模式保持简洁，debug 模式提供有界 RAW provider 错误，并避免主动附加请求内容或认证配置。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 开发者 debug 模式可查看有界 RAW LLM 诊断
 LLM 调用 SHALL 暴露调用 purpose 和请求策略；普通模式 SHALL 保持简洁且不得渲染 RAW 错误，`AUTOPATCH_DEBUG=true` 时 SHALL 展示最多 20,000 字符的 RAW provider exception、error body 和 response body。系统 SHALL NOT 主动从 request messages、prompt、headers 或认证配置附加额外内容，但 SHALL NOT 对 exception/body 自身做敏感信息扫描或脱敏。

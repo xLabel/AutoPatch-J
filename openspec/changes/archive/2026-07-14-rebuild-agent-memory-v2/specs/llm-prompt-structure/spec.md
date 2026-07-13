@@ -1,34 +1,4 @@
-## Purpose
-
-Define how AutoPatch-J structures natural-language LLM prompts so task boundaries, evidence, raw user input, Memory Context, and machine-readable contracts remain explicit and predictable.
-
-## Requirements
-
-### Requirement: 自然语言 LLM prompt 使用 Markdown section
-AutoPatch-J SHALL render natural-language LLM prompts with consistent Markdown sections for system prompts, ReAct user prompts, classifier prompts, and ordinary Memory Context.
-
-#### Scenario: 构建主 Agent system prompt
-- **WHEN** constructing a task system prompt
-- **THEN** the prompt SHALL use `##` sections for identity, task, tool strategy, output style, forbidden rules, workbench, and optional Memory Context
-- **AND** the workbench section SHALL be produced through the same prompt section rendering path as other system sections
-
-#### Scenario: 构建 ReAct user prompt
-- **WHEN** constructing a code audit, zero-finding review, code explain, patch explain, or patch revise user prompt
-- **THEN** the prompt SHALL separate user input, evidence, execution requirements, code snippets, and patch diff into explicit Markdown sections
-- **AND** code snippets and diffs SHALL be fenced when they are included as evidence
-
-### Requirement: 不可信用户输入必须隔离
-Prompts that include raw user text SHALL isolate it from system rules and classification rules.
-
-#### Scenario: 意图识别用户输入
-- **WHEN** building the intent classifier or review route user prompt
-- **THEN** the prompt SHALL include state and rules as Markdown sections
-- **AND** raw user text SHALL remain inside a `<<<USER_TEXT ... USER_TEXT` boundary
-
-#### Scenario: Agent 任务用户输入
-- **WHEN** building a ReAct user prompt from raw user input
-- **THEN** the raw user request or feedback SHALL be placed in its own Markdown section
-- **AND** it SHALL NOT be concatenated into the same paragraph as execution rules
+## MODIFIED Requirements
 
 ### Requirement: Memory Context 是普通问答的结构化上下文
 Memory SHALL 以 SQLite records 持久化，并 SHALL 仅为 `code_explain` 和 `general_chat` 渲染 bounded Markdown routing context；详细 Memory SHALL 通过受控 function tools 渐进读取。

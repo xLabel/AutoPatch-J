@@ -1,8 +1,4 @@
-## Purpose
-
-定义 Memory manager 以 typed records 和 SQLite repository 执行业务操作的运行时边界，并明确 bootstrap 完整性、诊断恢复例外与 JSON export 边界。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Memory 运行时类型化
 Memory manager 内部 SHALL 使用 typed thread、turn、job、candidate、item 与 provenance records 执行业务操作，并 SHALL 通过 SQLite repository 的显式事务边界持久化；裸 dict 只允许存在于严格 LLM JSON contract 和显式 export 边界。

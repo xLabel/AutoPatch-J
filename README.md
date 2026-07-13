@@ -57,7 +57,7 @@ autopatch-j> 这个项目是干什么的
 - 不触发审计扫描。
 - 单文件解释默认不越界追踪。
 - 项目级或目录级解释允许受控符号导航。
-- 可读取普通问答 Memory，让仓库元信息、项目讨论笔记和用户偏好在跨轮问答中保持连续。
+- 可读取普通问答 Memory，让当前 thread、用户明确偏好和项目决定在跨轮、跨重启问答中保持连续；代码事实始终实时读取。
 
 ### 补丁解释与重写
 
@@ -96,7 +96,7 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 
 原则：`Scanner provides evidence, LLM performs triage` / `Patch is a review item, not a chat reply`
 
-**隔离的上下文能力**：项目级 Memory 只服务 `code_explain` 和 `general_chat`，用 JSON 沉淀 episode、项目理解和协作偏好，再渲染成 Markdown 结构化上下文注入主 LLM；它不进入 `code_audit`、`patch_explain`、`patch_revise`，避免历史偏好污染修复证据链。业务代码只声明 `LLMCallPurpose`，是否关闭 reasoning、是否流式输出、如何适配 DeepSeek、百炼、OpenAI 兼容接口，统一由 LLM 层处理。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
+**隔离的上下文能力**：项目级 Memory 只服务 `code_explain` 和 `general_chat`。SQLite 保存 RAW ordinary thread/turn，两阶段 LLM 将其整理为明确偏好、项目决定和非事实讨论上下文；主 Agent 先读取 bounded routing context，再通过 `memory_search` / `memory_read` 按需回读来源。所有 repair 请求都使用独立空历史，避免历史偏好污染修复证据链。业务代码只声明 `LLMCallPurpose`，是否关闭 reasoning、是否流式输出、如何适配 DeepSeek、百炼、OpenAI 兼容接口，统一由 LLM 层处理。普通模式保持紧凑诊断；`AUTOPATCH_DEBUG=true` 时展示有界 RAW provider exception/body，Memory 后台错误最多以 20,000 字符写入 SQLite 和 RAW export。详细设计见 [Agent Memory 设计说明](docs/memory_design.md)。
 
 原则：`Memory helps chat, not repair` / `LLM calls are purpose driven`
 
@@ -105,8 +105,8 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 | IntentType | 场景 | 可用工具 | Memory | 关键边界 |
 |---|---|---|---:|---|
 | `code_audit` | 检查代码并生成补丁 | `get_finding_detail` / `read_source_context` / `read_source_block` / `read_source_file` / `propose_patch` | 否 | 以当前 scope、finding 和源码证据为准 |
-| `code_explain` | 解释项目、目录、文件或代码 | `search_symbols` / `read_source_file` / `read_source_block` / `read_source_context` | 是 | 可继承用户对项目的关注点 |
-| `general_chat` | Java、算法、调试、架构和工程常识问答 | 默认无 Function Call 工具 | 是 | 只回答工程相关问题 |
+| `code_explain` | 解释项目、目录、文件或代码 | `search_symbols` / source read tools / `memory_search` / `memory_read` | 是 | Memory 不替代实时源码证据 |
+| `general_chat` | Java、算法、调试、架构和工程常识问答 | `memory_search` / `memory_read` | 是 | 只回答工程相关问题 |
 | `patch_explain` | 解释当前待确认补丁 | `search_symbols` / `read_source_file` / `read_source_block` / `read_source_context` | 否 | 只解释当前补丁，不生成新补丁 |
 | `patch_revise` | 按反馈重写当前补丁 | `search_symbols` / `read_source_file` / `read_source_block` / `read_source_context` / `get_finding_detail` / `revise_patch` | 否 | 只替换当前补丁，不改后续队列 |
 
@@ -137,13 +137,12 @@ AutoPatch-J 的核心不是让 LLM 自由修改代码，而是把修复过程拆
 普通问答 Memory 的主链路是：
 
 ```text
-code_explain/general_chat 完成
--> 写入 pending episode
--> 满足触发条件后提交后台 consolidation 任务
--> 程序刷新 repo_profile 仓库元信息
--> 短 LLM 输出 Memory Delta
--> 程序校验 source_episode_ids 并写入 semantic/procedural memory
--> 下一轮普通问答注入少量 Markdown 结构化 Memory Context
+主 LLM 调用前写入 RAW user turn
+-> 保存用户实际看到的 final assistant text
+-> durable extraction job 更新 thread compaction 并产生 candidates
+-> durable consolidation job create/revise/supersede/reject Memory item
+-> 下一轮注入 bounded routing context
+-> Agent 通过 memory_search / memory_read 渐进读取原始证据
 ```
 
 ## 目录结构
@@ -169,12 +168,12 @@ docs/                 # 架构设计文档
 1. `src/autopatch_j/cli/app.py`：CLI 生命周期入口，负责启动、初始化 runtime 和主输入循环。
 2. `src/autopatch_j/cli/input_router.py`：自然语言输入和补丁确认输入的路由层。
 3. `src/autopatch_j/cli/workflows/`：CLI 侧业务流程编排，连接用户输入、扫描、Agent 和补丁确认。
-4. `src/autopatch_j/agent/agent.py`：Agent 对外门面，聚合 session、task executor 和 Memory Summary Scheduler。
+4. `src/autopatch_j/agent/agent.py`：Agent 对外门面，聚合 request-scoped ReAct、session 和 task executor。
 5. `src/autopatch_j/agent/react_runner.py`：ReAct 主循环，负责 LLM 调用、工具调用和进度保护。
 6. `src/autopatch_j/core/user_input/`：意图识别、输入分类和 pending review 路由。
 7. `src/autopatch_j/core/review/`：扫描结果、finding 队列、review workspace 和项目状态工件。
 8. `src/autopatch_j/core/patching/`：search-replace 补丁应用和补丁质量复核。
-9. `src/autopatch_j/core/memory/`：普通问答 Memory 的读写、摘要、注入和治理。
+9. `src/autopatch_j/core/memory/`：普通 thread/turn、SQLite、两阶段整理、渐进检索和治理。
 
 补充阅读：
 
@@ -220,7 +219,7 @@ set AUTOPATCH_LLM_STREAM_DIALECT=standard
 | `AUTOPATCH_LLM_API_KEY` | 空 | 关键配置。缺失时无法创建可用 LLM 客户端 |
 | `AUTOPATCH_LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容接口地址 |
 | `AUTOPATCH_LLM_MODEL` | `deepseek-v4-flash` | 国产 V4 模型已足够兼顾准确率和速度；也可替换为供应商支持的其他 OpenAI 兼容模型名 |
-| `AUTOPATCH_DEBUG` | `false` | 仅设置为 `true` 时展示完整思考链和工具输出详情 |
+| `AUTOPATCH_DEBUG` | `false` | 仅设置为 `true` 时展示完整思考链、工具输出详情和有界 RAW LLM/Memory 错误 |
 | `AUTOPATCH_LLM_STREAM_DIALECT` | `standard` | 可选 `standard`、`bailian-dsml` |
 | `AUTOPATCH_LLM_REASONING_EFFORT` | 空 | 透传给支持该参数的供应商 |
 | `AUTOPATCH_LLM_EXTRA_BODY` | `{}` | 供应商私有扩展参数，必须是 JSON object 字符串 |
@@ -258,7 +257,14 @@ python -m autopatch_j
 /status     查看当前项目状态与运行诊断
 /scanner    查看扫描器状态
 /reindex    重建本地代码符号索引
-/reset      清空工作台状态、Agent 对话历史和普通问答记忆
+/new        终止当前工作状态并新建普通对话 thread
+/memory status                     查看 Memory 健康和任务状态；debug 模式显示 RAW 错误
+/memory list                       列出 active Memory item
+/memory show <memory-id>           查看记忆与 RAW 来源
+/memory forget <memory-id>         忘记一条派生记忆，保留原始 turn
+/memory clear --confirm            清空整个 Memory 数据集
+/memory export                     导出一次性 RAW JSON snapshot
+/reset      清空项目工作台，保留普通对话和 Memory
 /help       显示命令帮助
 /quit       退出程序
 ```
