@@ -1,0 +1,203 @@
+{
+  "version": 2,
+  "description": "Deterministic quality cases for RAW, non-vector AutoPatch-J Memory v2.",
+  "cases": [
+    {
+      "id": "explicit-output-preference",
+      "turns": [
+        {
+          "user": "以后默认用中文回答，结论放在最前面。",
+          "assistant": "好的，我会按这个方式回答。"
+        }
+      ],
+      "expected_kinds": ["user_preference"],
+      "forbidden_kinds": ["project_decision"],
+      "queries": ["中文回答", "结论优先"]
+    },
+    {
+      "id": "implicit-style-is-not-preference",
+      "turns": [
+        {
+          "user": "这次简单说一下就行。",
+          "assistant": "简要结论如下。"
+        }
+      ],
+      "expected_kinds": [],
+      "forbidden_kinds": ["user_preference", "project_decision"]
+    },
+    {
+      "id": "explicit-project-decision",
+      "turns": [
+        {
+          "user": "这个项目还没上线，旧 memory schema 不兼容，直接删除。",
+          "assistant": "已确认采用无兼容迁移方案。"
+        }
+      ],
+      "expected_kinds": ["project_decision"],
+      "queries": ["旧 schema", "backward compatibility"]
+    },
+    {
+      "id": "assistant-proposal-user-confirmation",
+      "turns": [
+        {
+          "user": "怎么处理 reset 和 memory 的边界？",
+          "assistant": "建议 reset 只清项目工作台，memory 由 memory 命令单独管理。"
+        },
+        {
+          "user": "同意，就这么做。",
+          "assistant": "已确认该边界。"
+        }
+      ],
+      "expected_kinds": ["project_decision"],
+      "required_source_roles": ["assistant", "user"],
+      "queries": ["reset 边界", "memory 管理"]
+    },
+    {
+      "id": "code-fact-is-not-long-term-memory",
+      "turns": [
+        {
+          "user": "pom.xml 里现在配置的是 Java 17。",
+          "assistant": "当前配置确实是 Java 17。"
+        }
+      ],
+      "expected_kinds": [],
+      "forbidden_kinds": ["user_preference", "project_decision"]
+    },
+    {
+      "id": "assistant-only-claim-is-not-decision",
+      "turns": [
+        {
+          "user": "你觉得要不要用向量库？",
+          "assistant": "我决定使用向量数据库。"
+        }
+      ],
+      "expected_kinds": ["discussion_context"],
+      "forbidden_kinds": ["project_decision"]
+    },
+    {
+      "id": "decision-supersedes-old-decision",
+      "turns": [
+        {
+          "user": "Memory v2 决定使用向量检索。",
+          "assistant": "收到。"
+        },
+        {
+          "user": "改一下，最终不使用向量检索，采用小索引和按需读取。",
+          "assistant": "已更新为无向量方案。"
+        }
+      ],
+      "expected_kinds": ["project_decision"],
+      "expected_active_content": "不使用向量检索"
+    },
+    {
+      "id": "discussion-does-not-cross-new-thread",
+      "turns": [
+        {
+          "user": "我们先讨论调度器的重试策略。",
+          "assistant": "可以，从 retry backoff 开始。"
+        }
+      ],
+      "expected_kinds": ["discussion_context"],
+      "queries": ["重试策略"],
+      "after_new_expected_hits": []
+    },
+    {
+      "id": "forget-suppresses-derived-memory",
+      "turns": [
+        {
+          "user": "以后运行测试时默认先跑聚焦测试，再跑完整回归。",
+          "assistant": "好的，我会默认按这个测试顺序执行。"
+        }
+      ],
+      "expected_kinds": ["user_preference"],
+      "queries": ["测试顺序", "聚焦测试"],
+      "forget": {
+        "kind": "user_preference",
+        "queries": ["测试顺序", "聚焦测试"]
+      }
+    },
+    {
+      "id": "unrelated-query-has-no-hit",
+      "turns": [
+        {
+          "user": "项目决定使用 SQLite 保存 Memory，不引入向量数据库。",
+          "assistant": "已记录这个存储方案。"
+        }
+      ],
+      "expected_kinds": ["project_decision"],
+      "queries": ["SQLite Memory"],
+      "no_hit_queries": ["前端主题颜色", "Kubernetes 部署区域"]
+    },
+    {
+      "id": "english-explicit-preference",
+      "turns": [
+        {
+          "user": "Going forward, lead with the conclusion and answer in Chinese.",
+          "assistant": "I will use that response style by default."
+        }
+      ],
+      "expected_kinds": ["user_preference"],
+      "queries": ["conclusion first", "Chinese answers"]
+    },
+    {
+      "id": "english-temporary-is-not-preference",
+      "turns": [
+        {
+          "user": "For this answer, keep it short.",
+          "assistant": "Here is the short answer."
+        }
+      ],
+      "expected_kinds": [],
+      "forbidden_kinds": ["user_preference", "project_decision"]
+    },
+    {
+      "id": "english-explicit-project-decision",
+      "turns": [
+        {
+          "user": "We decided to keep Memory local and adopt SQLite.",
+          "assistant": "The local SQLite decision is confirmed."
+        }
+      ],
+      "expected_kinds": ["project_decision"],
+      "queries": ["local Memory", "SQLite storage"]
+    },
+    {
+      "id": "english-code-fact-is-not-memory",
+      "turns": [
+        {
+          "user": "build.gradle currently targets Java 21.",
+          "assistant": "That is the current configured version."
+        }
+      ],
+      "expected_kinds": [],
+      "forbidden_kinds": ["user_preference", "project_decision"]
+    },
+    {
+      "id": "english-undecided-is-not-decision",
+      "turns": [
+        {
+          "user": "We have not decided whether to use a vector database.",
+          "assistant": "The choice remains open."
+        }
+      ],
+      "expected_kinds": [],
+      "forbidden_kinds": ["project_decision"]
+    },
+    {
+      "id": "english-assistant-proposal-user-confirmation",
+      "turns": [
+        {
+          "user": "How should reset interact with Memory?",
+          "assistant": "I recommend keeping reset separate from Memory management."
+        },
+        {
+          "user": "Sounds good, go with that.",
+          "assistant": "That boundary is confirmed."
+        }
+      ],
+      "expected_kinds": ["project_decision"],
+      "required_source_roles": ["assistant", "user"],
+      "queries": ["reset boundary", "Memory management"]
+    }
+  ]
+}

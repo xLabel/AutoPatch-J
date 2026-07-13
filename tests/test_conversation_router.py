@@ -76,6 +76,10 @@ def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> No
 
 
 def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
+    class ProviderError(RuntimeError):
+        status_code = 502
+        body = {"detail": "RAW route failure"}
+
     class FakeLLM:
         def __init__(self) -> None:
             self.purposes: list[LLMCallPurpose] = []
@@ -92,7 +96,7 @@ def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
                     self.content = content
 
             if purpose is LLMCallPurpose.CLASSIFIER:
-                return Response("")
+                raise ProviderError("route transport failed")
             return Response("NEW_TASK")
 
     llm = FakeLLM()
@@ -109,6 +113,9 @@ def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
     assert result.route is ConversationRoute.NEW_TASK
     assert result.source == "llm"
     assert "react fallback used" in result.fallback_reason
+    assert "ProviderError: route transport failed" in result.fallback_reason
+    assert "status_code: 502" in result.fallback_reason
+    assert 'body: {"detail": "RAW route failure"}' in result.fallback_reason
     assert llm.purposes == [LLMCallPurpose.CLASSIFIER, LLMCallPurpose.REACT]
 
 

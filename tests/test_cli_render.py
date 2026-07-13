@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from io import StringIO
 from unittest.mock import MagicMock
 
-from autopatch_j.cli.render import BODY_STYLE, MUTED_STYLE, CliRenderer
+from rich.console import Console
+
+from autopatch_j.cli.render import BODY_STYLE, ERROR_STYLE, MUTED_STYLE, CliRenderer
 
 
 def test_tool_start_uses_same_muted_style_for_agent_and_llm() -> None:
@@ -75,6 +78,30 @@ def test_agent_text_supports_custom_end() -> None:
         markup=False,
         style=MUTED_STYLE,
     )
+
+
+def test_error_text_renders_markup_like_raw_content_literally() -> None:
+    message = 'RAW [/] [bold]provider[/bold] {"detail": "failure"}'
+    renderer = CliRenderer()
+    renderer.console = MagicMock()
+
+    renderer.print_error(message)
+
+    renderer.console.print.assert_called_once_with(
+        message,
+        highlight=False,
+        markup=False,
+        style=f"bold {ERROR_STYLE}",
+    )
+
+    output = StringIO()
+    renderer.console = Console(
+        file=output,
+        force_terminal=False,
+        color_system=None,
+    )
+    renderer.print_error(message)
+    assert message in output.getvalue()
 
 
 def test_assistant_anchor_uses_body_style_without_bold_blue() -> None:

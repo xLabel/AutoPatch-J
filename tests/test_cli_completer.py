@@ -27,6 +27,38 @@ def test_command_completion_replaces_only_command_body() -> None:
     assert _apply_completion("/st", status_completion.text, status_completion.start_position) == "/status"
 
 
+def test_memory_subcommand_completion_from_trailing_space() -> None:
+    completer = AutoPatchCompleter(lambda _: [])
+    completions = list(completer.get_completions(Document(text="/memory ", cursor_position=8), None))
+
+    assert {completion.text for completion in completions} == {
+        "status",
+        "list",
+        "show",
+        "forget",
+        "clear",
+        "export",
+    }
+
+
+def test_memory_subcommand_completion_replaces_partial_argument() -> None:
+    completer = AutoPatchCompleter(lambda _: [])
+    completions = list(completer.get_completions(Document(text="/memory fo", cursor_position=10), None))
+
+    forget = next(completion for completion in completions if completion.text == "forget")
+    assert _apply_completion("/memory fo", forget.text, forget.start_position) == "/memory forget"
+
+
+def test_memory_completion_stops_after_subcommand() -> None:
+    completer = AutoPatchCompleter(lambda _: [])
+
+    completions = list(
+        completer.get_completions(Document(text="/memory show item-1", cursor_position=19), None)
+    )
+
+    assert completions == []
+
+
 def test_command_completion_excludes_removed_doctor() -> None:
     completer = AutoPatchCompleter(lambda _: [])
     completions = list(completer.get_completions(Document(text="/do", cursor_position=3), None))

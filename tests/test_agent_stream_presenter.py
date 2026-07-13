@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
+from autopatch_j.agent.react_runner import AgentRunResult
 from autopatch_j.cli.agent_stream_presenter import AgentStreamPresenter
 from autopatch_j.core.domain import IntentType
 from autopatch_j.llm.options import LLMCallDiagnostic, LLMCallPurpose, LLMReasoningMode
@@ -53,6 +56,24 @@ class _LlmWithDiagnostics:
     ]
 
 
+class _LlmWithFailureDiagnostic:
+    diagnostics = [
+        LLMCallDiagnostic(
+            purpose=LLMCallPurpose.REACT,
+            stream=True,
+            reasoning=LLMReasoningMode.INHERIT,
+            max_tokens=None,
+            temperature=None,
+            status="error",
+            error="RuntimeError: RAW_PROVIDER_SENTINEL",
+        )
+    ]
+
+
+def _agent_result(answer: str = "") -> AgentRunResult:
+    return AgentRunResult(final_answer=answer, trace_messages=[])
+
+
 def _build_agent_stream_presenter(
     debug_mode: bool,
     has_pending_patch: bool = False,
@@ -78,7 +99,7 @@ def test_agent_stream_presenter_compacts_reasoning_and_observation_when_debug_is
         on_reasoning("reasoning two")
         on_tool_start("read_source_file")
         on_observation("full source code", "已读取源代码: Demo.java")
-        return ""
+        return _agent_result()
 
     stream.run(prompt="check", agent_call=agent_call)
 
@@ -94,7 +115,7 @@ def test_agent_stream_presenter_expands_reasoning_and_observation_when_debug_is_
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_reasoning("full reasoning")
         on_observation("full observation", "compact summary")
-        return ""
+        return _agent_result()
 
     stream.run(prompt="check", agent_call=agent_call)
 
@@ -109,7 +130,7 @@ def test_agent_stream_presenter_renders_patch_explain_answer_with_pending_patch(
     stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=True)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
-        return "patch explanation"
+        return _agent_result("patch explanation")
 
     stream.run(
         prompt="explain",
@@ -125,7 +146,7 @@ def test_agent_stream_presenter_suppresses_audit_answer_with_pending_patch() -> 
     stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=True)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
-        return "audit summary"
+        return _agent_result("audit summary")
 
     stream.run(
         prompt="audit",
@@ -141,7 +162,7 @@ def test_agent_stream_presenter_respects_explicit_suppress_answer_output() -> No
     stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=False)
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
-        return "hidden answer"
+        return _agent_result("hidden answer")
 
     stream.run(
         prompt="audit",
@@ -159,7 +180,7 @@ def test_agent_stream_presenter_renders_buffered_answer_as_plain_agent_text() ->
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_token('**补丁已提交** `MessageDigest.getInstance("SHA-256")`')
-        return ""
+        return _agent_result()
 
     stream.run(prompt="audit", agent_call=agent_call)
 
@@ -174,7 +195,7 @@ def test_agent_stream_presenter_renders_buffered_plain_answer_with_newline() -> 
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
         on_token("补丁解释完成")
-        return ""
+        return _agent_result()
 
     stream.run(
         prompt="explain patch",
@@ -194,7 +215,7 @@ def test_agent_stream_presenter_drops_intermediate_answer_when_tool_call_starts(
         on_token("**F1 处理完成。**")
         on_tool_start("get_finding_detail")
         on_observation("full finding detail", "已获取 finding 详情: F2")
-        return ""
+        return _agent_result()
 
     stream.run(prompt="audit", agent_call=agent_call)
 
@@ -206,7 +227,7 @@ def test_agent_stream_presenter_shows_memory_debug_summary_only_in_debug_mode() 
     stream = _build_agent_stream_presenter(debug_mode=True, agent=_Agent(session=_Session()))
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
-        return ""
+        return _agent_result()
 
     stream.run(
         prompt="解释项目",
@@ -223,7 +244,7 @@ def test_agent_stream_presenter_shows_llm_diagnostics_only_in_debug_mode() -> No
     stream = _build_agent_stream_presenter(debug_mode=True, agent=_Agent(llm=_LlmWithDiagnostics()))
 
     def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
-        return ""
+        return _agent_result()
 
     stream.run(prompt="check", agent_call=agent_call)
 
@@ -231,3 +252,21 @@ def test_agent_stream_presenter_shows_llm_diagnostics_only_in_debug_mode() -> No
         "LLM 调用诊断：purpose=react, stream=on, reasoning=inherit, status=ok"
     )
     stream.renderer.print.assert_not_called()
+
+
+def test_agent_stream_presenter_shows_failed_llm_diagnostic_before_reraising() -> None:
+    stream = _build_agent_stream_presenter(
+        debug_mode=True,
+        agent=_Agent(llm=_LlmWithFailureDiagnostic()),
+    )
+
+    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+        raise RuntimeError("RAW_PROVIDER_SENTINEL")
+
+    with pytest.raises(RuntimeError, match="RAW_PROVIDER_SENTINEL"):
+        stream.run(prompt="check", agent_call=agent_call)
+
+    stream.renderer.print_agent_text.assert_called_once_with(
+        "LLM 调用诊断：purpose=react, stream=on, reasoning=inherit, status=error, "
+        "error=RuntimeError: RAW_PROVIDER_SENTINEL"
+    )

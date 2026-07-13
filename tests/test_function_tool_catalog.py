@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Annotated
 from unittest.mock import MagicMock
 
@@ -25,6 +26,8 @@ def test_tools_root_exports_only_tool_infrastructure() -> None:
         hasattr(tools, concrete_tool_name)
         for concrete_tool_name in [
             "GetFindingDetailTool",
+            "MemoryReadTool",
+            "MemorySearchTool",
             "ProposePatchTool",
             "ReadSourceBlockTool",
             "ReadSourceContextTool",
@@ -100,3 +103,97 @@ def test_catalog_exports_stable_function_call_schema() -> None:
     read_context = schema_by_name[FunctionToolName.READ_SOURCE_CONTEXT.value]
     assert read_context["parameters"]["required"] == ["path", "line"]
     assert read_context["parameters"]["properties"]["line"]["type"] == "integer"
+
+    memory_search = schema_by_name[FunctionToolName.MEMORY_SEARCH.value]
+    memory_read = schema_by_name[FunctionToolName.MEMORY_READ.value]
+    assert memory_search["parameters"]["required"] == ["query"]
+    assert memory_read["parameters"]["required"] == ["memory_id"]
+    assert "最多 5 条" in memory_search["description"]
+    assert "来源摘录" in memory_read["description"]
+
+
+def test_memory_search_tool_returns_bounded_structured_hits() -> None:
+    context = MagicMock()
+    context.memory_thread_id = "thread-1"
+    context.memory_manager.search.return_value = [
+        SimpleNamespace(
+            id="m-1",
+            kind="project_decision",
+            title="使用 Java 17",
+            synopsis="项目统一使用 Java 17。",
+            match_type="exact",
+        )
+    ]
+    tool = FunctionToolCatalog.for_context(context).get(FunctionToolName.MEMORY_SEARCH)
+
+    result = tool.execute(query="  Java 17  ")
+
+    assert result.status == "ok"
+    assert result.payload["hits"] == [
+        {
+            "id": "m-1",
+            "kind": "project_decision",
+            "title": "使用 Java 17",
+            "synopsis": "项目统一使用 Java 17。",
+            "match_type": "exact",
+        }
+    ]
+    context.memory_manager.search.assert_called_once_with(
+        "Java 17", limit=5, thread_id="thread-1"
+    )
+
+
+def test_memory_read_tool_bounds_content_and_provenance() -> None:
+    context = MagicMock()
+    context.memory_thread_id = "thread-1"
+    context.memory_manager.read.return_value = SimpleNamespace(
+        id="m-1",
+        kind="user_preference",
+        title="输出偏好",
+        content="x" * 5_000,
+        non_factual=False,
+        thread_id=None,
+        sources=[
+            SimpleNamespace(turn_id=f"t-{index}", role="user", quote="q" * 1_000, created_at="now")
+            for index in range(4)
+        ],
+    )
+    tool = FunctionToolCatalog.for_context(context).get(FunctionToolName.MEMORY_READ)
+
+    result = tool.execute(memory_id="m-1")
+
+    assert result.status == "ok"
+    assert len(result.payload["content"]) == 4_000
+    assert len(result.payload["sources"]) == 3
+    assert all(len(source["quote"]) == 800 for source in result.payload["sources"])
+    context.memory_manager.read.assert_called_once_with(
+        "m-1", thread_id="thread-1"
+    )
+
+
+def test_memory_tools_require_an_admitted_request_thread() -> None:
+    context = MagicMock()
+    context.memory_thread_id = None
+    catalog = FunctionToolCatalog.for_context(context)
+
+    search = catalog.get(FunctionToolName.MEMORY_SEARCH).execute(query="Java 17")
+    read = catalog.get(FunctionToolName.MEMORY_READ).execute(memory_id="m-1")
+
+    assert search.status == "error"
+    assert read.status == "error"
+    assert "admission" in search.message
+    assert "admission" in read.message
+    context.memory_manager.search.assert_not_called()
+    context.memory_manager.read.assert_not_called()
+
+
+def test_memory_tools_reject_empty_or_unavailable_requests() -> None:
+    context = MagicMock()
+    context.memory_manager = None
+    catalog = FunctionToolCatalog.for_context(context)
+
+    empty_search = catalog.get(FunctionToolName.MEMORY_SEARCH).execute(query=" ")
+    unavailable_read = catalog.get(FunctionToolName.MEMORY_READ).execute(memory_id="m-1")
+
+    assert empty_search.status == "error"
+    assert unavailable_read.status == "error"

@@ -160,6 +160,11 @@ def test_llm_intent_classifier_falls_back_to_react_when_fast_path_is_empty() -> 
 
 
 def test_intent_diagnostics_reports_successful_react_fallback() -> None:
+    class ProviderError(RuntimeError):
+        status_code = 503
+        code = "provider_unavailable"
+        body = {"detail": "RAW classifier failure"}
+
     class FakeResponse:
         def __init__(self, content: str) -> None:
             self.content = content
@@ -167,7 +172,7 @@ def test_intent_diagnostics_reports_successful_react_fallback() -> None:
     class FakeLLM:
         def chat(self, messages, **kwargs):
             if kwargs["purpose"] is LLMCallPurpose.CLASSIFIER:
-                return FakeResponse("")
+                raise ProviderError("classifier transport failed")
             return FakeResponse("code_audit")
 
     classifier = build_llm_user_intent_classifier_with_diagnostics(FakeLLM())
@@ -178,6 +183,10 @@ def test_intent_diagnostics_reports_successful_react_fallback() -> None:
     assert result.intent is IntentType.CODE_AUDIT
     assert result.source == "llm"
     assert "react fallback used" in result.fallback_reason
+    assert "ProviderError: classifier transport failed" in result.fallback_reason
+    assert "status_code: 503" in result.fallback_reason
+    assert "code: provider_unavailable" in result.fallback_reason
+    assert 'body: {"detail": "RAW classifier failure"}' in result.fallback_reason
 
 
 def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> None:

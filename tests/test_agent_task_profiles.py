@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.task_profile import (
     ZERO_FINDING_REVIEW_PROFILE,
@@ -12,6 +14,11 @@ from autopatch_j.agent.task_profile import (
 from autopatch_j.llm.client import LLMClient
 from autopatch_j.llm.dialects import ToolCall
 from autopatch_j.llm.models import LLMResponse
+from autopatch_j.llm.options import (
+    LLMCallDiagnostic,
+    LLMCallPurpose,
+    LLMReasoningMode,
+)
 from autopatch_j.agent.prompts import (
     build_code_audit_user_prompt,
     build_code_explain_user_prompt,
@@ -22,6 +29,7 @@ from autopatch_j.agent.prompts import (
 )
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.core.review import ProjectArtifactStore
+from autopatch_j.core.memory import MemoryManager
 from autopatch_j.core.project import SourceReader
 from autopatch_j.core.domain import (
     CodeScope,
@@ -32,7 +40,6 @@ from autopatch_j.core.domain import (
     ReviewPatchItem,
     PatchReviewStatus,
 )
-from autopatch_j.core.memory import MemoryManager
 from autopatch_j.core.patching import SearchReplacePatchEngine
 from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.review import ReviewWorkspaceManager
@@ -40,12 +47,19 @@ from autopatch_j.tools.contract import ToolExecutionResult
 from autopatch_j.tools.names import FunctionToolName
 
 
-def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
+def _build_agent(
+    tmp_path: Path,
+    mock_llm: MagicMock,
+    memory_manager: MagicMock | None = None,
+) -> Agent:
     repo_root = tmp_path
     (repo_root / "src" / "main" / "java" / "demo").mkdir(parents=True)
     artifact_manager = ProjectArtifactStore(repo_root)
     workspace_manager = ReviewWorkspaceManager(artifact_manager)
-    memory_manager = MemoryManager(artifact_manager.state_dir / "memory.json")
+    if memory_manager is None:
+        memory_manager = MagicMock()
+        memory_manager.build_thread_history.return_value = []
+        memory_manager.build_routing_context.return_value = ""
     symbol_indexer = SymbolIndex(repo_root)
     patch_engine = SearchReplacePatchEngine(repo_root)
     code_fetcher = SourceReader(repo_root)
@@ -59,9 +73,7 @@ def _build_agent(tmp_path: Path, mock_llm: MagicMock) -> Agent:
         code_fetcher=code_fetcher,
         memory_manager=memory_manager,
     )
-    agent = Agent(session=session, llm=mock_llm)
-    agent.memory_summary_scheduler = None
-    return agent
+    return Agent(session=session, llm=mock_llm)
 
 
 def _fetch_tool_names(mock_llm: MagicMock) -> list[str]:
@@ -81,6 +93,8 @@ def test_perform_code_explain_uses_navigation_tool_profile_by_default(tmp_path: 
         "read_source_file",
         "read_source_block",
         "read_source_context",
+        "memory_search",
+        "memory_read",
     ]
 
 
@@ -109,6 +123,7 @@ def test_task_system_prompt_wraps_memory_context_once() -> None:
 
     assert prompt.count("## Memory Context") == 1
     assert "仅在当前问题相关时使用" in prompt
+    assert "当前用户指令始终优先于历史记忆" in prompt
     assert "### 用户协作偏好" in prompt
 
 
@@ -125,11 +140,19 @@ def test_task_profiles_define_tool_boundaries() -> None:
         FunctionToolName.READ_SOURCE_FILE,
         FunctionToolName.READ_SOURCE_BLOCK,
         FunctionToolName.READ_SOURCE_CONTEXT,
+        FunctionToolName.MEMORY_SEARCH,
+        FunctionToolName.MEMORY_READ,
     )
     assert fetch_code_explain_profile(allow_symbol_search=False).tool_names == (
         FunctionToolName.READ_SOURCE_FILE,
         FunctionToolName.READ_SOURCE_BLOCK,
         FunctionToolName.READ_SOURCE_CONTEXT,
+        FunctionToolName.MEMORY_SEARCH,
+        FunctionToolName.MEMORY_READ,
+    )
+    assert fetch_task_profile(IntentType.GENERAL_CHAT).tool_names == (
+        FunctionToolName.MEMORY_SEARCH,
+        FunctionToolName.MEMORY_READ,
     )
     assert ZERO_FINDING_REVIEW_PROFILE.tool_names == (
         FunctionToolName.READ_SOURCE_FILE,
@@ -146,69 +169,67 @@ def test_perform_code_explain_disables_symbol_search_in_single_file_mode(tmp_pat
 
     agent.perform_code_explain("@User.java explain code", scope=None, allow_symbol_search=False)
 
-    assert _fetch_tool_names(mock_llm) == ["read_source_file", "read_source_block", "read_source_context"]
-
-
-def test_memory_is_shared_by_code_explain_and_general_chat(tmp_path: Path) -> None:
-    mock_llm = MagicMock()
-    mock_llm.chat.side_effect = [
-        LLMResponse(content="这是一个演示项目。"),
-        LLMResponse(content="Optional 用于表达可能为空的值。"),
-        LLMResponse(content="{}"),
+    assert _fetch_tool_names(mock_llm) == [
+        "read_source_file",
+        "read_source_block",
+        "read_source_context",
+        "memory_search",
+        "memory_read",
     ]
+
+
+def test_ordinary_request_uses_persistent_history_and_returns_only_current_trace(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="Optional 用于表达可能为空的值。")
+    memory_manager = MagicMock()
+    memory_manager.build_thread_history.return_value = [
+        {"role": "user", "content": "之前聊过 Optional"},
+        {"role": "assistant", "content": "它表达可能为空的值"},
+    ]
+    memory_manager.build_routing_context.return_value = "### 项目决定\n- 使用 Java 17"
+    agent = _build_agent(tmp_path, mock_llm, memory_manager)
+
+    result = agent.perform_general_chat("Optional 怎么用")
+
+    messages = mock_llm.chat.call_args.kwargs["messages"]
+    assert [message["role"] for message in messages] == ["system", "user", "assistant", "user"]
+    assert messages[1]["content"] == "之前聊过 Optional"
+    assert messages[-1]["content"] == "Optional 怎么用"
+    assert messages[0]["content"].count("## Memory Context") == 1
+    assert "使用 Java 17" in messages[0]["content"]
+    assert result.final_answer == "Optional 用于表达可能为空的值。"
+    assert [message["role"] for message in result.trace_messages] == ["user", "assistant"]
+    assert result.trace_messages[0]["content"] == "Optional 怎么用"
+    memory_manager.build_thread_history.assert_called_once_with()
+    memory_manager.build_routing_context.assert_called_once_with(IntentType.GENERAL_CHAT)
+
+
+def test_agent_does_not_share_trace_between_requests(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.side_effect = [LLMResponse(content="first answer"), LLMResponse(content="second answer")]
     agent = _build_agent(tmp_path, mock_llm)
-    scope = CodeScope(
-        kind=CodeScopeKind.PROJECT,
-        source_roots=["."],
-        focus_files=["src/main/java/demo/Demo.java"],
-        is_locked=False,
+
+    first = agent.perform_general_chat("first")
+    second = agent.perform_general_chat("second")
+
+    assert not hasattr(agent, "messages")
+    assert first.trace_messages[0]["content"] == "first"
+    assert second.trace_messages[0]["content"] == "second"
+    second_messages = mock_llm.chat.call_args_list[1].kwargs["messages"]
+    assert [message["content"] for message in second_messages[1:]] == ["second"]
+
+
+def test_agent_shutdown_is_idempotent_and_clears_request_cache(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    agent = _build_agent(tmp_path, mock_llm)
+    agent.session.source_read_cache[("read_source_file", "Demo.java", None)] = ToolExecutionResult(
+        status="ok", message="cached"
     )
 
-    agent.perform_code_explain("这个项目是干什么的", scope=scope)
-    agent.perform_general_chat("Optional 怎么用")
-
-    second_messages = mock_llm.chat.call_args_list[1].kwargs["messages"]
-    assert "## Memory Context" in second_messages[0]["content"]
-    assert "这个项目是干什么的" in second_messages[0]["content"]
-
-    memory = agent.session.memory_manager.load()
-    episodes = memory["episodic_memory"]["episodes"]
-    assert len(episodes) == 2
-    assert episodes[0]["intent"] == IntentType.CODE_EXPLAIN.value
-    assert episodes[0]["scope_paths"] == ["src/main/java/demo/Demo.java"]
-    assert episodes[1]["intent"] == IntentType.GENERAL_CHAT.value
-    assert "Optional" in episodes[1]["user_goal"]
-
-
-def test_reset_history_keeps_memory_unless_explicitly_cleared(tmp_path: Path) -> None:
-    mock_llm = MagicMock()
-    mock_llm.chat.return_value = LLMResponse(content="chat answer")
-    agent = _build_agent(tmp_path, mock_llm)
-
-    agent.perform_general_chat("Java Optional 怎么用")
-    agent.reset_history()
-
-    memory = agent.session.memory_manager.load()
-    assert "Java Optional" in memory["episodic_memory"]["episodes"][0]["user_goal"]
-
-    agent.reset_history(clear_memory=True)
-
-    memory = agent.session.memory_manager.load()
-    assert memory["episodic_memory"]["episodes"] == []
-
-
-def test_agent_shutdown_discards_and_stops_memory_scheduler(tmp_path: Path) -> None:
-    mock_llm = MagicMock()
-    agent = _build_agent(tmp_path, mock_llm)
-    scheduler = MagicMock()
-    agent.memory_summary_scheduler = scheduler
-
     agent.shutdown()
     agent.shutdown()
 
-    scheduler.discard_pending_results.assert_called_once()
-    scheduler.shutdown.assert_called_once_with(wait=False)
-    assert agent.memory_summary_scheduler is None
+    assert agent.session.source_read_cache == {}
 
 
 def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> None:
@@ -391,15 +412,15 @@ def test_zero_finding_review_user_prompt_separates_sections() -> None:
     assert "## 用户原始请求\n检查代码" in prompt
 
 
-def test_perform_general_chat_disables_tool_calls(tmp_path: Path) -> None:
+def test_perform_general_chat_exposes_only_memory_tools(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     mock_llm.chat.return_value = LLMResponse(content="chat answer")
     agent = _build_agent(tmp_path, mock_llm)
 
     response = agent.perform_general_chat("what does this project do")
 
-    assert response == "chat answer"
-    assert _fetch_tool_names(mock_llm) == []
+    assert response.final_answer == "chat answer"
+    assert _fetch_tool_names(mock_llm) == ["memory_search", "memory_read"]
 
 
 def test_tool_executor_rejects_tools_outside_task_profile(tmp_path: Path) -> None:
@@ -476,8 +497,8 @@ def test_react_loop_blocks_repeated_no_progress_tool_calls(tmp_path: Path) -> No
         on_observation=lambda message, summary: observations.append((message, summary)),
     )
 
-    assert "工具调用无进展" in answer
-    assert "连续 3 次重复" in answer
+    assert "工具调用无进展" in answer.final_answer
+    assert "连续 3 次重复" in answer.final_answer
     assert mock_llm.chat.call_count == 3
     assert observations[-1][1] == "工具调用无进展，已阻断"
 
@@ -488,7 +509,7 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
     agent = _build_agent(tmp_path, mock_llm)
     long_content = "x" * 260
 
-    agent.messages = [
+    messages = [
         {"role": "user", "content": "first"},
         {
             "role": "assistant",
@@ -519,7 +540,7 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
         {"role": "user", "content": "second"},
     ]
 
-    dehydrated = agent.message_adapter.dehydrate_history(agent.messages, "system prompt")
+    dehydrated = agent.message_adapter.dehydrate_history(messages, "system prompt")
 
     assert [message["role"] for message in dehydrated] == [
         "system",
@@ -534,6 +555,176 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
     ]
     assert dehydrated[3]["content"].endswith("... [已脱水压缩] ...")
     assert dehydrated[4]["content"] == long_content
+
+
+@pytest.mark.parametrize(
+    "repair_kind",
+    ["code_audit", "zero_finding", "patch_explain", "patch_revise"],
+)
+def test_consecutive_repair_requests_are_isolated_from_memory(
+    tmp_path: Path,
+    repair_kind: str,
+) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="done")
+    memory_manager = MagicMock()
+    memory_manager.build_thread_history.return_value = [
+        {"role": "user", "content": "ordinary secret history"},
+        {"role": "assistant", "content": "ordinary answer"},
+    ]
+    memory_manager.build_routing_context.return_value = "should not be visible"
+    agent = _build_agent(tmp_path, mock_llm, memory_manager)
+
+    def perform_repair_request(request_number: int) -> None:
+        raw_text = f"repair request {request_number}"
+        if repair_kind == "code_audit":
+            agent.perform_code_audit(
+                raw_text,
+                current_finding=MagicMock(),
+                force_reread=False,
+            )
+        elif repair_kind == "zero_finding":
+            agent.perform_zero_finding_review(raw_text, file_path="User.java")
+        elif repair_kind == "patch_explain":
+            agent.perform_patch_explain(raw_text, current_item=MagicMock())
+        else:
+            agent.perform_patch_revise(raw_text, current_item=MagicMock())
+
+    perform_repair_request(1)
+    perform_repair_request(2)
+
+    assert mock_llm.chat.call_count == 2
+    for call in mock_llm.chat.call_args_list:
+        messages = call.kwargs["messages"]
+        tool_names = [tool["function"]["name"] for tool in call.kwargs["tools"]]
+        assert [message["role"] for message in messages] == ["system", "user"]
+        assert "ordinary secret history" not in str(messages)
+        assert "## Memory Context" not in messages[0]["content"]
+        assert "memory_search" not in tool_names
+        assert "memory_read" not in tool_names
+    memory_manager.build_thread_history.assert_not_called()
+    memory_manager.build_routing_context.assert_not_called()
+
+
+def test_repair_requests_do_not_write_real_sqlite_memory(tmp_path: Path) -> None:
+    manager = MemoryManager(db_path=tmp_path / "memory.db")
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="done")
+    agent = _build_agent(tmp_path, mock_llm, manager)
+    try:
+        agent.perform_code_audit(
+            "audit request",
+            current_finding=MagicMock(),
+            force_reread=False,
+        )
+        agent.perform_zero_finding_review(
+            "zero finding request",
+            file_path="User.java",
+        )
+        agent.perform_patch_explain(
+            "explain patch",
+            current_item=MagicMock(),
+        )
+        agent.perform_patch_revise(
+            "revise patch",
+            current_item=MagicMock(),
+        )
+
+        assert manager.status().turn_count == 0
+        assert manager.build_thread_history() == []
+    finally:
+        manager.close()
+
+
+def test_real_sqlite_restart_supplies_initial_history_to_agent(tmp_path: Path) -> None:
+    db_path = tmp_path / "memory.db"
+    first_manager = MemoryManager(db_path=db_path)
+    turn = first_manager.begin_turn(
+        intent=IntentType.GENERAL_CHAT,
+        user_text="我们之前在讨论 Optional",
+    )
+    first_manager.complete_turn(
+        turn.id,
+        assistant_text="Optional 用于表达可能为空的值。",
+    )
+    first_manager.close()
+
+    restarted_manager = MemoryManager(db_path=db_path)
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="继续回答")
+    agent = _build_agent(tmp_path, mock_llm, restarted_manager)
+    try:
+        agent.perform_general_chat("继续刚才的话题")
+    finally:
+        restarted_manager.close()
+
+    messages = mock_llm.chat.call_args.kwargs["messages"]
+    assert [message["role"] for message in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert messages[1]["content"] == "我们之前在讨论 Optional"
+    assert messages[2]["content"] == "Optional 用于表达可能为空的值。"
+    assert messages[3]["content"] == "继续刚才的话题"
+
+
+def test_routing_context_has_hard_budget_and_single_heading(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="done")
+    memory_manager = MagicMock()
+    memory_manager.build_thread_history.return_value = []
+    memory_manager.build_routing_context.return_value = "## Memory Context\n" + ("x" * 5_000)
+    agent = _build_agent(tmp_path, mock_llm, memory_manager)
+
+    agent.perform_general_chat("question")
+
+    system_prompt = mock_llm.chat.call_args.kwargs["messages"][0]["content"]
+    assert system_prompt.count("## Memory Context") == 1
+    assert len(agent.session.build_memory_context(IntentType.GENERAL_CHAT)) == 4_000
+
+
+def test_memory_debug_summary_exposes_safe_background_diagnostic(tmp_path: Path) -> None:
+    memory_manager = MagicMock()
+    memory_manager.build_thread_history.return_value = []
+    memory_manager.build_routing_context.return_value = ""
+    memory_manager.latest_diagnostic.return_value = LLMCallDiagnostic(
+        purpose=LLMCallPurpose.MEMORY_EXTRACTION,
+        stream=False,
+        reasoning=LLMReasoningMode.DISABLED,
+        max_tokens=1800,
+        temperature=0,
+        status="error",
+        timeout_seconds=60,
+        error="APITimeoutError",
+    )
+    agent = _build_agent(tmp_path, MagicMock(), memory_manager)
+
+    summary = agent.session.build_memory_debug_summary(IntentType.GENERAL_CHAT)
+
+    assert summary == (
+        "Memory LLM diagnostic: purpose=memory_extraction, stream=off, "
+        "reasoning=disabled, status=error, timeout=60s, error=APITimeoutError"
+    )
+
+
+def test_source_read_cache_is_cleared_before_and_after_each_request(tmp_path: Path) -> None:
+    mock_llm = MagicMock()
+    agent = _build_agent(tmp_path, mock_llm)
+    cache_key = ("read_source_file", "Demo.java", None)
+    agent.session.source_read_cache[cache_key] = ToolExecutionResult(status="ok", message="stale")
+
+    def respond(**_kwargs):
+        assert agent.session.source_read_cache == {}
+        agent.session.source_read_cache[cache_key] = ToolExecutionResult(status="ok", message="current")
+        return LLMResponse(content="done")
+
+    mock_llm.chat.side_effect = respond
+
+    agent.perform_general_chat("question")
+
+    assert agent.session.source_read_cache == {}
 
 
 def test_model_label_returns_llm_model_name() -> None:
