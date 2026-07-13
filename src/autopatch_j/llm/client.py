@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from .diagnostics import MAX_RAW_LLM_ERROR_CHARS, format_raw_llm_exception
 from .dialects import MessageDialect, StandardDialect, DeepSeekAliyunDialect
 from .models import LLMResponse
 from .options import LLMCallDiagnostic, LLMCallPurpose, resolve_request_options
@@ -65,18 +66,26 @@ class LLMClient:
                 options=options,
             )
             response = self.transport.create_completion(kwargs=kwargs, options=options)
+            if not options.stream:
+                parsed = self.response_parser.parse_non_stream_response(
+                    response,
+                    on_content_delta=on_content_delta,
+                )
+            else:
+                parsed = self.response_parser.parse_stream_response(
+                    response,
+                    on_content_delta=on_content_delta,
+                    on_reasoning_delta=on_reasoning_delta,
+                )
         except Exception as exc:
-            self._record_diagnostic(purpose, "error", str(exc))
+            self._record_diagnostic(
+                purpose,
+                "error",
+                format_raw_llm_exception(exc),
+            )
             raise
         self._record_diagnostic(purpose, "ok")
-        if not options.stream:
-            return self.response_parser.parse_non_stream_response(response, on_content_delta=on_content_delta)
-
-        return self.response_parser.parse_stream_response(
-            response,
-            on_content_delta=on_content_delta,
-            on_reasoning_delta=on_reasoning_delta,
-        )
+        return parsed
 
     def _record_diagnostic(self, purpose: LLMCallPurpose, status: str, error: str = "") -> None:
         options = resolve_request_options(purpose)
@@ -87,8 +96,9 @@ class LLMClient:
                 reasoning=options.reasoning,
                 max_tokens=options.max_tokens,
                 temperature=options.temperature,
+                timeout_seconds=options.timeout_seconds,
                 status=status,
-                error=error[:200],
+                error=error[:MAX_RAW_LLM_ERROR_CHARS],
             )
         )
         self.diagnostics = self.diagnostics[-20:]

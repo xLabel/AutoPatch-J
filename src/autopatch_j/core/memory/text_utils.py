@@ -1,45 +1,91 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Iterable
 from uuid import uuid4
 
-from .constants import MAX_SCOPE_PATHS
+
+_SEPARATOR_RE = re.compile(r"[^\w./:$#@+-]+", re.UNICODE)
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def timestamp(value: datetime) -> float:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.timestamp()
+
+
+def iso_from_timestamp(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, tz=timezone.utc).isoformat(timespec="seconds")
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return utc_now().isoformat(timespec="seconds")
 
 
 def generate_id(prefix: str) -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    return f"{prefix}_{stamp}_{uuid4().hex[:8]}"
+    return f"{prefix}_{uuid4().hex}"
 
 
-def non_empty(value: Any, fallback: str) -> str:
-    text = str(value or "").strip()
-    return text or fallback
-
-
-def clip_text(value: Any, limit: int) -> str:
+def compact_text(value: Any, limit: int) -> str:
     text = " ".join(str(value or "").replace("\r\n", "\n").split())
     if len(text) <= limit:
         return text
+    if limit <= 1:
+        return text[:limit]
     return text[: limit - 1].rstrip() + "…"
 
 
-def normalize_string_list(raw_values: Any, limit: int, item_limit: int) -> list[str]:
-    if not isinstance(raw_values, list):
-        return []
+def normalize_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return " ".join(part for part in _SEPARATOR_RE.split(text) if part)
+
+
+def retrieval_terms(values: Iterable[str]) -> tuple[str, ...]:
+    """Return normalized field values without weakening exact-match semantics."""
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        normalized = normalize_text(raw)
+        if normalized and normalized not in seen:
+            terms.append(normalized)
+            seen.add(normalized)
+    return tuple(terms)
+
+
+def content_terms(value: Any, *, limit: int, item_limit: int) -> tuple[str, ...]:
+    """Return bounded normalized tokens for the low-priority content fallback."""
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    for token in normalize_text(value).split():
+        if not token or len(token) > item_limit or token in seen:
+            continue
+        terms.append(token)
+        seen.add(token)
+        if len(terms) >= limit:
+            break
+    return tuple(terms)
+
+
+def normalize_string_list(raw: Any, *, limit: int, item_limit: int) -> tuple[str, ...]:
+    if not isinstance(raw, list):
+        raise ValueError("expected a list")
     values: list[str] = []
-    for raw in raw_values:
-        value = clip_text(raw, item_limit)
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValueError("list items must be strings")
+        value = compact_text(item, item_limit)
         if value and value not in values:
             values.append(value)
         if len(values) >= limit:
             break
-    return values
-
-
-def normalize_scope_paths(raw_paths: Any) -> list[str]:
-    return normalize_string_list(raw_paths, MAX_SCOPE_PATHS, 240)
+    return tuple(values)

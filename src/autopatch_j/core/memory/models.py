@@ -1,185 +1,267 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
 from typing import Any
 
-from .constants import MEMORY_VERSION
-from .text_utils import now_iso
+
+class ThreadStatus(str, Enum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class TurnState(str, Enum):
+    OPEN = "open"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+
+
+class MemoryKind(str, Enum):
+    USER_PREFERENCE = "user_preference"
+    PROJECT_DECISION = "project_decision"
+    DISCUSSION_CONTEXT = "discussion_context"
+
+
+class MemoryItemStatus(str, Enum):
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    FORGOTTEN = "forgotten"
+
+
+class CandidateStatus(str, Enum):
+    PENDING = "pending"
+    CONSOLIDATED = "consolidated"
+    REJECTED = "rejected"
+    SUPPRESSED = "suppressed"
+
+
+class JobKind(str, Enum):
+    EXTRACTION = "extraction"
+    CONSOLIDATION = "consolidation"
+
+
+class JobStatus(str, Enum):
+    PENDING = "pending"
+    LEASED = "leased"
+    RETRY_WAIT = "retry_wait"
+    SUCCEEDED = "succeeded"
+    SUCCEEDED_NO_OUTPUT = "succeeded_no_output"
 
 
 @dataclass(frozen=True, slots=True)
-class MemoryEpisode:
+class MemoryThread:
     id: str
+    status: str
+    compaction: str
+    compaction_sequence: int
+    created_at: str
+    archived_at: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class TurnHandle:
+    id: str
+    thread_id: str
+    sequence: int
     intent: str
-    user_goal: str
-    assistant_result: str
-    summary: str
-    summary_status: str
-    scope_paths: list[str]
-    importance: int
+    lease_owner: str
+    lease_expires_at: str
     created_at: str
-    last_accessed_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class TurnRecord:
+    id: str
+    thread_id: str
+    sequence: int
+    intent: str
+    user_text: str
+    assistant_text: str
+    scope_paths: tuple[str, ...]
+    state: str
+    lease_owner: str
+    lease_expires_at: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryJob:
+    id: str
+    kind: str
+    thread_id: str | None
+    payload: dict[str, Any]
+    status: str
+    generation: int
+    attempt_count: int
+    lease_owner: str | None
+    lease_expires_at: str | None
+    next_retry_at: str | None
+    last_error: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimedJobBatch:
+    jobs: tuple[MemoryJob, ...]
+    owner: str
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateSource:
+    turn_id: str
+    role: str
+    quote: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryCandidate:
+    id: str
+    extraction_job_id: str
+    thread_id: str
+    kind: str
+    title: str
+    content: str
+    aliases: tuple[str, ...]
+    status: str
+    non_factual: bool
+    sources: tuple[CandidateSource, ...]
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySource:
+    turn_id: str
+    role: str
+    quote: str
+    created_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySearchHit:
+    id: str
+    kind: str
+    title: str
+    synopsis: str
+    match_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryItemSummary:
+    id: str
+    kind: str
+    title: str
+    synopsis: str
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryDetail:
+    id: str
+    logical_id: str
+    revision: int
+    kind: str
+    thread_id: str | None
+    title: str
+    content: str
+    synopsis: str
+    status: str
+    non_factual: bool
+    sources: tuple[MemorySource, ...]
     access_count: int
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "intent": self.intent,
-            "user_goal": self.user_goal,
-            "assistant_result": self.assistant_result,
-            "summary": self.summary,
-            "summary_status": self.summary_status,
-            "scope_paths": list(self.scope_paths),
-            "importance": self.importance,
-            "created_at": self.created_at,
-            "last_accessed_at": self.last_accessed_at,
-            "access_count": self.access_count,
-        }
+    last_accessed_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
-class MemoryTopic:
-    id: str
-    label: str
-    summary: str
-    related_episode_ids: list[str]
-    last_touched_at: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "label": self.label,
-            "summary": self.summary,
-            "related_episode_ids": list(self.related_episode_ids),
-            "last_touched_at": self.last_touched_at,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class SemanticMemoryItem:
-    id: str
-    type: str
-    label: str
-    summary: str
-    source_episode_ids: list[str]
-    confidence: str
-    status: str
-    created_at: str
-    updated_at: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "type": self.type,
-            "label": self.label,
-            "summary": self.summary,
-            "source_episode_ids": list(self.source_episode_ids),
-            "confidence": self.confidence,
-            "status": self.status,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
+class MemoryStatus:
+    healthy: bool
+    degraded: bool
+    db_path: Path
+    schema_version: int
+    generation: int
+    active_thread_id: str | None
+    thread_count: int
+    turn_count: int
+    active_item_count: int
+    pending_jobs: int
+    leased_jobs: int
+    retry_wait_jobs: int
+    last_error: str
+    last_succeeded_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
-class ProceduralMemoryItem:
-    id: str
-    type: str
-    label: str
-    summary: str
-    source_episode_ids: list[str]
-    confidence: str
-    status: str
-    created_at: str
-    updated_at: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "type": self.type,
-            "label": self.label,
-            "summary": self.summary,
-            "source_episode_ids": list(self.source_episode_ids),
-            "confidence": self.confidence,
-            "status": self.status,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
+class ForgetResult:
+    memory_id: str
+    forgotten: bool
+    raw_turns_retained: bool = True
 
 
 @dataclass(frozen=True, slots=True)
-class RepoProfile:
-    build_tool: str = ""
-    java_version: str = ""
-    project_name: str = ""
-    modules: list[str] = field(default_factory=list)
-    frameworks: list[str] = field(default_factory=list)
-    source_files: list[str] = field(default_factory=list)
-    updated_at: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "build_tool": self.build_tool,
-            "java_version": self.java_version,
-            "project_name": self.project_name,
-            "modules": list(self.modules),
-            "frameworks": list(self.frameworks),
-            "source_files": list(self.source_files),
-            "updated_at": self.updated_at,
-        }
+class ClearResult:
+    generation: int
+    active_thread_id: str
+    deleted_threads: int
+    deleted_turns: int
+    deleted_items: int
+    deleted_jobs: int
 
 
 @dataclass(frozen=True, slots=True)
-class MemoryMaintenance:
-    last_consolidated_at: str = ""
-    last_compacted_at: str = ""
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "last_consolidated_at": self.last_consolidated_at,
-            "last_compacted_at": self.last_compacted_at,
-        }
+class ExportResult:
+    path: Path
+    thread_count: int
+    turn_count: int
+    item_count: int
 
 
 @dataclass(frozen=True, slots=True)
-class MemoryDocument:
-    updated_at: str
-    active_topics: list[MemoryTopic] = field(default_factory=list)
-    pending_episode_ids: list[str] = field(default_factory=list)
-    episodes: list[MemoryEpisode] = field(default_factory=list)
-    repo_profile: RepoProfile = field(default_factory=RepoProfile)
-    user_preferences: list[SemanticMemoryItem] = field(default_factory=list)
-    project_notes: list[SemanticMemoryItem] = field(default_factory=list)
-    codebase_concepts: list[SemanticMemoryItem] = field(default_factory=list)
-    collaboration_preferences: list[ProceduralMemoryItem] = field(default_factory=list)
-    maintenance: MemoryMaintenance = field(default_factory=MemoryMaintenance)
-    version: int = MEMORY_VERSION
+class FlushResult:
+    processed: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    pending: int = 0
+    errors: tuple[str, ...] = field(default_factory=tuple)
 
-    @classmethod
-    def empty(cls) -> MemoryDocument:
-        return cls(updated_at=now_iso())
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "version": self.version,
-            "updated_at": self.updated_at,
-            "repo_profile": self.repo_profile.to_dict(),
-            "working_memory": {
-                "active_topics": [topic.to_dict() for topic in self.active_topics],
-                "pending_episode_ids": list(self.pending_episode_ids),
-            },
-            "episodic_memory": {
-                "episodes": [episode.to_dict() for episode in self.episodes],
-            },
-            "semantic_memory": {
-                "user_preferences": [item.to_dict() for item in self.user_preferences],
-                "project_notes": [item.to_dict() for item in self.project_notes],
-                "codebase_concepts": [item.to_dict() for item in self.codebase_concepts],
-            },
-            "procedural_memory": {
-                "collaboration_preferences": [
-                    item.to_dict() for item in self.collaboration_preferences
-                ],
-            },
-            "maintenance": self.maintenance.to_dict(),
-        }
+@dataclass(frozen=True, slots=True)
+class ExtractionSourceInput:
+    turn_id: str
+    role: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionCandidateInput:
+    kind: str
+    title: str
+    content: str
+    aliases: tuple[str, ...]
+    sources: tuple[CandidateSource, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionResult:
+    thread_compaction: str
+    candidates: tuple[ExtractionCandidateInput, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConsolidationOperation:
+    operation: str
+    candidate_ids: tuple[str, ...]
+    target_id: str | None
+    title: str
+    content: str
+    synopsis: str
+    aliases: tuple[str, ...]
+    keywords: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConsolidationResult:
+    operations: tuple[ConsolidationOperation, ...]

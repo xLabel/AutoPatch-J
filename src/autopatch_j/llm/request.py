@@ -39,6 +39,8 @@ class LLMRequestBuilder:
             kwargs["max_tokens"] = options.max_tokens
         if options.temperature is not None:
             kwargs["temperature"] = options.temperature
+        if options.timeout_seconds is not None:
+            kwargs["timeout"] = options.timeout_seconds
         return kwargs
 
     def _build_extra_body(self, options: LLMRequestOptions) -> dict[str, Any] | None:

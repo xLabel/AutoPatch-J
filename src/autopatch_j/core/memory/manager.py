@@ -1,160 +1,380 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
-from threading import RLock
-from typing import Any
+from threading import Event, Lock, Thread, current_thread
+from uuid import uuid4
 
 from autopatch_j.core.domain import IntentType
+from autopatch_j.llm.options import LLMCallDiagnostic
 
-from .delta import MemoryDeltaApplier
-from .prompt_context import MemoryPromptContextBuilder
 from .constants import (
-    MAX_ASSISTANT_TEXT,
-    MAX_SCOPE_PATHS,
-    MAX_USER_TEXT,
+    MAX_COMPACTION_CHARS,
+    MAX_ROUTING_CONTEXT_CHARS,
     ORDINARY_INTENTS,
-    SOFT_FILE_BYTES,
+    WORKER_POLL_SECONDS,
 )
-from .signals import LONG_TERM_SIGNALS
-from .models import MemoryDocument, MemoryEpisode
-from .text_utils import (
-    clip_text,
-    generate_id,
-    now_iso,
+from .errors import MemoryStorageError
+from .models import (
+    ClearResult,
+    ExportResult,
+    FlushResult,
+    ForgetResult,
+    JobKind,
+    MemoryDetail,
+    MemoryItemSummary,
+    MemorySearchHit,
+    MemoryStatus,
+    MemoryThread,
+    TurnHandle,
+    TurnRecord,
 )
+from .pipeline import MemoryLLM, MemoryPipeline
 from .store import MemoryStore
-from .triggers import MemorySummaryTrigger
+from .text_utils import compact_text, utc_now
 
 
 class MemoryManager:
-    """
-    管理 AutoPatch-J 的普通问答记忆。
+    """Memory v2 facade：SQLite 是唯一事实源，后台处理可恢复。"""
 
-    作用范围：
-    - 只服务 code_explain 和 general_chat
-    - 不服务 code_audit、patch_explain、patch_revise
-    - 不保存源码全文、补丁 diff、工具输出或推理链
-
-    职责：
-    - 作为记忆子系统对外入口，协调 store、delta applier 和 prompt context builder
-    - 只暴露业务需要的读写、摘要触发判断和上下文构建能力
-    - 把 LLM 生成内容交给程序侧硬校验后再写入 memory JSON
-    """
-
-    def __init__(self, memory_file: Path) -> None:
-        self._lock = RLock()
-        self.store = MemoryStore(memory_file)
-        self.delta_applier = MemoryDeltaApplier()
-        self.prompt_context_builder = MemoryPromptContextBuilder()
+    def __init__(
+        self,
+        *,
+        db_path: Path,
+        llm: MemoryLLM | None = None,
+        clock: Callable[[], datetime] | None = None,
+        worker_id: str | None = None,
+    ) -> None:
+        self.db_path = Path(db_path)
+        if self.db_path.suffix.lower() != ".db":
+            raise ValueError("db_path 必须指向 .db 文件")
+        legacy_json_path = self.db_path.with_name("memory.json")
+        self._clock = clock or utc_now
+        self._llm = llm
+        self._worker_id = worker_id or f"memory-worker-{uuid4().hex}"
+        self._store: MemoryStore | None = None
+        self._initialization_error = ""
+        self._pipeline: MemoryPipeline | None = None
+        self._wake = Event()
+        self._stop = Event()
+        self._state_lock = Lock()
+        self._process_lock = Lock()
+        self._thread: Thread | None = None
+        try:
+            self._store = MemoryStore(
+                self.db_path,
+                legacy_json_path=legacy_json_path,
+                clock=self._clock,
+            )
+        except MemoryStorageError as exc:
+            self._initialization_error = str(exc)
+        if self._store is not None and llm is not None:
+            self._pipeline = MemoryPipeline(self._store, llm, self._worker_id)
 
     @property
-    def memory_file(self) -> Path:
-        return self.store.memory_file
+    def store(self) -> MemoryStore:
+        if self._store is None:
+            raise MemoryStorageError(self._initialization_error or "Memory database 不可用")
+        return self._store
 
-    def build_prompt_context(self, intent: IntentType, current_user_text: str = "") -> str:
-        if intent not in ORDINARY_INTENTS:
-            return ""
-        with self._lock:
-            memory = self.store.load_document()
-            return self.prompt_context_builder.build(memory, intent, current_user_text)
+    def ensure_active_thread(self) -> MemoryThread:
+        return self.store.ensure_active_thread()
 
-    def build_prompt_context_debug_summary(self, intent: IntentType, current_user_text: str = "") -> str:
-        if intent not in ORDINARY_INTENTS:
-            return ""
-        with self._lock:
-            memory = self.store.load_document()
-            return self.prompt_context_builder.build_debug_summary(memory, intent, current_user_text)
+    def start_new_thread(self, expected_thread_id: str | None = None) -> MemoryThread:
+        return self.store.start_new_thread(expected_thread_id)
 
-    def append_recent_turn(
+    def begin_turn(
         self,
-        intent: IntentType,
+        *,
+        intent: IntentType | str,
         user_text: str,
-        assistant_text: str,
         scope_paths: list[str] | None = None,
-    ) -> None:
-        if intent not in ORDINARY_INTENTS:
-            return
+    ) -> TurnHandle:
+        intent_value = intent.value if isinstance(intent, IntentType) else str(intent)
+        return self.store.begin_turn(
+            intent_value,
+            user_text,
+            self._worker_id,
+            scope_paths,
+        )
 
-        with self._lock:
-            memory = self.store.load_document()
-            episode = MemoryEpisode(
-                id=generate_id("episode"),
-                intent=intent.value,
-                user_goal=clip_text(user_text, MAX_USER_TEXT),
-                assistant_result=clip_text(assistant_text, MAX_ASSISTANT_TEXT),
-                summary="",
-                summary_status="pending",
-                scope_paths=[clip_text(path, 240) for path in (scope_paths or [])[:MAX_SCOPE_PATHS]],
-                importance=3,
-                created_at=now_iso(),
-                last_accessed_at=now_iso(),
-                access_count=0,
-            )
-            updated_memory = MemoryDocument(
-                updated_at=memory.updated_at,
-                active_topics=memory.active_topics,
-                pending_episode_ids=[*memory.pending_episode_ids, episode.id],
-                episodes=[*memory.episodes, episode],
-                repo_profile=memory.repo_profile,
-                user_preferences=memory.user_preferences,
-                project_notes=memory.project_notes,
-                codebase_concepts=memory.codebase_concepts,
-                collaboration_preferences=memory.collaboration_preferences,
-                maintenance=memory.maintenance,
-                version=memory.version,
-            )
-            self.store.save_document(updated_memory)
+    def complete_turn(self, turn_id: str, *, assistant_text: str) -> TurnRecord:
+        result = self.store.complete_turn(turn_id, assistant_text, self._worker_id)
+        self.notify_turn_ready(turn_id)
+        return result
 
-    def apply_delta(self, delta: dict[str, Any], repo_profile: dict[str, Any] | None = None) -> bool:
-        with self._lock:
-            memory = self.store.load()
-            changed = False
-            if repo_profile is not None:
-                memory["repo_profile"] = repo_profile
-                changed = True
-            changed = self.delta_applier.apply(memory, delta) or changed
-            return self.store.save(memory) if changed else False
+    def fail_turn(self, turn_id: str, *, error: str) -> TurnRecord:
+        del error
+        result = self.store.fail_turn(turn_id, self._worker_id)
+        self.notify_turn_ready(turn_id)
+        return result
 
-    def should_summarize(self, last_user_text: str = "") -> bool:
-        return self.find_summary_trigger(last_user_text) is not None
-
-    def find_summary_trigger(
+    def build_thread_history(
         self,
-        last_user_text: str = "",
-        force_project_code_explain: bool = False,
-    ) -> MemorySummaryTrigger | None:
-        if force_project_code_explain:
-            return MemorySummaryTrigger.PROJECT_CODE_EXPLAIN
+        thread_id: str | None = None,
+        exclude_turn_id: str | None = None,
+    ) -> list[dict[str, str]]:
+        return self.store.build_thread_history(thread_id, exclude_turn_id)
 
-        with self._lock:
-            memory = self.store.load_document()
-            pending_count = len(memory.pending_episode_ids)
-            if pending_count >= 2:
-                return MemorySummaryTrigger.PENDING_EPISODES
-            if len(memory.episodes) >= 6:
-                return MemorySummaryTrigger.RECENT_EPISODES
-            if self.store.file_size() > SOFT_FILE_BYTES:
-                return MemorySummaryTrigger.FILE_SIZE
-            if any(signal in last_user_text for signal in LONG_TERM_SIGNALS):
-                return MemorySummaryTrigger.LONG_TERM_SIGNAL
+    def build_routing_context(
+        self,
+        intent: IntentType | str,
+        thread_id: str | None = None,
+    ) -> str:
+        intent_value = intent.value if isinstance(intent, IntentType) else str(intent)
+        ordinary_values = {item.value for item in ORDINARY_INTENTS}
+        if intent_value not in ordinary_values:
+            return ""
+        store = self.store
+        compaction = compact_text(
+            store.active_thread_compaction(thread_id), MAX_COMPACTION_CHARS
+        )
+        preferences, decisions, discussions = store.active_items_for_routing(thread_id)
+        if not compaction and not preferences and not decisions and not discussions:
+            return ""
+        lines = [
+            "Memory 仅用于讨论连续性，不是源码证据；当前用户指令始终优先。",
+            "需要详情时使用 memory_search 和 memory_read，并核对来源。",
+        ]
+        self._append_index(lines, "明确偏好", preferences, include_synopsis=True)
+        self._append_index(lines, "项目决定", decisions, include_synopsis=True)
+        self._append_index(lines, "当前讨论索引", discussions, include_synopsis=False)
+        if compaction:
+            remaining = MAX_ROUTING_CONTEXT_CHARS - len("\n".join(lines)) - 30
+            if remaining > 0:
+                lines.extend(
+                    ("", "### 当前 thread 摘要", compact_text(compaction, remaining))
+                )
+        rendered = "\n".join(lines)
+        if len(rendered) > MAX_ROUTING_CONTEXT_CHARS:
+            rendered = rendered[: MAX_ROUTING_CONTEXT_CHARS - 1].rstrip() + "…"
+        return rendered
+
+    def _append_index(
+        self,
+        lines: list[str],
+        title: str,
+        items: list[MemoryItemSummary],
+        *,
+        include_synopsis: bool,
+    ) -> None:
+        if not items:
+            return
+        lines.extend(("", f"### {title}"))
+        for item in items:
+            item_title = compact_text(item.title, 80)
+            synopsis = compact_text(item.synopsis, 80)
+            suffix = f"：{synopsis}" if include_synopsis else ""
+            lines.append(f"- `{item.id}` {item_title}{suffix}")
+
+    def latest_diagnostic(self) -> LLMCallDiagnostic | None:
+        diagnostics = getattr(self._llm, "diagnostics", None)
+        if not isinstance(diagnostics, list) or not diagnostics:
             return None
+        latest = diagnostics[-1]
+        return latest if isinstance(latest, LLMCallDiagnostic) else None
 
-    def load(self) -> dict[str, Any]:
-        with self._lock:
-            return self.store.load()
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        thread_id: str | None = None,
+    ) -> list[MemorySearchHit]:
+        return self.store.search(query, limit, thread_id)
 
-    def load_document(self) -> MemoryDocument:
-        with self._lock:
-            return self.store.load_document()
+    def read(self, memory_id: str, thread_id: str | None = None) -> MemoryDetail:
+        return self.store.read(memory_id, thread_id)
 
-    def save(self, memory: dict[str, Any]) -> bool:
-        with self._lock:
-            return self.store.save(memory)
+    def status(self) -> MemoryStatus:
+        if self._store is None:
+            return MemoryStatus(
+                healthy=False,
+                degraded=True,
+                db_path=self.db_path,
+                schema_version=0,
+                generation=0,
+                active_thread_id=None,
+                thread_count=0,
+                turn_count=0,
+                active_item_count=0,
+                pending_jobs=0,
+                leased_jobs=0,
+                retry_wait_jobs=0,
+                last_error=self._initialization_error,
+                last_succeeded_at=None,
+            )
+        try:
+            return self._store.status()
+        except MemoryStorageError as exc:
+            return MemoryStatus(
+                healthy=False,
+                degraded=True,
+                db_path=self.db_path,
+                schema_version=0,
+                generation=0,
+                active_thread_id=None,
+                thread_count=0,
+                turn_count=0,
+                active_item_count=0,
+                pending_jobs=0,
+                leased_jobs=0,
+                retry_wait_jobs=0,
+                last_error=str(exc),
+                last_succeeded_at=None,
+            )
 
-    def save_document(self, memory: MemoryDocument) -> bool:
-        with self._lock:
-            return self.store.save_document(memory)
+    def list_items(self) -> list[MemoryItemSummary]:
+        return self.store.list_items()
 
-    def clear(self) -> None:
-        with self._lock:
-            self.store.clear()
+    def show_item(self, memory_id: str) -> MemoryDetail:
+        return self.store.show_item(memory_id)
+
+    def forget(self, memory_id: str) -> ForgetResult:
+        return self.store.forget(memory_id)
+
+    def clear(self) -> ClearResult:
+        if self._store is None:
+            for path in (
+                self.db_path,
+                Path(str(self.db_path) + "-wal"),
+                Path(str(self.db_path) + "-shm"),
+            ):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as exc:
+                    raise MemoryStorageError(
+                        f"无法删除损坏的 Memory database 工件 {path}: {exc}"
+                    ) from exc
+            self._store = MemoryStore(self.db_path, clock=self._clock)
+            self._initialization_error = ""
+            if self._llm is not None:
+                self._pipeline = MemoryPipeline(
+                    self._store, self._llm, self._worker_id
+                )
+            result = self.store.clear()
+            self.start()
+            return result
+        return self.store.clear()
+
+    def export(self, export_dir: Path | None = None) -> ExportResult:
+        return self.store.export(export_dir)
+
+    def start(self) -> None:
+        if self._store is None:
+            return
+        try:
+            self._store.recover_startup()
+        except MemoryStorageError:
+            # 周期 worker 会继续重试；瞬时锁竞争不应阻止 CLI 启动。
+            pass
+        with self._state_lock:
+            if self._thread is not None and self._thread.is_alive():
+                return
+            self._stop.clear()
+            self._thread = Thread(
+                target=self._worker_loop,
+                name="memory-worker",
+                daemon=True,
+            )
+            self._thread.start()
+        self._wake.set()
+
+    def notify_turn_ready(self, turn_id: str) -> None:
+        del turn_id
+        self._wake.set()
+
+    def flush_once(
+        self,
+        reason: str,
+        thread_id: str | None = None,
+    ) -> FlushResult:
+        del reason
+        if self._store is None:
+            return FlushResult(failed=1, errors=(self._initialization_error,))
+        if self._pipeline is None:
+            return FlushResult(
+                pending=self._store.pending_job_count(),
+                errors=("Memory LLM 未配置，pending job 已保留",),
+            )
+        processed = succeeded = failed = 0
+        errors: list[str] = []
+        with self._process_lock:
+            allowed_job_ids = set(self._store.pending_job_ids(thread_id))
+            processed_job_ids: set[str] = set()
+            while remaining_job_ids := allowed_job_ids - processed_job_ids:
+                try:
+                    step = self._pipeline.process_one(
+                        force=True,
+                        thread_id=thread_id,
+                        allowed_job_ids=remaining_job_ids,
+                    )
+                except Exception as exc:
+                    failed += 1
+                    errors.append(self._safe_worker_error("flush", exc))
+                    break
+                if step is None:
+                    break
+                if not step.processed_job_ids:
+                    errors.append("Memory flush 无法确认已处理的 job，已停止本轮处理")
+                    break
+                processed_job_ids.update(step.processed_job_ids)
+                if (
+                    step.job_kind == JobKind.EXTRACTION.value
+                    and step.succeeded > 0
+                ):
+                    allowed_job_ids.update(step.spawned_job_ids)
+                processed += step.processed
+                succeeded += step.succeeded
+                failed += step.failed
+                if step.error:
+                    errors.append(compact_text(step.error, 300))
+        return FlushResult(
+            processed=processed,
+            succeeded=succeeded,
+            failed=failed,
+            pending=self._store.pending_job_count(),
+            errors=tuple(errors),
+        )
+
+    def close(self) -> None:
+        with self._state_lock:
+            thread = self._thread
+            if thread is None:
+                return
+            self._stop.set()
+            self._wake.set()
+        if thread is not current_thread():
+            thread.join()
+        with self._state_lock:
+            if self._thread is thread:
+                self._thread = None
+
+    def _worker_loop(self) -> None:
+        while not self._stop.is_set():
+            self._wake.wait(timeout=WORKER_POLL_SECONDS)
+            self._wake.clear()
+            if self._stop.is_set():
+                break
+            try:
+                self.store.heartbeat_open_turns(self._worker_id)
+                self.store.recover_startup()
+            except Exception:
+                # SQLite 的瞬时锁竞争或短暂 I/O 错误不能杀死 daemon。
+                continue
+            if self._pipeline is None:
+                continue
+            with self._process_lock:
+                while not self._stop.is_set():
+                    try:
+                        self.store.heartbeat_open_turns(self._worker_id)
+                        step = self._pipeline.process_one(force=False)
+                    except Exception:
+                        # 下一次 poll 重新 claim；lease/retry 是持久恢复边界。
+                        break
+                    if step is None:
+                        break
+
+    @staticmethod
+    def _safe_worker_error(phase: str, exc: Exception) -> str:
+        return f"Memory {phase} 暂时失败 ({type(exc).__name__})"
