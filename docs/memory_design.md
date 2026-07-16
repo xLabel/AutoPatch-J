@@ -68,7 +68,7 @@ active thread 只有三个创建入口：
 
 ### 5. 隐私与恢复
 
-Memory 保存 RAW（未经脱敏或改写的原文）user turn 和用户实际看到的 final assistant turn，不提供敏感信息检测或脱敏。模型整理输入、`show` 和 export 都可能包含这些原文。
+Memory 保存 RAW（未经脱敏或改写的原文）user turn 和用户实际看到的 final assistant turn，不提供敏感信息检测或脱敏。LLM 整理输入、`show` 和 export 都可能包含这些原文。
 
 provider 的异常或响应正文也可能进入有界 RAW 诊断。系统不会主动附加 request messages、prompt、headers 或认证配置，但不会清洗 provider 返回内容本身。
 
@@ -191,7 +191,7 @@ SQLite 写操作使用短连接、WAL、foreign keys、`BEGIN IMMEDIATE` 和 `bu
 
 前台 open turn 和后台 job 都有 owner lease。运行中的 manager 周期 heartbeat；第二个 CLI 只恢复 lease 已过期的 open turn，将其标为 `interrupted` 并补建 extraction job。
 
-worker 先 claim job，模型调用结束后再提交。提交必须同时通过 lease owner 和 generation fencing 校验，因此 clear 前已领取任务的晚到结果不能写回。
+worker 先 claim job，LLM 调用结束后再提交。提交必须同时通过 lease owner 和 generation fencing 校验，因此 clear 前已领取任务的晚到结果不能写回。
 
 瞬时 claim 或 SQLite 异常不会永久终止后台 daemon。执行中新增的 turn 会在当前批结束后继续 drain，不会因已有 inflight job 丢失调度。
 
@@ -241,7 +241,7 @@ claim SQL 在排序和 `LIMIT` 前应用 snapshot allowlist 与 thread 条件，
 
 默认 pytest 使用 canned LLM 验证 storage、turn/job lease、retry、provenance、consolidation、三段 SQL retrieval、CLI 和 intent 隔离。版本化中英文 quality corpus 覆盖明确偏好、临时表达、短确认、决定反转、代码事实错标、assistant-only 主张、跨 thread、遗忘和无关 query。
 
-强不变量包括：非法 provenance 为 0、repair Memory 泄漏为 0、跨 repo 泄漏为 0、forgotten item 被旧证据重建为 0、active preference/decision provenance 完整率为 100%。可选 live eval 只在显式开关下调用真实模型，不影响默认 CI。
+强不变量包括：非法 provenance 为 0、repair Memory 泄漏为 0、跨 repo 泄漏为 0、forgotten item 被旧证据重建为 0、active preference/decision provenance 完整率为 100%。可选 live eval 只在显式开关下实际调用 LLM，不影响默认 CI。
 
 ## 正式行为契约
 
