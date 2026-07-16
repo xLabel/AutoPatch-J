@@ -4,14 +4,25 @@ from pathlib import Path
 
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import Agent
-from autopatch_j.core.domain import ReviewWorkspace, WorkspaceStatus
+from autopatch_j.core.domain import (
+    PatchDraftSnapshot,
+    PatchReviewStatus,
+    ReviewPatchItem,
+    ReviewWorkspace,
+    WorkspaceStatus,
+)
+from autopatch_j.core.finding import FindingIdentity
 from autopatch_j.core.review import ProjectArtifactStore
 from autopatch_j.core.project import SourceReader
 from autopatch_j.core.project import SymbolIndex
-from autopatch_j.core.patching import SearchReplacePatchEngine
-from autopatch_j.core.patching import PatchQualityVerifier
+from autopatch_j.core.patching import (
+    PatchQualityVerifier,
+    SearchReplacePatchDraft,
+    SearchReplacePatchEngine,
+    SyntaxCheckResult,
+)
 from autopatch_j.core.review import ReviewWorkspaceManager
-from autopatch_j.scanners.models import Finding, ScanResult
+from autopatch_j.scanners.models import Finding, ScanResult, SourceRegion
 from autopatch_j.scanners.semgrep import build_semgrep_scan_result
 from autopatch_j.tools.function_calls.get_finding_detail import GetFindingDetailTool
 from autopatch_j.tools.function_calls.propose_patch import ProposePatchTool
@@ -37,33 +48,79 @@ def _build_agent(repo_root: Path) -> Agent:
     return Agent(session=session, llm=None)
 
 
+def _source_region(source: str, evidence: str) -> SourceRegion:
+    start_index = source.index(evidence)
+    end_index = start_index + len(evidence)
+    start_prefix = source[:start_index]
+    end_prefix = source[:end_index]
+    return SourceRegion(
+        start_line=start_prefix.count("\n") + 1,
+        start_column=start_index - start_prefix.rfind("\n"),
+        end_line=end_prefix.count("\n") + 1,
+        end_column=end_index - end_prefix.rfind("\n"),
+        start_offset=len(start_prefix.encode("utf-8")),
+        end_offset=len(end_prefix.encode("utf-8")),
+    )
+
+
+def _finding(
+    *,
+    source: str,
+    evidence: str,
+    path: str,
+    check_id: str,
+    message: str,
+    snippet: str | None = None,
+) -> Finding:
+    return Finding(
+        fingerprint=f"apj-v1:{'a' * 64}:1",
+        check_id=check_id,
+        path=path,
+        region=_source_region(source, evidence),
+        severity="warning",
+        message=message,
+        snippet=snippet if snippet is not None else evidence,
+    )
+
+
 def test_build_semgrep_scan_result_prefers_source_lines_over_dirty_extra_lines(tmp_path: Path) -> None:
     java_file = tmp_path / "src" / "main" / "java" / "demo" / "UserService.java"
     java_file.parent.mkdir(parents=True)
-    java_file.write_text(
+    source = (
         "package demo;\n\n"
         "public class UserService {\n"
         "    public boolean isAdmin(User user) {\n"
         "        return user.getName().equals(\"admin\");\n"
         "    }\n"
-        "}\n",
-        encoding="utf-8",
+        "}\n"
     )
+    java_file.write_text(source, encoding="utf-8")
+    evidence = 'return user.getName().equals("admin");'
+    region = _source_region(source, evidence)
 
     payload = {
         "results": [
             {
                 "check_id": "autopatch-j.java.correctness.unsafe-equals-order",
                 "path": "src/main/java/demo/UserService.java",
-                "start": {"line": 5},
-                "end": {"line": 5},
+                "start": {
+                    "line": region.start_line,
+                    "col": region.start_column,
+                    "offset": region.start_offset,
+                },
+                "end": {
+                    "line": region.end_line,
+                    "col": region.end_column,
+                    "offset": region.end_offset,
+                },
                 "extra": {
                     "severity": "WARNING",
                     "message": "unsafe equals order",
                     "lines": "requires login",
                 },
             }
-        ]
+        ],
+        "errors": [],
     }
 
     result = build_semgrep_scan_result(
@@ -77,18 +134,18 @@ def test_build_semgrep_scan_result_prefers_source_lines_over_dirty_extra_lines(t
     assert result.findings[0].snippet == 'return user.getName().equals("admin");'
 
 
-def test_get_finding_detail_repairs_legacy_bad_snippet_from_snapshot(tmp_path: Path) -> None:
+def test_get_finding_detail_refreshes_stale_display_snippet(tmp_path: Path) -> None:
     java_file = tmp_path / "src" / "main" / "java" / "demo" / "UserService.java"
     java_file.parent.mkdir(parents=True)
-    java_file.write_text(
+    source = (
         "package demo;\n\n"
         "public class UserService {\n"
         "    public boolean isAdmin(User user) {\n"
         "        return user.getName().equals(\"admin\");\n"
         "    }\n"
-        "}\n",
-        encoding="utf-8",
+        "}\n"
     )
+    java_file.write_text(source, encoding="utf-8")
 
     agent = _build_agent(tmp_path)
     agent.session.set_focus_paths(["src/main/java/demo/UserService.java"])
@@ -100,12 +157,11 @@ def test_get_finding_detail_repairs_legacy_bad_snippet_from_snapshot(tmp_path: P
             status="ok",
             message="ok",
             findings=[
-                Finding(
+                _finding(
+                    source=source,
+                    evidence='return user.getName().equals("admin");',
                     check_id="autopatch-j.java.correctness.unsafe-equals-order",
-                    path="src\\main\\java\\demo\\UserService.java",
-                    start_line=5,
-                    end_line=5,
-                    severity="warning",
+                    path="src/main/java/demo/UserService.java",
                     message="unsafe equals order",
                     snippet="requires login",
                 )
@@ -120,6 +176,88 @@ def test_get_finding_detail_repairs_legacy_bad_snippet_from_snapshot(tmp_path: P
     assert "requires login" not in result.message
     assert result.payload["finding_id"] == "F1"
     assert str(result.payload["scan_id"]).startswith("scan-")
+
+
+def test_get_finding_detail_uses_rebased_pending_region(tmp_path: Path) -> None:
+    path = "Demo.java"
+    original = "first();\nsecond();\n"
+    current = "first();\ninserted();\nsecond();\n"
+    (tmp_path / path).write_text(current, encoding="utf-8")
+    agent = _build_agent(tmp_path)
+    agent.session.set_focus_paths([path])
+    first_finding = _finding(
+        source=original,
+        evidence="first();",
+        path=path,
+        check_id="demo.first",
+        message="first finding",
+    )
+    second_finding = _finding(
+        source=original,
+        evidence="second();",
+        path=path,
+        check_id="demo.second",
+        message="second finding",
+    )
+    second_finding.fingerprint = f"apj-v1:{'b' * 64}:1"
+    scan_id = agent.session.artifact_manager.save_scan_result(
+        ScanResult(
+            engine="semgrep",
+            scope=[path],
+            targets=[path],
+            status="ok",
+            message="ok",
+            findings=[first_finding, second_finding],
+        )
+    )
+    build_result = agent.session.patch_engine.create_draft(
+        path,
+        "second();",
+        "fixedSecond();",
+    )
+    target = FindingIdentity(
+        fingerprint=second_finding.fingerprint,
+        check_id=second_finding.check_id,
+        path=path,
+        region=build_result.match_region,
+    )
+    draft = SearchReplacePatchDraft(
+        file_path=path,
+        old_string="second();",
+        new_string="fixedSecond();",
+        diff=build_result.diff,
+        match_region=build_result.match_region,
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+        associated_finding_id="F2",
+        source_scan_id=scan_id,
+        target_finding=target,
+    )
+    agent.session.workspace_manager.save(
+        ReviewWorkspace(
+            mode=WorkspaceStatus.REVIEWING,
+            scope=None,
+            latest_scan_id=scan_id,
+            patch_items=[
+                ReviewPatchItem(
+                    item_id="item-2",
+                    file_path=path,
+                    finding_ids=["F2"],
+                    status=PatchReviewStatus.PENDING,
+                    draft=PatchDraftSnapshot.from_patch_draft(draft),
+                )
+            ],
+            current_patch_index=0,
+        )
+    )
+
+    result = GetFindingDetailTool(agent.session).execute("F2")
+
+    assert result.status == "ok"
+    assert result.payload["region"] == build_result.match_region.to_dict()
+    assert "second();" in result.message
+    assert "inserted();" not in result.message
 
 
 def test_get_finding_detail_uses_workspace_scan_before_newer_scan(tmp_path: Path) -> None:
@@ -137,14 +275,12 @@ def test_get_finding_detail_uses_workspace_scan_before_newer_scan(tmp_path: Path
             status="ok",
             message="ok",
             findings=[
-                Finding(
+                _finding(
+                    source="class First { void run() {} }",
+                    evidence="class First { void run() {} }",
                     check_id="first.rule",
                     path="First.java",
-                    start_line=1,
-                    end_line=1,
-                    severity="warning",
                     message="first finding",
-                    snippet="class First { void run() {} }",
                 )
             ],
         )
@@ -157,14 +293,12 @@ def test_get_finding_detail_uses_workspace_scan_before_newer_scan(tmp_path: Path
             status="ok",
             message="ok",
             findings=[
-                Finding(
+                _finding(
+                    source="class Second { void run() {} }",
+                    evidence="class Second { void run() {} }",
                     check_id="second.rule",
                     path="Second.java",
-                    start_line=1,
-                    end_line=1,
-                    severity="warning",
                     message="second finding",
-                    snippet="class Second { void run() {} }",
                 )
             ],
         )
@@ -196,14 +330,12 @@ def test_get_finding_detail_does_not_fallback_when_workspace_scan_is_missing(tmp
             status="ok",
             message="ok",
             findings=[
-                Finding(
+                _finding(
+                    source="class Demo {}",
+                    evidence="class Demo {}",
                     check_id="demo.rule",
                     path="Demo.java",
-                    start_line=1,
-                    end_line=1,
-                    severity="warning",
                     message="demo finding",
-                    snippet="class Demo {}",
                 )
             ],
         )
@@ -223,18 +355,18 @@ def test_get_finding_detail_does_not_fallback_when_workspace_scan_is_missing(tmp
     assert result.payload["error_code"] == "SCAN_ARTIFACT_NOT_FOUND"
 
 
-def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_path: Path) -> None:
+def test_patch_proposal_persists_full_target_identity(tmp_path: Path) -> None:
     java_file = tmp_path / "src" / "main" / "java" / "demo" / "UserService.java"
     java_file.parent.mkdir(parents=True)
-    java_file.write_text(
+    source = (
         "package demo;\n\n"
         "public class UserService {\n"
         "    public boolean isAdmin(User user) {\n"
         "        return user.getName().equals(\"admin\");\n"
         "    }\n"
-        "}\n",
-        encoding="utf-8",
+        "}\n"
     )
+    java_file.write_text(source, encoding="utf-8")
 
     agent = _build_agent(tmp_path)
     agent.session.set_focus_paths(["src/main/java/demo/UserService.java"])
@@ -246,12 +378,11 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
             status="ok",
             message="ok",
             findings=[
-                Finding(
+                _finding(
+                    source=source,
+                    evidence='return user.getName().equals("admin");',
                     check_id="autopatch-j.java.correctness.unsafe-equals-order",
-                    path="src\\main\\java\\demo\\UserService.java",
-                    start_line=5,
-                    end_line=5,
-                    severity="warning",
+                    path="src/main/java/demo/UserService.java",
                     message="unsafe equals order",
                     snippet="requires login",
                 )
@@ -272,5 +403,10 @@ def test_patch_proposal_uses_resolved_target_snippet_for_legacy_snapshot(tmp_pat
     assert pending is not None
     assert pending.associated_finding_id == "F1"
     assert pending.source_scan_id is not None
-    assert pending.target_check_id == "autopatch-j.java.correctness.unsafe-equals-order"
-    assert pending.target_snippet == 'return user.getName().equals("admin");'
+    assert pending.target_finding is not None
+    assert pending.target_finding.check_id == "autopatch-j.java.correctness.unsafe-equals-order"
+    assert pending.target_finding.region == _source_region(
+        source,
+        'return user.getName().equals("admin");',
+    )
+    assert result.payload["target_finding"] == pending.target_finding.to_dict()

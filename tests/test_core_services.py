@@ -296,6 +296,24 @@ def test_semgrep_scanner_reports_invalid_json_output(tmp_path: Path, monkeypatch
     assert "不是有效 JSON" in result.message
 
 
+def test_semgrep_scanner_rejects_empty_json_output(tmp_path: Path, monkeypatch) -> None:
+    java_file = tmp_path / "Demo.java"
+    java_file.write_text("class Demo {}", encoding="utf-8")
+    scanner = SemgrepScanner()
+    monkeypatch.setattr(scanner, "resolve_binary", lambda repo_root: "semgrep")
+    monkeypatch.setattr(
+        semgrep_scanner_module.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    result = scanner.scan(tmp_path, ["Demo.java"])
+
+    assert result.status == "error"
+    assert result.findings == []
+    assert "缺少必需字段" in result.message
+
+
 def test_semgrep_scanner_reports_missing_runtime_as_scan_result(tmp_path: Path, monkeypatch) -> None:
     java_file = tmp_path / "Demo.java"
     java_file.write_text("class Demo {}", encoding="utf-8")

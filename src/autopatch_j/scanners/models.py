@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from autopatch_j.core.finding import FindingIdentity, SourceRegion
+
 
 class ScannerName(str, Enum):
     """AutoPatch-J 已知的 Java 扫描器标识。"""
@@ -17,26 +19,52 @@ class ScannerName(str, Enum):
 @dataclass(slots=True)
 class Finding:
     """扫描器输出的单个 Java 安全或正确性问题。"""
+
+    fingerprint: str
     check_id: str
     path: str
-    start_line: int
-    end_line: int
+    region: SourceRegion
     severity: str
     message: str
     rule: str = ""
     snippet: str = ""
 
+    def __post_init__(self) -> None:
+        self.identity
+
+    @property
+    def identity(self) -> FindingIdentity:
+        return FindingIdentity(
+            fingerprint=self.fingerprint,
+            check_id=self.check_id,
+            path=self.path,
+            region=self.region,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
+            "fingerprint": self.fingerprint,
             "check_id": self.check_id,
             "path": self.path,
-            "start_line": self.start_line,
-            "end_line": self.end_line,
+            "region": self.region.to_dict(),
             "severity": self.severity,
             "message": self.message,
             "rule": self.rule,
-            "snippet": self.snippet
+            "snippet": self.snippet,
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Finding:
+        return cls(
+            fingerprint=_required_string(data, "fingerprint"),
+            check_id=_required_string(data, "check_id"),
+            path=_required_string(data, "path"),
+            region=SourceRegion.from_dict(dict(data["region"])),
+            severity=_required_string(data, "severity"),
+            message=_required_string(data, "message"),
+            rule=_optional_string(data, "rule"),
+            snippet=_optional_string(data, "snippet"),
+        )
 
 
 @dataclass(slots=True)
@@ -62,7 +90,7 @@ class ScanResult:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ScanResult:
         findings_data = data.get("findings", [])
-        findings = [Finding(**f) for f in findings_data]
+        findings = [Finding.from_dict(dict(f)) for f in findings_data]
         return cls(
             engine=data["engine"],
             scope=data["scope"],
@@ -87,3 +115,17 @@ class ScannerMeta:
     @property
     def is_ready(self) -> bool:
         return self.availability == "ready"
+
+
+def _required_string(data: dict[str, Any], key: str) -> str:
+    value = data[key]
+    if not isinstance(value, str):
+        raise TypeError(f"{key} 必须是字符串。")
+    return value
+
+
+def _optional_string(data: dict[str, Any], key: str) -> str:
+    value = data.get(key, "")
+    if not isinstance(value, str):
+        raise TypeError(f"{key} 必须是字符串。")
+    return value

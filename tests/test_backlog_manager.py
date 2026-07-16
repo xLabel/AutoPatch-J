@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from autopatch_j.core.review import FindingBacklog
 from autopatch_j.core.domain import AuditAttemptOutcome, AuditFindingStatus
-from autopatch_j.scanners.models import Finding, ScanResult
+from autopatch_j.scanners.models import Finding, ScanResult, SourceRegion
 
 
 def _scan_result() -> ScanResult:
@@ -14,19 +14,19 @@ def _scan_result() -> ScanResult:
         message="ok",
         findings=[
             Finding(
+                fingerprint=f"apj-v1:{'a' * 64}:1",
                 check_id="rule-a",
                 path="src/main/java/demo/AppConfig.java",
-                start_line=6,
-                end_line=6,
+                region=SourceRegion(6, 1, 6, 18, 100, 117),
                 severity="warning",
                 message="missing null check",
                 snippet="this.mode = mode;",
             ),
             Finding(
+                fingerprint=f"apj-v1:{'b' * 64}:1",
                 check_id="rule-b",
                 path="src/main/java/demo/UserService.java",
-                start_line=5,
-                end_line=5,
+                region=SourceRegion(5, 1, 5, 39, 80, 118),
                 severity="warning",
                 message="unsafe equals order",
                 snippet='return user.getName().equals("admin");',

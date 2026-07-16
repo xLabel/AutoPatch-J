@@ -32,8 +32,8 @@ class FindingBacklog:
                     finding_id=f"F{index}",
                     file_path=finding.path,
                     check_id=finding.check_id,
-                    start_line=finding.start_line,
-                    end_line=finding.end_line,
+                    start_line=finding.region.start_line,
+                    end_line=finding.region.inclusive_end_line,
                     message=finding.message,
                     snippet=finding.snippet,
                 )
