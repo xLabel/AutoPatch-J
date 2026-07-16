@@ -12,7 +12,7 @@ from autopatch_j.core.domain.workspace import (
     ReviewWorkspace,
     WorkspaceStatus,
 )
-from autopatch_j.core.patching.types import SearchReplacePatchDraft
+from autopatch_j.core.patching.types import SearchReplacePatchDraft, normalize_patch_path
 from autopatch_j.core.review.artifacts import ProjectArtifactStore
 
 
@@ -83,26 +83,32 @@ class ReviewWorkspaceManager:
             current_item = workspace.current_patch()
             if current_item is None:
                 return False
-            current_finding_ids = list(current_item.finding_ids)
-            if (
-                draft.associated_finding_id
-                and current_finding_ids
-                and draft.associated_finding_id not in current_finding_ids
+            current_draft = current_item.draft.to_patch_draft()
+            if current_draft.error_code == "STALE_DRAFT":
+                return False
+            if normalize_patch_path(draft.file_path) != normalize_patch_path(current_draft.file_path):
+                return False
+            if draft.error_code is not None:
+                return False
+            if draft.associated_finding_id != current_draft.associated_finding_id:
+                return False
+            if draft.source_scan_id != current_draft.source_scan_id:
+                return False
+            if draft.target_finding != current_draft.target_finding:
+                return False
+            if draft.target_finding is not None and not draft.match_region.intersects(
+                draft.target_finding.region
             ):
                 return False
-            finding_ids = [draft.associated_finding_id] if draft.associated_finding_id else current_finding_ids
-            if draft.associated_finding_id is None and current_finding_ids:
-                draft.associated_finding_id = current_finding_ids[0]
-            if draft.source_scan_id is None:
-                draft.source_scan_id = current_item.draft.source_scan_id
-            if draft.target_check_id is None:
-                draft.target_check_id = current_item.draft.target_check_id
-            if draft.target_snippet is None:
-                draft.target_snippet = current_item.draft.target_snippet
+            expected_finding_ids = (
+                [draft.associated_finding_id] if draft.associated_finding_id else []
+            )
+            if current_item.finding_ids != expected_finding_ids:
+                return False
             replacement_item = ReviewPatchItem(
                 item_id=current_item.item_id,
                 file_path=draft.file_path,
-                finding_ids=finding_ids,
+                finding_ids=list(current_item.finding_ids),
                 status=PatchReviewStatus.PENDING,
                 draft=PatchDraftSnapshot.from_patch_draft(draft),
             )

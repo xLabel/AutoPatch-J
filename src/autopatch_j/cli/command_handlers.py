@@ -11,7 +11,11 @@ from autopatch_j.cli.render import DECISION_STYLE, SYSTEM_STYLE
 from autopatch_j.cli.runtime import CliRuntime
 from autopatch_j.cli.status_presenter import StatusPresenter
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.patching import SearchReplacePatchDraft
+from autopatch_j.core.patching import (
+    PatchApplicationResult,
+    SearchReplacePatchDraft,
+    VerificationOutcome,
+)
 from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
 
 
@@ -207,24 +211,43 @@ class CommandHandlers:
             "用法：/memory status|list|show <id>|forget <id>|clear --confirm|export"
         )
 
-    def handle_apply(self, pending: SearchReplacePatchDraft) -> bool:
+    def handle_apply(self, pending: SearchReplacePatchDraft) -> PatchApplicationResult:
         runtime = self._require_runtime()
         if runtime is None:
-            return False
+            return PatchApplicationResult(
+                applied=False,
+                error_code="RUNTIME_UNAVAILABLE",
+                message="系统未初始化，无法应用补丁。",
+            )
+        if pending.error_code == "STALE_DRAFT":
+            result = PatchApplicationResult(
+                applied=False,
+                error_code="STALE_DRAFT",
+                message=pending.message,
+            )
+            self.host.renderer.print_error(f"应用失败 [STALE_DRAFT]：{pending.message}")
+            return result
         self.host.renderer.print_step(f"正在应用补丁至 {pending.file_path}...")
-        if not runtime.patch_engine.apply_patch(pending):
-            self.host.renderer.print_error("应用失败。")
-            return False
+        apply_result = runtime.patch_engine.apply_patch(pending)
+        if not apply_result.applied:
+            error_code = apply_result.error_code or "UNKNOWN"
+            self.host.renderer.print_error(f"应用失败 [{error_code}]：{apply_result.message}")
+            return apply_result
 
         self.host.renderer.print_success("补丁已应用")
 
         if runtime.patch_verifier:
-            result = runtime.patch_verifier.verify_finding_resolved(pending)
-            if result.is_resolved:
+            result = runtime.patch_verifier.verify_finding_resolved(
+                pending,
+                apply_result,
+            )
+            if result.outcome is VerificationOutcome.RESOLVED:
                 self.host.renderer.print_success(result.message)
             else:
                 self.host.renderer.print_error(result.message)
-        return True
+        else:
+            self.host.renderer.print_error("无法确认修复结果：未配置补丁验证器。")
+        return apply_result
 
     def handle_discard(self) -> None:
         self.host.renderer.print_agent_text("已丢弃当前草案")

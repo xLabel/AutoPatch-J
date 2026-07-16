@@ -17,6 +17,7 @@ from autopatch_j.core.domain import (
 from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.core.patching import SyntaxCheckResult
 from autopatch_j.core.review import ReviewWorkspaceManager
+from autopatch_j.scanners import FindingIdentity, SourceRegion
 
 
 def _scope() -> CodeScope:
@@ -42,15 +43,25 @@ def _item(item_id: str, file_path: str, finding_id: str) -> ReviewPatchItem:
             old_string="old",
             new_string="new",
             diff="diff",
+            match_region=SourceRegion(1, 1, 1, 4, 0, 3),
+            message="ok",
             validation_status="ok",
             validation_message="ok",
             validation_errors=[],
             rationale=f"fix {finding_id}",
             associated_finding_id=finding_id,
             source_scan_id="scan-1",
-            target_check_id="demo.rule",
-            target_snippet="snippet",
+            target_finding=_target_identity(file_path),
         ),
+    )
+
+
+def _target_identity(file_path: str) -> FindingIdentity:
+    return FindingIdentity(
+        fingerprint=f"apj-v1:{'a' * 64}:1",
+        check_id="demo.rule",
+        path=file_path,
+        region=SourceRegion(1, 1, 1, 4, 0, 3),
     )
 
 
@@ -157,13 +168,14 @@ def test_workspace_manager_replace_current_patch_keeps_queue_order(tmp_path: Pat
         old_string="old",
         new_string="better",
         diff="better diff",
+        match_region=SourceRegion(1, 1, 1, 4, 0, 3),
         validation=SyntaxCheckResult(status="ok", message="ok"),
         status="ok",
         message="ok",
         rationale="better fix",
         associated_finding_id="F1",
-        source_scan_id="scan-5",
-        target_check_id="demo.rule",
+        source_scan_id="scan-1",
+        target_finding=_target_identity("src/main/java/demo/User.java"),
     )
 
     replaced = service.replace_current_patch(replacement)
@@ -189,17 +201,84 @@ def test_workspace_manager_rejects_revision_that_switches_finding(tmp_path: Path
         old_string="old",
         new_string="wrong finding",
         diff="wrong diff",
+        match_region=SourceRegion(1, 1, 1, 4, 0, 3),
         validation=SyntaxCheckResult(status="ok", message="ok"),
         status="ok",
         message="ok",
         rationale="wrong finding",
         associated_finding_id="F2",
-        source_scan_id="scan-6",
-        target_check_id="demo.rule",
+        source_scan_id="scan-1",
+        target_finding=_target_identity("src/main/java/demo/User.java"),
     )
 
     replaced = service.replace_current_patch(replacement)
     workspace = service.load()
 
     assert replaced is False
+    assert workspace.patch_items[0].draft.new_string == "new"
+
+
+def test_workspace_manager_rejects_revision_that_drops_finding_binding(
+    tmp_path: Path,
+) -> None:
+    service = ReviewWorkspaceManager(ProjectArtifactStore(tmp_path))
+    service.initialize_review(
+        scope=_scope(),
+        latest_scan_id="scan-7",
+        patch_items=[_item("item-1", "src/main/java/demo/User.java", "F1")],
+    )
+    replacement = SearchReplacePatchDraft(
+        file_path="src/main/java/demo/User.java",
+        old_string="old",
+        new_string="unbound replacement",
+        diff="replacement diff",
+        match_region=SourceRegion(1, 1, 1, 4, 0, 3),
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+        rationale="drops binding",
+    )
+
+    replaced = service.replace_current_patch(replacement)
+    workspace = service.load()
+
+    assert replaced is False
+    assert workspace.patch_items[0].draft.new_string == "new"
+    assert workspace.patch_items[0].draft.associated_finding_id == "F1"
+
+
+def test_workspace_manager_rejects_replacement_for_stale_current_patch(
+    tmp_path: Path,
+) -> None:
+    service = ReviewWorkspaceManager(ProjectArtifactStore(tmp_path))
+    service.initialize_review(
+        scope=_scope(),
+        latest_scan_id="scan-8",
+        patch_items=[_item("item-1", "src/main/java/demo/User.java", "F1")],
+    )
+    with service.edit() as workspace:
+        current = workspace.current_patch()
+        assert current is not None
+        current.draft.error_code = "STALE_DRAFT"
+        current.draft.message = "binding lost"
+    replacement = SearchReplacePatchDraft(
+        file_path="src/main/java/demo/User.java",
+        old_string="old",
+        new_string="replacement",
+        diff="replacement diff",
+        match_region=SourceRegion(1, 1, 1, 4, 0, 3),
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+        rationale="attempt to replace stale patch",
+        associated_finding_id="F1",
+        source_scan_id="scan-1",
+        target_finding=_target_identity("src/main/java/demo/User.java"),
+    )
+
+    replaced = service.replace_current_patch(replacement)
+    workspace = service.load()
+
+    assert replaced is False
+    assert workspace.patch_items[0].draft.error_code == "STALE_DRAFT"
     assert workspace.patch_items[0].draft.new_string == "new"

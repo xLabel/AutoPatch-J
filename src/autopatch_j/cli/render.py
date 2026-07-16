@@ -125,6 +125,7 @@ class CliRenderer:
         current_idx: int = 1,
         total_count: int = 1,
         source_hint: str | None = None,
+        blocking_error: str | None = None,
     ) -> None:
         """展示补丁确认决策面板"""
         # 计算统计
@@ -150,11 +151,19 @@ class CliRenderer:
                 (source_hint, BODY_STYLE),
                 ("\n", ""),
             )
+        blocking_line = Text()
+        if blocking_error:
+            blocking_line = Text.assemble(
+                ("阻断原因: ", f"bold {ERROR_STYLE}"),
+                (blocking_error, ERROR_STYLE),
+                ("\n", ""),
+            )
         
         # 组装文本页眉
         header = Text.assemble(
             "\n", stats, "\n",
             source_line,
+            blocking_line,
             ("意图: ", "bold"), rationale_text, "\n",
             ("─" * 40, MUTED_STYLE), "\n"
         )
@@ -163,10 +172,14 @@ class CliRenderer:
         guide = Table.grid(padding=(0, 1))
         guide.add_column(style=f"bold {DECISION_STYLE}")
         guide.add_column()
-        guide.add_row("apply", "  > 应用此补丁并执行三级验证")
-        guide.add_row("discard", "  > 丢弃此草案并进入下一个")
-        guide.add_row("abort", "  > 中止审核流程并清空队列")
-        guide.add_row("<文本>", "  > 直接输入反馈让 Agent 重新生成")
+        if blocking_error:
+            guide.add_row("discard", "  > 丢弃此草案并进入下一个")
+            guide.add_row("abort", "  > 中止审核流程，随后重新扫描")
+        else:
+            guide.add_row("apply", "  > 应用此补丁并执行三级验证")
+            guide.add_row("discard", "  > 丢弃此草案并进入下一个")
+            guide.add_row("abort", "  > 中止审核流程并清空队列")
+            guide.add_row("<文本>", "  > 直接输入反馈让 Agent 重新生成")
 
         # 使用 Group 组合
         content = Group(
@@ -175,7 +188,12 @@ class CliRenderer:
             Text("\n")
         )
 
-        title = f"待确认补丁 (PENDING) [{current_idx}/{total_count}]" if total_count > 1 else "待确认补丁 (PENDING)"
+        state = "STALE" if blocking_error else "PENDING"
+        title = (
+            f"待确认补丁 ({state}) [{current_idx}/{total_count}]"
+            if total_count > 1
+            else f"待确认补丁 ({state})"
+        )
         self.print_panel(content, title=title, style=DECISION_STYLE)
 
     def print_no_issue_panel(self, scope_paths: list[str], scanner_summary: str, llm_summary: str) -> None:

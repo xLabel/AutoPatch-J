@@ -15,8 +15,13 @@ from autopatch_j.cli.command_router import CommandRouter
 from autopatch_j.agent.react_runner import AgentRunResult
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.memory import MemoryManager, MemorySchemaError, MemoryStatus
-from autopatch_j.core.patching import SearchReplacePatchDraft
-from autopatch_j.core.patching import SyntaxCheckResult
+from autopatch_j.core.patching import (
+    PatchApplicationResult,
+    SearchReplacePatchDraft,
+    SyntaxCheckResult,
+    VerificationOutcome,
+    VerificationResult,
+)
 from autopatch_j.core.domain import (
     ReviewWorkspace,
     FindingTask,
@@ -30,6 +35,7 @@ from autopatch_j.core.domain import (
     WorkspaceStatus,
 )
 from autopatch_j.core.user_input import IntentClassificationResult, RouteClassificationResult
+from autopatch_j.scanners import FindingIdentity, SourceRegion
 
 
 @pytest.fixture
@@ -57,13 +63,15 @@ def _item(
             old_string="old",
             new_string="new",
             diff="diff",
+            match_region=SourceRegion(1, 1, 1, 4, 0, 3),
+            message="ok",
             validation_status="ok",
             validation_message="ok",
             validation_errors=[],
             rationale=f"fix {finding_id}",
             associated_finding_id=finding_id,
             source_scan_id="scan-1",
-            target_check_id="demo.rule",
+            target_finding=_target_identity(file_path),
         ),
     )
 
@@ -74,13 +82,25 @@ def _patch_draft(new_string: str, finding_id: str | None = "F1") -> SearchReplac
         old_string="old",
         new_string=new_string,
         diff=f"diff {new_string}",
+        match_region=SourceRegion(1, 1, 1, 4, 0, 3),
         validation=SyntaxCheckResult(status="ok", message="ok"),
         status="ok",
         message="ok",
         rationale=f"fix {finding_id}",
         associated_finding_id=finding_id,
         source_scan_id="scan-1" if finding_id else None,
-        target_check_id="demo.rule" if finding_id else None,
+        target_finding=(
+            _target_identity("src/main/java/demo/User.java") if finding_id else None
+        ),
+    )
+
+
+def _target_identity(file_path: str) -> FindingIdentity:
+    return FindingIdentity(
+        fingerprint=f"apj-v1:{'a' * 64}:1",
+        check_id="demo.rule",
+        path=file_path,
+        region=SourceRegion(1, 1, 1, 4, 0, 3),
     )
 
 
@@ -296,13 +316,14 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> N
         old_string="old",
         new_string="better",
         diff="better diff",
+        match_region=SourceRegion(1, 1, 1, 4, 0, 3),
         validation=SyntaxCheckResult(status="ok", message="ok"),
         status="ok",
         message="ok",
         rationale="better fix",
         associated_finding_id="F1",
         source_scan_id="scan-1",
-        target_check_id="demo.rule",
+        target_finding=_target_identity("src/main/java/demo/User.java"),
     )
 
     def revise_current(*args, **kwargs):
@@ -498,13 +519,277 @@ def test_review_apply_failure_keeps_current_patch_pending(cli: AutoPatchCli) -> 
         current_patch_index=0,
     )
     cli.runtime.workspace_manager.save(workspace)
-    cli.command_handlers.handle_apply = MagicMock(return_value=False)
+    cli.command_handlers.handle_apply = MagicMock(
+        return_value=PatchApplicationResult(
+            applied=False,
+            message="apply failed",
+            error_code="SOURCE_CHANGED",
+        )
+    )
 
     cli.input_router.handle_review_input("apply", workspace.patch_items[0])
 
     updated = cli.runtime.workspace_manager.load()
     assert updated.current_patch_index == 0
     assert updated.patch_items[0].status is PatchReviewStatus.PENDING
+
+
+def test_successful_apply_rebases_later_same_file_pending_patch(
+    cli: AutoPatchCli,
+) -> None:
+    file_path = "src/main/java/demo/User.java"
+    source_file = cli.repo_root / file_path
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_text("first();\nsecond();\n", encoding="utf-8")
+    first_build = cli.runtime.patch_engine.create_draft(
+        file_path,
+        "first();",
+        "first();\nextra();",
+    )
+    second_build = cli.runtime.patch_engine.create_draft(
+        file_path,
+        "second();",
+        "fixedSecond();",
+    )
+    first_draft = SearchReplacePatchDraft(
+        file_path=file_path,
+        old_string="first();",
+        new_string="first();\nextra();",
+        diff=first_build.diff,
+        match_region=first_build.match_region,
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+    )
+    second_target = FindingIdentity(
+        fingerprint=f"apj-v1:{'b' * 64}:1",
+        check_id="demo.second",
+        path=file_path,
+        region=second_build.match_region,
+    )
+    second_draft = SearchReplacePatchDraft(
+        file_path=file_path,
+        old_string="second();",
+        new_string="fixedSecond();",
+        diff=second_build.diff,
+        match_region=second_build.match_region,
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+        associated_finding_id="F2",
+        source_scan_id="scan-1",
+        target_finding=second_target,
+    )
+    workspace = ReviewWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=CodeScope(
+            kind=CodeScopeKind.SINGLE_FILE,
+            source_roots=[],
+            focus_files=[file_path],
+            is_locked=True,
+        ),
+        latest_scan_id="scan-1",
+        patch_items=[
+            ReviewPatchItem(
+                item_id="item-1",
+                file_path=file_path,
+                finding_ids=[],
+                status=PatchReviewStatus.PENDING,
+                draft=PatchDraftSnapshot.from_patch_draft(first_draft),
+            ),
+            ReviewPatchItem(
+                item_id="item-2",
+                file_path=file_path,
+                finding_ids=["F2"],
+                status=PatchReviewStatus.PENDING,
+                draft=PatchDraftSnapshot.from_patch_draft(second_draft),
+            ),
+        ],
+        current_patch_index=0,
+    )
+    cli.runtime.workspace_manager.save(workspace)
+    cli.runtime.patch_verifier = MagicMock()
+    cli.runtime.patch_verifier.verify_finding_resolved.return_value = VerificationResult(
+        VerificationOutcome.RESOLVED,
+        "验证通过。",
+    )
+    cli.runtime.patch_verifier.verify_syntax.return_value = SyntaxCheckResult(
+        status="ok",
+        message="ok",
+    )
+
+    cli.input_router.handle_review_input("apply", workspace.patch_items[0])
+
+    rebased_workspace = cli.runtime.workspace_manager.load()
+    rebased_item = rebased_workspace.current_patch()
+    assert rebased_workspace.patch_items[0].status is PatchReviewStatus.APPLIED
+    assert rebased_item is not None
+    assert rebased_item.item_id == "item-2"
+    assert rebased_item.draft.error_code is None
+    assert rebased_item.draft.match_region.start_line == 3
+    assert rebased_item.draft.match_region.start_offset == (
+        second_build.match_region.start_offset + len("\nextra();".encode("utf-8"))
+    )
+    assert rebased_item.draft.target_finding is not None
+    assert rebased_item.draft.target_finding.fingerprint == second_target.fingerprint
+    assert rebased_item.draft.target_finding.region == rebased_item.draft.match_region
+    assert rebased_item.draft.source_scan_id == "scan-1"
+    assert rebased_item.draft.associated_finding_id == "F2"
+    assert "extra();" in rebased_item.draft.diff
+    cli.renderer.print_agent_text.assert_any_call(
+        "已重定位 1 个同文件待审补丁；0 个补丁需重新扫描。"
+    )
+
+    cli.input_router.handle_review_input("apply", rebased_item)
+
+    final_workspace = cli.runtime.workspace_manager.load()
+    assert final_workspace.patch_items[1].status is PatchReviewStatus.APPLIED
+    assert final_workspace.mode is WorkspaceStatus.IDLE
+    assert source_file.read_text(encoding="utf-8") == (
+        "first();\nextra();\nfixedSecond();\n"
+    )
+
+
+def test_overlapping_pending_patch_becomes_stale_and_blocks_apply_and_revise(
+    cli: AutoPatchCli,
+) -> None:
+    file_path = "src/main/java/demo/User.java"
+    source_file = cli.repo_root / file_path
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_text("unsafe().trim();\n", encoding="utf-8")
+    applied_build = cli.runtime.patch_engine.create_draft(
+        file_path,
+        "unsafe()",
+        "safe()",
+    )
+    pending_build = cli.runtime.patch_engine.create_draft(
+        file_path,
+        "unsafe().trim()",
+        "safeTrimmed()",
+    )
+    applied_draft = SearchReplacePatchDraft(
+        file_path=file_path,
+        old_string="unsafe()",
+        new_string="safe()",
+        diff=applied_build.diff,
+        match_region=applied_build.match_region,
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+    )
+    pending_draft = SearchReplacePatchDraft(
+        file_path=file_path,
+        old_string="unsafe().trim()",
+        new_string="safeTrimmed()",
+        diff=pending_build.diff,
+        match_region=pending_build.match_region,
+        validation=SyntaxCheckResult(status="ok", message="ok"),
+        status="ok",
+        message="ok",
+    )
+    workspace = ReviewWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=CodeScope(
+            kind=CodeScopeKind.SINGLE_FILE,
+            source_roots=[],
+            focus_files=[file_path],
+            is_locked=True,
+        ),
+        latest_scan_id="scan-1",
+        patch_items=[
+            ReviewPatchItem(
+                item_id="item-1",
+                file_path=file_path,
+                finding_ids=[],
+                status=PatchReviewStatus.PENDING,
+                draft=PatchDraftSnapshot.from_patch_draft(applied_draft),
+            ),
+            ReviewPatchItem(
+                item_id="item-2",
+                file_path=file_path,
+                finding_ids=[],
+                status=PatchReviewStatus.PENDING,
+                draft=PatchDraftSnapshot.from_patch_draft(pending_draft),
+            ),
+        ],
+        current_patch_index=0,
+    )
+    cli.runtime.workspace_manager.save(workspace)
+    cli.runtime.patch_verifier = MagicMock()
+    cli.runtime.patch_verifier.verify_finding_resolved.return_value = VerificationResult(
+        VerificationOutcome.RESOLVED,
+        "验证通过。",
+    )
+
+    cli.input_router.handle_review_input("apply", workspace.patch_items[0])
+
+    stale_workspace = cli.runtime.workspace_manager.load()
+    stale_item = stale_workspace.current_patch()
+    assert stale_item is not None
+    assert stale_item.draft.error_code == "STALE_DRAFT"
+    assert stale_item.draft.old_string == pending_draft.old_string
+    assert stale_item.draft.diff == pending_draft.diff
+    assert "相交" in stale_item.draft.message
+    source_after_first_apply = source_file.read_bytes()
+
+    cli.input_router.handle_review_input("apply", stale_item)
+
+    assert source_file.read_bytes() == source_after_first_apply
+    cli.renderer.print_error.assert_any_call(
+        f"应用失败 [STALE_DRAFT]：{stale_item.draft.message}"
+    )
+
+    cli.agent_runner.run = MagicMock()
+    cli.input_router.handle_patch_revise("try another replacement")
+
+    cli.agent_runner.run.assert_not_called()
+    cli.renderer.print_error.assert_any_call(
+        "当前补丁绑定已失效，不能继续修订；请 discard，或 abort 后重新扫描。"
+    )
+
+
+def test_successful_apply_remains_applied_when_verification_fails(cli: AutoPatchCli) -> None:
+    file_path = "src/main/java/demo/User.java"
+    source_file = cli.repo_root / file_path
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_text("old", encoding="utf-8")
+    workspace = ReviewWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=CodeScope(
+            kind=CodeScopeKind.SINGLE_FILE,
+            source_roots=[],
+            focus_files=[file_path],
+            is_locked=True,
+        ),
+        latest_scan_id="scan-1",
+        patch_items=[_item("item-1", file_path, "F1")],
+        current_patch_index=0,
+    )
+    cli.runtime.workspace_manager.save(workspace)
+    cli.runtime.patch_verifier = MagicMock()
+    cli.runtime.patch_verifier.verify_finding_resolved.return_value = VerificationResult(
+        VerificationOutcome.STILL_PRESENT,
+        "验证未通过：目标仍存在。",
+    )
+
+    cli.input_router.handle_review_input("apply", workspace.patch_items[0])
+
+    updated = cli.runtime.workspace_manager.load()
+    assert updated.patch_items[0].status is PatchReviewStatus.APPLIED
+    assert updated.mode is WorkspaceStatus.IDLE
+    assert source_file.read_text(encoding="utf-8") == "new"
+    verification_args = cli.runtime.patch_verifier.verify_finding_resolved.call_args.args
+    assert len(verification_args) == 2
+    verified_draft, application_result = verification_args
+    assert isinstance(application_result, PatchApplicationResult)
+    assert application_result.applied is True
+    assert application_result.source_region == verified_draft.match_region
+    assert application_result.changed_region is not None
+    assert (
+        application_result.changed_region.start_offset
+        == application_result.source_region.start_offset
+    )
+    cli.renderer.print_error.assert_any_call("验证未通过：目标仍存在。")
 
 
 def test_cli_wires_llm_intent_classifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

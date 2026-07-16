@@ -135,8 +135,19 @@ class AutoPatchCli:
                         current_idx=current_idx,
                         total_count=total_count,
                         source_hint=pending_draft.source_hint,
+                        blocking_error=(
+                            pending_draft.message
+                            if pending_draft.error_code == "STALE_DRAFT"
+                            else None
+                        ),
                     )
-                    prompt_prefix = f"<style fg='{DECISION_STYLE}' font_weight='bold'>PENDING</style> autopatch-j"
+                    review_state = (
+                        "STALE" if pending_draft.error_code == "STALE_DRAFT" else "PENDING"
+                    )
+                    prompt_prefix = (
+                        f"<style fg='{DECISION_STYLE}' font_weight='bold'>"
+                        f"{review_state}</style> autopatch-j"
+                    )
 
                 user_input = self.prompt_session.prompt(HTML(f"{prompt_prefix}> ")).strip()
                 if not user_input:

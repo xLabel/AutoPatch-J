@@ -13,6 +13,7 @@ from autopatch_j.core.domain import (
     PatchReviewStatus,
     WorkspaceStatus,
 )
+from autopatch_j.scanners import SourceRegion
 
 
 def _make_cli(tmp_path: Path) -> AutoPatchCli:
@@ -50,6 +51,8 @@ def _item(
             old_string="old",
             new_string="new",
             diff=f"diff-{item_id}",
+            match_region=SourceRegion(1, 1, 1, 4, 0, 3),
+            message="ok",
             validation_status="ok",
             validation_message="ok",
             validation_errors=[],
@@ -141,6 +144,40 @@ def test_run_passes_source_hint_to_action_panel(tmp_path: Path) -> None:
     cli.renderer.print_action_panel.assert_called_once()
     kwargs = cli.renderer.print_action_panel.call_args.kwargs
     assert kwargs["source_hint"] == "LLM 二次复核（静态扫描未报出问题）"
+
+
+def test_run_passes_stale_blocking_reason_to_action_panel(tmp_path: Path) -> None:
+    cli = _make_cli(tmp_path)
+    assert cli.runtime is not None
+    stale_item = _item(
+        item_id="item-1",
+        file_path="src/main/java/demo/UserService.java",
+        status=PatchReviewStatus.PENDING,
+        rationale="rationale-1",
+    )
+    stale_item.draft.error_code = "STALE_DRAFT"
+    stale_item.draft.message = "待审补丁已失效：old_string 已偏离预期位置。"
+    cli.runtime.workspace_manager.save(
+        ReviewWorkspace(
+            mode=WorkspaceStatus.REVIEWING,
+            scope=_scope(),
+            latest_scan_id="scan-1",
+            patch_items=[stale_item],
+            current_patch_index=0,
+        )
+    )
+    cli.prompt_session = MagicMock()
+    cli.prompt_session.prompt.side_effect = EOFError
+    cli.renderer.print_panel = MagicMock()
+    cli.renderer.print = MagicMock()
+    cli.renderer.print_diff = MagicMock()
+    cli.renderer.print_action_panel = MagicMock()
+
+    cli.run()
+
+    kwargs = cli.renderer.print_action_panel.call_args.kwargs
+    assert kwargs["blocking_error"] == stale_item.draft.message
+    assert "STALE" in str(cli.prompt_session.prompt.call_args.args[0])
 
 
 def test_run_retains_pending_patch_without_shared_agent_history(tmp_path: Path) -> None:
