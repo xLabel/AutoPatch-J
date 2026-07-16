@@ -56,3 +56,6 @@ target/
 .codegraph/
 AGENTS.local.md
 CLAUDE.local.md
+
+# Internal research (never commit)
+/internal-research/
