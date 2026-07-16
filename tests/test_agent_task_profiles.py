@@ -43,6 +43,7 @@ from autopatch_j.core.domain import (
 from autopatch_j.core.patching import SearchReplacePatchEngine
 from autopatch_j.core.project import SymbolIndex
 from autopatch_j.core.review import ReviewWorkspaceManager
+from autopatch_j.scanners import SourceRegion
 from autopatch_j.tools.contract import ToolExecutionResult
 from autopatch_j.tools.names import FunctionToolName
 
@@ -306,6 +307,8 @@ def test_patch_explain_prompt_keeps_cli_answer_compact() -> None:
             old_string='MessageDigest.getInstance("MD5")',
             new_string='MessageDigest.getInstance("SHA-256")',
             diff='- MessageDigest.getInstance("MD5")\n+ MessageDigest.getInstance("SHA-256")',
+            match_region=SourceRegion(1, 1, 1, 4, 0, 3),
+            message="ok",
             validation_status="ok",
             validation_message="ok",
             rationale="将弱哈希算法升级为 SHA-256。",
@@ -347,6 +350,8 @@ def test_patch_revise_prompt_avoids_tool_call_for_explain_feedback() -> None:
             old_string='MessageDigest.getInstance("MD5")',
             new_string='MessageDigest.getInstance("SHA-256")',
             diff='- MessageDigest.getInstance("MD5")\n+ MessageDigest.getInstance("SHA-256")',
+            match_region=SourceRegion(1, 1, 1, 4, 0, 3),
+            message="ok",
             validation_status="ok",
             validation_message="ok",
             validation_errors=[],

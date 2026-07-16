@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 from autopatch_j.core.domain.scope import CodeScope
-from autopatch_j.core.patching.types import SearchReplacePatchDraft, SyntaxCheckResult
+from autopatch_j.core.finding import FindingIdentity, SourceRegion
+from autopatch_j.core.patching.types import (
+    SearchReplacePatchDraft,
+    SyntaxCheckResult,
+    normalize_patch_path,
+)
 
 
 class WorkspaceStatus(str, Enum):
@@ -36,6 +40,8 @@ class PatchDraftSnapshot:
     old_string: str
     new_string: str
     diff: str
+    match_region: SourceRegion
+    message: str
     validation_status: str
     validation_message: str
     validation_errors: list[str] = field(default_factory=list)
@@ -43,8 +49,22 @@ class PatchDraftSnapshot:
     source_hint: str | None = None
     associated_finding_id: str | None = None
     source_scan_id: str | None = None
-    target_check_id: str | None = None
-    target_snippet: str | None = None
+    target_finding: FindingIdentity | None = None
+    error_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.associated_finding_id is not None and self.target_finding is None:
+            raise ValueError("关联 finding 的 workspace patch 必须保存完整 target identity。")
+        if self.target_finding is not None and self.associated_finding_id is None:
+            raise ValueError("workspace target identity 必须绑定 associated finding handle。")
+        if self.target_finding is not None and normalize_patch_path(self.file_path) != self.target_finding.path:
+            raise ValueError("workspace patch 文件与 target identity 文件不一致。")
+        if self.target_finding is not None and not (self.source_scan_id or "").strip():
+            raise ValueError("关联 finding 的 workspace patch 必须保存 source scan id。")
+        if self.target_finding is not None and not self.match_region.intersects(
+            self.target_finding.region
+        ):
+            raise ValueError("workspace patch match region 必须覆盖 target finding region。")
 
     @classmethod
     def from_patch_draft(cls, draft: SearchReplacePatchDraft) -> PatchDraftSnapshot:
@@ -53,6 +73,8 @@ class PatchDraftSnapshot:
             old_string=draft.old_string,
             new_string=draft.new_string,
             diff=draft.diff,
+            match_region=draft.match_region,
+            message=draft.message,
             validation_status=draft.validation.status,
             validation_message=draft.validation.message,
             validation_errors=list(draft.validation.errors),
@@ -60,8 +82,8 @@ class PatchDraftSnapshot:
             source_hint=draft.source_hint,
             associated_finding_id=draft.associated_finding_id,
             source_scan_id=draft.source_scan_id,
-            target_check_id=draft.target_check_id,
-            target_snippet=draft.target_snippet,
+            target_finding=draft.target_finding,
+            error_code=draft.error_code,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +92,8 @@ class PatchDraftSnapshot:
             "old_string": self.old_string,
             "new_string": self.new_string,
             "diff": self.diff,
+            "match_region": self.match_region.to_dict(),
+            "message": self.message,
             "validation_status": self.validation_status,
             "validation_message": self.validation_message,
             "validation_errors": list(self.validation_errors),
@@ -77,24 +101,36 @@ class PatchDraftSnapshot:
             "source_hint": self.source_hint,
             "associated_finding_id": self.associated_finding_id,
             "source_scan_id": self.source_scan_id,
-            "target_check_id": self.target_check_id,
-            "target_snippet": self.target_snippet,
+            "target_finding": self.target_finding.to_dict() if self.target_finding else None,
+            "error_code": self.error_code,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PatchDraftSnapshot:
+        if "target_check_id" in data or "target_snippet" in data:
+            raise ValueError("不支持旧版 patch snapshot schema。")
         associated_finding_id = (
             str(data["associated_finding_id"]) if data.get("associated_finding_id") is not None else None
         )
-        target_check_id = str(data["target_check_id"]) if data.get("target_check_id") is not None else None
-        if associated_finding_id is None and target_check_id and re.fullmatch(r"[Ff][1-9]\d*", target_check_id):
-            associated_finding_id = target_check_id.upper()
-            target_check_id = None
+        raw_target_finding = data["target_finding"]
+        if raw_target_finding is not None and not isinstance(raw_target_finding, dict):
+            raise TypeError("target_finding 必须是 JSON object 或 null。")
+        target_finding = (
+            FindingIdentity.from_dict(dict(raw_target_finding))
+            if isinstance(raw_target_finding, dict)
+            else None
+        )
+        raw_match_region = data["match_region"]
+        if not isinstance(raw_match_region, dict):
+            raise TypeError("match_region 必须是 JSON object。")
+        error_code = str(data["error_code"]) if data["error_code"] is not None else None
         return cls(
             file_path=str(data["file_path"]),
             old_string=str(data.get("old_string", "")),
             new_string=str(data.get("new_string", "")),
             diff=str(data.get("diff", "")),
+            match_region=SourceRegion.from_dict(dict(raw_match_region)),
+            message=str(data["message"]),
             validation_status=str(data.get("validation_status", "unknown")),
             validation_message=str(data.get("validation_message", "")),
             validation_errors=[str(item) for item in data.get("validation_errors", [])],
@@ -102,8 +138,8 @@ class PatchDraftSnapshot:
             source_hint=str(data["source_hint"]) if data.get("source_hint") is not None else None,
             associated_finding_id=associated_finding_id,
             source_scan_id=str(data["source_scan_id"]) if data.get("source_scan_id") is not None else None,
-            target_check_id=target_check_id,
-            target_snippet=str(data["target_snippet"]) if data.get("target_snippet") is not None else None,
+            target_finding=target_finding,
+            error_code=error_code,
         )
 
     def to_patch_draft(self) -> SearchReplacePatchDraft:
@@ -112,19 +148,24 @@ class PatchDraftSnapshot:
             old_string=self.old_string,
             new_string=self.new_string,
             diff=self.diff,
+            match_region=self.match_region,
             validation=SyntaxCheckResult(
                 status=self.validation_status,
                 message=self.validation_message,
                 errors=list(self.validation_errors),
             ),
-            status="ok" if self.validation_status in {"ok", "skipped", "unavailable"} else "invalid",
-            message=self.validation_message,
+            status=(
+                "invalid"
+                if self.error_code is not None
+                else "ok" if self.validation_status in {"ok", "skipped", "unavailable"} else "invalid"
+            ),
+            message=self.message,
             rationale=self.rationale,
             source_hint=self.source_hint,
+            error_code=self.error_code,
             associated_finding_id=self.associated_finding_id,
             source_scan_id=self.source_scan_id,
-            target_check_id=self.target_check_id,
-            target_snippet=self.target_snippet,
+            target_finding=self.target_finding,
         )
 
 

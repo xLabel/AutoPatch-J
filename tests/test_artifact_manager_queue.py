@@ -6,7 +6,7 @@ from autopatch_j.core.review import ProjectArtifactStore
 from autopatch_j.core.patching import SearchReplacePatchDraft
 from autopatch_j.core.patching import SyntaxCheckResult
 from autopatch_j.core.review import ReviewWorkspaceManager
-from autopatch_j.scanners.models import ScanResult
+from autopatch_j.scanners.models import ScanResult, SourceRegion
 
 
 def _draft(file_path: str, rationale: str) -> SearchReplacePatchDraft:
@@ -15,12 +15,11 @@ def _draft(file_path: str, rationale: str) -> SearchReplacePatchDraft:
         old_string="old",
         new_string="new",
         diff="diff",
+        match_region=SourceRegion(1, 1, 1, 4, 0, 3),
         validation=SyntaxCheckResult(status="ok", message="ok"),
         status="ok",
         message="ok",
         rationale=rationale,
-        target_check_id=None,
-        target_snippet=None,
     )
 
 

@@ -27,7 +27,9 @@ def build_patch_success_result(
             "file_path": file_path,
             "associated_finding_id": draft.associated_finding_id or associated_finding_id,
             "source_scan_id": draft.source_scan_id,
-            "target_check_id": draft.target_check_id,
+            "target_finding": (
+                draft.target_finding.to_dict() if draft.target_finding else None
+            ),
             "validation": draft.validation.status,
         },
     )

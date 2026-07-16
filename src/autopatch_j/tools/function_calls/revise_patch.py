@@ -46,7 +46,33 @@ class RevisePatchTool(FunctionTool):
         ] = None,
     ) -> ToolExecutionResult:
         context = self.require_context()
-        draft_result = SearchReplaceDraftBuilder(context).build(
+        current_draft = context.workspace_manager.load_current_patch_draft()
+        if current_draft is None:
+            return ToolExecutionResult(
+                status="error",
+                message="补丁修订失败：当前没有待确认补丁。",
+                summary="补丁修订失败 (无待确认补丁)",
+                payload={
+                    "file_path": file_path,
+                    "associated_finding_id": associated_finding_id,
+                    "error_code": "NO_PENDING_PATCH",
+                    "error_message": "当前没有待确认补丁。",
+                },
+            )
+        if current_draft.error_code == "STALE_DRAFT":
+            return ToolExecutionResult(
+                status="error",
+                message=current_draft.message,
+                summary=f"补丁修订失败 (binding 已失效): {file_path}",
+                payload={
+                    "file_path": file_path,
+                    "associated_finding_id": current_draft.associated_finding_id,
+                    "error_code": "STALE_DRAFT",
+                    "error_message": current_draft.message,
+                },
+            )
+        draft_result = SearchReplaceDraftBuilder(context).build_revision(
+            current_draft=current_draft,
             file_path=file_path,
             old_string=old_string,
             new_string=new_string,
