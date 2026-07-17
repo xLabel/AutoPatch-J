@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1160" role="img" aria-labelledby="title description">
+  <title id="title">AutoPatch-J CI/CD 工作流</title>
+  <desc id="description">业务代码推送后，AutoPatch-J 作为现有 CI/CD 流水线中的插件生成并验证修复补丁，创建 MR 或 PR 交由用户审核。</desc>
+
+  <defs>
+    <filter id="rough" x="-4%" y="-4%" width="108%" height="108%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.009 0.021" numOctaves="2" seed="17" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+
+  <style>
+    .canvas { fill: #f5f6f7; }
+    .text {
+      fill: #24272b;
+      font-family: "HanziPen SC", "Hannotate SC", "Kaiti SC", "STKaiti", "KaiTi", "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 32px;
+      font-weight: 600;
+    }
+    .accent-text { fill: #0c684f; }
+    .panel {
+      fill: #f5f6f7;
+      fill-opacity: 0.68;
+      stroke: #303338;
+      stroke-width: 2.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .label-bg { fill: #f5f6f7; }
+    .tree {
+      fill: none;
+      stroke: #303338;
+      stroke-width: 2.35;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .accent-tree {
+      fill: none;
+      stroke: #13795f;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .arrow-line {
+      fill: none;
+      stroke: #303338;
+      stroke-width: 2.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .accent-arrow-line {
+      fill: none;
+      stroke: #13795f;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .arrow-tip {
+      fill: none;
+      stroke: #303338;
+      stroke-width: 2.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .accent-arrow-tip {
+      fill: none;
+      stroke: #13795f;
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      vector-effect: non-scaling-stroke;
+    }
+    .rough { filter: url(#rough); }
+
+    @media (prefers-color-scheme: dark) {
+      .canvas { fill: #181b20; }
+      .text { fill: #f1eee7; }
+      .accent-text { fill: #8ce0c7; }
+      .panel { fill: #181b20; stroke: #d9d5cc; }
+      .label-bg { fill: #181b20; }
+      .tree, .arrow-line { stroke: #d9d5cc; }
+      .accent-tree, .accent-arrow-line { stroke: #63c9ac; }
+      .arrow-tip { stroke: #d9d5cc; }
+      .accent-arrow-tip { stroke: #63c9ac; }
+    }
+  </style>
+
+  <rect class="canvas" width="1400" height="1160" rx="18"/>
+
+  <g transform="translate(120 0)">
+
+  <!-- Repository event -->
+  <text class="text" x="105" y="58">业务代码 git push</text>
+  <path class="arrow-line" d="M245 78 C238 89 251 101 243 112 C239 118 244 126 244 133"/>
+  <path class="arrow-tip" d="M232 122 C236 128 240 136 244 141 C248 135 253 127 257 121"/>
+
+  <text class="text" x="105" y="170">仓库 push event / webhook</text>
+  <text class="text" x="105" y="205">GitHub Actions: on: push</text>
+  <path class="arrow-line" d="M245 225 C251 236 238 247 246 257 C250 263 245 269 245 275"/>
+  <path class="arrow-tip" d="M233 264 C237 270 241 278 245 283 C249 277 254 269 258 263"/>
+
+  <!-- Existing CI/CD workflow -->
+  <path class="panel rough" d="M84 288 C246 276 413 294 575 284 C710 276 846 296 976 282 C989 421 970 560 985 698 C993 773 970 851 982 920 C764 938 547 911 331 929 C246 936 160 914 78 925 C68 767 91 610 73 454 C68 393 91 337 84 288 Z"/>
+  <rect class="label-bg" x="260" y="258" width="550" height="54" rx="8"/>
+  <text class="text" x="535" y="297" text-anchor="middle">现有 CI/CD Workflow / Runner</text>
+
+  <!-- Pipeline sibling items -->
+  <path class="tree rough" d="M140 340 C133 424 148 507 138 590 C145 676 134 765 141 850"/>
+  <path class="tree rough" d="M140 355 C151 348 163 361 177 355"/>
+  <path class="tree rough" d="M140 402 C151 408 164 396 177 402"/>
+  <path class="tree rough" d="M140 449 C152 443 164 455 177 449"/>
+  <path class="tree rough" d="M140 496 C151 502 165 490 177 496"/>
+  <path class="accent-tree rough" d="M140 543 C152 537 164 549 177 543"/>
+  <path class="tree rough" d="M140 837 C152 843 164 831 177 837"/>
+
+  <text class="text" x="190" y="363">Checkout 业务代码</text>
+  <text class="text" x="190" y="410">Build 插件</text>
+  <text class="text" x="190" y="457">Test 插件</text>
+  <text class="text" x="190" y="504">Code Quality / Security 插件</text>
+  <text class="text accent-text" x="190" y="551">AutoPatch-J 插件  ← 直接加入现有流水线</text>
+
+  <!-- AutoPatch-J result branches -->
+  <path class="accent-tree rough" d="M245 575 C237 595 251 615 243 635 C238 651 250 668 245 683"/>
+  <path class="tree rough" d="M245 603 C257 596 271 610 284 603"/>
+  <path class="accent-tree rough" d="M245 658 C258 665 271 651 284 658"/>
+
+  <text class="text" x="295" y="611">未发现问题 → 结束当前步骤，流水线继续</text>
+  <text class="text accent-text" x="295" y="666">发现问题</text>
+  <text class="text accent-text" x="350" y="717">→ 生成并验证修复补丁</text>
+  <text class="text accent-text" x="350" y="761">→ 创建并 push 修复分支</text>
+  <text class="text accent-text" x="350" y="805">→ 创建 MR / PR</text>
+
+  <text class="text" x="190" y="845">其他现有插件与步骤</text>
+
+  <!-- Review -->
+  <path class="accent-arrow-line" d="M530 932 C522 943 537 953 528 963 C524 969 530 976 530 983"/>
+  <path class="accent-arrow-tip" d="M517 971 C521 977 526 985 530 990 C534 984 539 976 543 970"/>
+  <text class="text" x="530" y="1013" text-anchor="middle">用户审核 MR / PR</text>
+  <path class="tree rough" d="M530 1032 C537 1044 523 1056 531 1067 C535 1072 527 1075 530 1077 C489 1070 448 1083 405 1076"/>
+  <path class="tree rough" d="M530 1077 C571 1084 613 1069 655 1076"/>
+  <path class="arrow-line" d="M405 1076 C398 1085 411 1095 403 1104 C401 1109 405 1113 405 1116"/>
+  <path class="arrow-tip" d="M393 1096 C397 1102 401 1110 405 1115 C409 1109 414 1101 418 1095"/>
+  <path class="arrow-line" d="M655 1076 C662 1085 649 1095 657 1104 C659 1109 655 1113 655 1116"/>
+  <path class="arrow-tip" d="M643 1096 C647 1102 651 1110 655 1115 C659 1109 664 1101 668 1095"/>
+  <text class="text" x="405" y="1140" text-anchor="middle">合并</text>
+  <text class="text" x="655" y="1140" text-anchor="middle">退回</text>
+  </g>
+</svg>

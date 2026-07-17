@@ -126,6 +126,8 @@ macOS 脚本会在启动前准备 managed Semgrep runtime。Windows 脚本启动
 
 Agent 会为当前 finding 准备候选补丁。CLI 展示目标文件、diff、修改理由和语法检查结果，然后把补丁放入审核队列。在用户应用、丢弃或中止之前，CLI 会一直显示当前补丁。
 
+![AutoPatch-J CLI 审计与补丁确认](assets/autopatch-j-cli-review.png)
+
 ## 6. 审核补丁
 
 看到补丁预览后，可以直接输入：
