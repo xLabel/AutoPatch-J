@@ -5,9 +5,35 @@ from typing import Annotated
 from unittest.mock import MagicMock
 
 import autopatch_j.tools as tools
+from autopatch_j.core.memory import MemoryMap, RecallPolicy, RecallQuery
+from autopatch_j.core.memory.models import MemoryRequestState
 from autopatch_j.tools.catalog import FunctionToolCatalog
 from autopatch_j.tools.contract import FunctionTool, ToolArg, ToolExecutionResult, function_tool
 from autopatch_j.tools.names import FunctionToolName
+
+
+def _memory_request_state() -> MemoryRequestState:
+    query = RecallQuery(
+        intent="general_chat",
+        thread_id="thread-1",
+        user_text="test",
+    )
+    policy = RecallPolicy(
+        intent="general_chat",
+        thread_id="thread-1",
+        allowed_kinds=("user_preference", "project_decision", "discussion_context"),
+        allow_recent_history=True,
+        allow_thread_checkpoint=True,
+        allow_discussion=True,
+        durable_token_budget=24_576,
+        map_token_budget=8_192,
+    )
+    return MemoryRequestState(
+        query=query,
+        policy=policy,
+        memory_map=MemoryMap(entries=(), omitted_count=0, estimated_tokens=0),
+        remaining_tokens=24_576,
+    )
 
 
 def test_tools_root_exports_only_tool_infrastructure() -> None:
@@ -108,19 +134,19 @@ def test_catalog_exports_stable_function_call_schema() -> None:
     memory_read = schema_by_name[FunctionToolName.MEMORY_READ.value]
     assert memory_search["parameters"]["required"] == ["query"]
     assert memory_read["parameters"]["required"] == ["memory_id"]
-    assert "最多 5 条" in memory_search["description"]
+    assert "最多 8 条" in memory_search["description"]
     assert "来源摘录" in memory_read["description"]
 
 
 def test_memory_search_tool_returns_bounded_structured_hits() -> None:
     context = MagicMock()
-    context.memory_thread_id = "thread-1"
-    context.memory_manager.search.return_value = [
+    context.memory_request_state = _memory_request_state()
+    context.memory_manager.search_memory_request.return_value = [
         SimpleNamespace(
             id="m-1",
             kind="project_decision",
-            title="使用 Java 17",
-            synopsis="项目统一使用 Java 17。",
+            subject="java runtime",
+            statement="项目统一使用 Java 17。",
             match_type="exact",
         )
     ]
@@ -133,25 +159,30 @@ def test_memory_search_tool_returns_bounded_structured_hits() -> None:
         {
             "id": "m-1",
             "kind": "project_decision",
-            "title": "使用 Java 17",
-            "synopsis": "项目统一使用 Java 17。",
+            "subject": "java runtime",
+            "statement": "项目统一使用 Java 17。",
             "match_type": "exact",
         }
     ]
-    context.memory_manager.search.assert_called_once_with(
-        "Java 17", limit=5, thread_id="thread-1"
+    context.memory_manager.search_memory_request.assert_called_once_with(
+        context.memory_request_state,
+        "Java 17",
     )
 
 
 def test_memory_read_tool_bounds_content_and_provenance() -> None:
     context = MagicMock()
-    context.memory_thread_id = "thread-1"
-    context.memory_manager.read.return_value = SimpleNamespace(
+    context.memory_request_state = _memory_request_state()
+    context.memory_manager.read_memory_request.return_value = SimpleNamespace(
         id="m-1",
         kind="user_preference",
-        title="输出偏好",
+        subject="response style",
+        statement="输出保持简洁",
         content="x" * 5_000,
-        non_factual=False,
+        strength="hard",
+        origin="explicit",
+        recall_mode="always",
+        applies_to_paths=(),
         thread_id=None,
         sources=[
             SimpleNamespace(turn_id=f"t-{index}", role="user", quote="q" * 1_000, created_at="now")
@@ -166,14 +197,15 @@ def test_memory_read_tool_bounds_content_and_provenance() -> None:
     assert len(result.payload["content"]) == 4_000
     assert len(result.payload["sources"]) == 3
     assert all(len(source["quote"]) == 800 for source in result.payload["sources"])
-    context.memory_manager.read.assert_called_once_with(
-        "m-1", thread_id="thread-1"
+    context.memory_manager.read_memory_request.assert_called_once_with(
+        context.memory_request_state,
+        "m-1",
     )
 
 
 def test_memory_tools_require_an_admitted_request_thread() -> None:
     context = MagicMock()
-    context.memory_thread_id = None
+    context.memory_request_state = None
     catalog = FunctionToolCatalog.for_context(context)
 
     search = catalog.get(FunctionToolName.MEMORY_SEARCH).execute(query="Java 17")
@@ -183,8 +215,8 @@ def test_memory_tools_require_an_admitted_request_thread() -> None:
     assert read.status == "error"
     assert "admission" in search.message
     assert "admission" in read.message
-    context.memory_manager.search.assert_not_called()
-    context.memory_manager.read.assert_not_called()
+    context.memory_manager.search_memory_request.assert_not_called()
+    context.memory_manager.read_memory_request.assert_not_called()
 
 
 def test_memory_tools_reject_empty_or_unavailable_requests() -> None:

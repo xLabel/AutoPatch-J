@@ -33,6 +33,7 @@ def test_memory_subcommand_completion_from_trailing_space() -> None:
 
     assert {completion.text for completion in completions} == {
         "status",
+        "summary",
         "list",
         "show",
         "forget",

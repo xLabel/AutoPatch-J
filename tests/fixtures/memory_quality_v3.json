@@ -1,6 +1,6 @@
 {
-  "version": 2,
-  "description": "Deterministic quality cases for RAW, non-vector AutoPatch-J Memory v2.",
+  "version": 3,
+  "description": "Deterministic quality cases for typed, non-vector AutoPatch-J Memory v3.",
   "cases": [
     {
       "id": "explicit-output-preference",
@@ -78,7 +78,7 @@
       "id": "decision-supersedes-old-decision",
       "turns": [
         {
-          "user": "Memory v2 决定使用向量检索。",
+          "user": "Memory v3 决定使用向量检索。",
           "assistant": "收到。"
         },
         {

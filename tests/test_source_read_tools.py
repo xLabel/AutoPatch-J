@@ -5,7 +5,12 @@ from pathlib import Path
 from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.core.patching import SearchReplacePatchEngine
-from autopatch_j.core.project import SourceReader, SymbolIndex
+from autopatch_j.core.project import (
+    ScopeResolver,
+    SourceReader,
+    SymbolIndex,
+    SymbolIndexEntry,
+)
 from autopatch_j.core.review import ProjectArtifactStore, ReviewWorkspaceManager
 from autopatch_j.tools.function_calls.read_source_block import ReadSourceBlockTool
 from autopatch_j.tools.function_calls.read_source_context import ReadSourceContextTool
@@ -166,3 +171,75 @@ def test_read_source_block_returns_class_for_field_line(tmp_path: Path) -> None:
     assert result.status == "ok"
     assert "public class Demo" in result.message
     assert "private int value" in result.message
+
+
+def test_project_state_file_is_blocked_from_scope_focus_and_source_reads(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / ".autopatch-j" / "memory_summary.md"
+    state_file.parent.mkdir(parents=True)
+    sentinel = "STATE_FILE_SECRET_MUST_NOT_REACH_LLM"
+    state_file.write_text(sentinel, encoding="utf-8")
+    agent = _build_agent(tmp_path)
+
+    resolver = ScopeResolver(tmp_path, agent.session.symbol_indexer)
+    assert resolver.resolve("@.autopatch-j/memory_summary.md 请解释") is None
+    assert resolver.resolve("@.autopatch-j 请审查") is None
+
+    agent.session.set_focus_paths([".autopatch-j/memory_summary.md"])
+    assert agent.session.focus_paths == []
+    assert agent.session.is_path_in_focus(".autopatch-j/memory_summary.md") is False
+
+    tool_result = ReadSourceFileTool(agent.session).execute(
+        ".autopatch-j/memory_summary.md"
+    )
+    assert tool_result.status == "error"
+    assert "项目状态目录不属于源码范围" in tool_result.message
+    assert sentinel not in tool_result.message
+
+    reader = SourceReader(tmp_path)
+    direct_result = reader.fetch_entry_source(
+        SymbolIndexEntry(
+            path=".autopatch-j/memory_summary.md",
+            name="memory_summary.md",
+            kind="file",
+        )
+    )
+    assert direct_result.startswith("错误：")
+    assert sentinel not in direct_result
+    assert reader.fetch_lines(".autopatch-j/memory_summary.md", 1, 10) == ""
+    assert (
+        reader.fetch_resolved_snippet(
+            ".autopatch-j/memory_summary.md",
+            1,
+            10,
+            fallback_snippet="FALLBACK_STATE_SECRET",
+        )
+        == ""
+    )
+
+
+def test_source_path_symlink_resolving_into_project_state_is_blocked(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / ".autopatch-j" / "memory_summary.md"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text("SYMLINK_STATE_SECRET", encoding="utf-8")
+    alias = tmp_path / "memory-review.md"
+    alias.symlink_to(state_file)
+    agent = _build_agent(tmp_path)
+
+    result = ReadSourceFileTool(agent.session).execute("memory-review.md")
+
+    assert result.status == "error"
+    assert "项目状态目录不属于源码范围" in result.message
+    assert "SYMLINK_STATE_SECRET" not in result.message
+    assert (
+        agent.session.code_fetcher.fetch_resolved_snippet(
+            "memory-review.md",
+            1,
+            10,
+            fallback_snippet="SYMLINK_FALLBACK_SECRET",
+        )
+        == ""
+    )

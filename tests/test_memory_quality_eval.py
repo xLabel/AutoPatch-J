@@ -15,13 +15,13 @@ from autopatch_j.llm.factory import build_default_llm_client
 from autopatch_j.llm.options import LLMCallPurpose
 
 
-CORPUS_PATH = Path(__file__).parent / "fixtures" / "memory_quality_v2.json"
+CORPUS_PATH = Path(__file__).parent / "fixtures" / "memory_quality_v3.json"
 LIVE_EVAL_ENV = "AUTOPATCH_RUN_MEMORY_LIVE_EVAL"
 
 
 def _load_cases() -> list[dict[str, Any]]:
     corpus = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
-    assert corpus["version"] == 2
+    assert corpus["version"] == 3
     return corpus["cases"]
 
 
@@ -98,9 +98,15 @@ class DeterministicMemoryLLM:
             candidates.append(
                 {
                     "kind": "project_decision",
-                    "title": "reset 与 memory 的管理边界",
+                    "subject": "reset 与 memory 的管理边界",
+                    "statement": "reset 只清项目工作台，memory 由 memory 命令单独管理。",
                     "content": "reset 只清项目工作台，memory 由 memory 命令单独管理。",
+                    "strength": "hard",
+                    "origin": "adopted_proposal",
+                    "recall_mode": "always",
+                    "applies_to_paths": [],
                     "aliases": ["reset 边界", "memory 管理"],
+                    "keywords": ["reset 边界", "memory 管理"],
                     "sources": [
                         {
                             "turn_id": previous["turn_id"],
@@ -141,7 +147,7 @@ class DeterministicMemoryLLM:
                     self._candidate(
                         current,
                         kind="project_decision",
-                        title="Memory v2 无向量检索方案",
+                        title="Memory v3 无向量检索方案",
                         content="最终不使用向量检索，采用小索引和按需读取。",
                         aliases=["向量检索", "小索引", "按需读取"],
                     )
@@ -151,8 +157,8 @@ class DeterministicMemoryLLM:
                     self._candidate(
                         current,
                         kind="project_decision",
-                        title="Memory v2 向量检索方案",
-                        content="Memory v2 使用向量检索。",
+                        title="Memory v3 向量检索方案",
+                        content="Memory v3 使用向量检索。",
                         aliases=["向量检索"],
                     )
                 )
@@ -245,9 +251,15 @@ class DeterministicMemoryLLM:
             candidates.append(
                 {
                     "kind": "project_decision",
-                    "title": "reset and Memory boundary",
+                    "subject": "reset and Memory boundary",
+                    "statement": "Keep reset separate from Memory management.",
                     "content": "Keep reset separate from Memory management.",
+                    "strength": "hard",
+                    "origin": "adopted_proposal",
+                    "recall_mode": "always",
+                    "applies_to_paths": [],
                     "aliases": ["reset boundary", "Memory management"],
+                    "keywords": ["reset boundary", "Memory management"],
                     "sources": [
                         {
                             "turn_id": previous["turn_id"],
@@ -274,11 +286,18 @@ class DeterministicMemoryLLM:
         content: str,
         aliases: list[str],
     ) -> dict[str, Any]:
+        is_discussion = kind == "discussion_context"
         return {
             "kind": kind,
-            "title": title,
+            "subject": title,
+            "statement": content,
             "content": content,
+            "strength": "soft" if is_discussion else "hard",
+            "origin": "explicit",
+            "recall_mode": "on_match" if is_discussion else "always",
+            "applies_to_paths": [],
             "aliases": aliases,
+            "keywords": aliases,
             "sources": [
                 {
                     "turn_id": turn["turn_id"],
@@ -308,9 +327,14 @@ class DeterministicMemoryLLM:
                     "operation": operation,
                     "candidate_ids": [candidate["id"]],
                     "target_id": target_id,
-                    "title": candidate["title"],
+                    "kind": candidate["kind"],
+                    "subject": candidate["subject"],
+                    "statement": candidate["statement"],
                     "content": candidate["content"],
-                    "synopsis": candidate["content"],
+                    "strength": candidate["strength"],
+                    "origin": candidate["origin"],
+                    "recall_mode": candidate["recall_mode"],
+                    "applies_to_paths": candidate["applies_to_paths"],
                     "aliases": candidate["aliases"],
                     "keywords": candidate["aliases"],
                 }

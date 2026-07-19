@@ -4,13 +4,13 @@ import json
 from pathlib import Path
 
 
-CORPUS_PATH = Path(__file__).parent / "fixtures" / "memory_quality_v2.json"
+CORPUS_PATH = Path(__file__).parent / "fixtures" / "memory_quality_v3.json"
 
 
 def test_memory_quality_corpus_is_versioned_and_covers_required_behaviors() -> None:
     corpus = json.loads(CORPUS_PATH.read_text(encoding="utf-8"))
 
-    assert corpus["version"] == 2
+    assert corpus["version"] == 3
     cases = corpus["cases"]
     case_ids = [case["id"] for case in cases]
     assert len(case_ids) == len(set(case_ids))

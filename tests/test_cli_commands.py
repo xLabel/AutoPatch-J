@@ -15,6 +15,7 @@ from autopatch_j.cli.command_router import CommandRouter
 from autopatch_j.agent.react_runner import AgentRunResult
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.memory import MemoryManager, MemorySchemaError, MemoryStatus
+from autopatch_j.core.memory.models import RecallQuery
 from autopatch_j.core.patching import (
     PatchApplicationResult,
     SearchReplacePatchDraft,
@@ -36,6 +37,8 @@ from autopatch_j.core.domain import (
 )
 from autopatch_j.core.user_input import IntentClassificationResult, RouteClassificationResult
 from autopatch_j.scanners import FindingIdentity, SourceRegion
+from autopatch_j.tools.catalog import FunctionToolCatalog
+from autopatch_j.tools.names import FunctionToolName
 
 
 @pytest.fixture
@@ -289,6 +292,11 @@ def test_handle_patch_explain_does_not_crash(cli: AutoPatchCli) -> None:
     cli.input_router.handle_patch_explain("explain this")
 
     cli.runtime.agent.perform_patch_explain.assert_called_once()
+    with sqlite3.connect(cli.runtime.memory_manager.db_path) as connection:
+        evidence_keys = connection.execute(
+            "SELECT evidence_keys_json FROM turns WHERE intent = 'patch_explain'"
+        ).fetchone()[0]
+    assert json.loads(evidence_keys) == ["scan-1:F1"]
 
 
 def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> None:
@@ -341,6 +349,11 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> N
     assert updated.patch_items[1].file_path == "src/main/java/demo/UserService.java"
     assert updated.patch_items[1].draft.rationale == "fix F2"
     cli.renderer.print_agent_text.assert_any_call("已更新当前补丁，后续补丁保持不变。")
+    with sqlite3.connect(cli.runtime.memory_manager.db_path) as connection:
+        evidence_keys = connection.execute(
+            "SELECT evidence_keys_json FROM turns WHERE intent = 'patch_revise'"
+        ).fetchone()[0]
+    assert json.loads(evidence_keys) == ["scan-1:F1"]
 
 
 def test_handle_patch_revise_keeps_queue_when_no_revision_created(cli: AutoPatchCli) -> None:
@@ -934,6 +947,7 @@ def test_code_explain_without_focus_files_persists_local_visible_answer(
         intent=IntentType.CODE_EXPLAIN,
         user_text="解释这个空项目",
         scope_paths=[],
+        evidence_keys=[],
     )
     cli.runtime.memory_manager.complete_turn.assert_called_once_with(
         "turn-local",
@@ -976,6 +990,7 @@ def test_general_chat_persists_only_user_visible_final_answer(cli: AutoPatchCli)
         intent=IntentType.GENERAL_CHAT,
         user_text="请解释 Optional",
         scope_paths=[],
+        evidence_keys=[],
     )
     cli.runtime.memory_manager.complete_turn.assert_called_once_with(
         "turn-1",
@@ -1043,7 +1058,7 @@ def test_general_chat_marks_open_turn_failed_when_request_raises(cli: AutoPatchC
     assert cli.runtime.agent.session.memory_thread_id is None
 
 
-def test_missing_meta_rejects_ordinary_request_before_main_llm(
+def test_missing_meta_degrades_memory_but_continues_ordinary_request(
     cli: AutoPatchCli,
 ) -> None:
     manager = cli.runtime.memory_manager
@@ -1053,12 +1068,12 @@ def test_missing_meta_rejects_ordinary_request_before_main_llm(
         connection.execute("DELETE FROM memory_meta")
     cli.agent_runner.run = MagicMock()
 
-    with pytest.raises(MemorySchemaError, match="memory_meta"):
-        cli.input_router.handle_general_chat("不得调用主模型")
+    cli.input_router.handle_general_chat("继续调用主模型")
 
-    cli.agent_runner.run.assert_not_called()
+    cli.agent_runner.run.assert_called_once()
     assert cli.runtime.agent.session.memory_thread_id is None
     assert manager.status().degraded
+    assert "Memory degraded" in cli.renderer.print_agent_text.call_args_list[0].args[0]
     with sqlite3.connect(manager.db_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM turns").fetchone()[0] == before
 
@@ -1081,17 +1096,19 @@ def test_ordinary_request_remains_bound_to_old_thread_during_new(
         connection.execute(
             """
             INSERT INTO memory_items(
-                id, logical_id, revision, kind, thread_id, title, content,
-                synopsis, status, non_factual, created_at, updated_at
-            ) VALUES (?, 'memory_old_thread', 1, 'discussion_context', ?, ?, ?,
-                      ?, 'active', 1, ?, ?)
+                id, logical_id, revision, kind, thread_id, subject, statement,
+                content, strength, origin, recall_mode, applies_to_paths_json,
+                aliases_json, keywords_json, status, created_at, updated_at
+            ) VALUES (?, 'memory_old_thread', 1, 'discussion_context', ?, ?, ?, ?,
+                      'soft', 'explicit', 'on_match', '[]', '["old topic"]',
+                      '["discussion"]', 'active', ?, ?)
             """,
             (
                 item_id,
                 old_thread.id,
                 "old thread topic",
                 "continue the old discussion",
-                "old discussion",
+                "continue the old discussion",
                 now,
                 now,
             ),
@@ -1101,7 +1118,9 @@ def test_ordinary_request_remains_bound_to_old_thread_during_new(
             item_id,
             "old thread topic",
             "continue the old discussion",
+            "continue the old discussion",
             ("old topic",),
+            ("discussion",),
             (),
         )
     cli.command_handlers._flush_memory_once = MagicMock()
@@ -1111,38 +1130,66 @@ def test_ordinary_request_remains_bound_to_old_thread_during_new(
         assert session.memory_thread_id == old_thread.id
         assert any(
             message["content"] == "old history"
-            for message in session.build_thread_history(IntentType.GENERAL_CHAT)
-        )
-        assert item_id in session.build_memory_context(IntentType.GENERAL_CHAT)
-
-        cli.command_handlers.handle_new()
-
-        assert session.memory_thread_id == old_thread.id
-        assert any(
-            message["content"] == "old history"
-            for message in session.build_thread_history(IntentType.GENERAL_CHAT)
-        )
-        assert item_id in session.build_memory_context(IntentType.GENERAL_CHAT)
-        assert [
-            hit.id
-            for hit in manager.search(
-                "old thread topic", thread_id=session.memory_thread_id
+            for message in session.build_thread_history(
+                IntentType.GENERAL_CHAT,
+                max_tokens=10_000,
             )
-        ] == [item_id]
-        assert manager.read(item_id, thread_id=session.memory_thread_id).id == item_id
-        return _presented(display_answer="old request answer")
+        )
+        policy = manager.build_recall_policy(
+            intent=IntentType.GENERAL_CHAT,
+            thread_id=old_thread.id,
+            durable_token_budget=2_000,
+            map_token_budget=1_000,
+        )
+        query = RecallQuery(
+            intent=IntentType.GENERAL_CHAT.value,
+            thread_id=old_thread.id,
+            user_text="old thread topic",
+        )
+        state = manager.open_memory_request(query, policy)
+        session.bind_memory_request(state)
+        memory_map = state.memory_map
+        assert item_id in {entry.id for entry in memory_map.entries}
+        tools = FunctionToolCatalog.for_context(session)
+
+        try:
+            cli.command_handlers.handle_new()
+
+            assert session.memory_thread_id == old_thread.id
+            assert session.memory_request_state is state
+            assert any(
+                message["content"] == "old history"
+                for message in session.build_thread_history(
+                    IntentType.GENERAL_CHAT,
+                    max_tokens=10_000,
+                )
+            )
+            search = tools.get(FunctionToolName.MEMORY_SEARCH).execute(
+                query="old thread topic"
+            )
+            read = tools.get(FunctionToolName.MEMORY_READ).execute(memory_id=item_id)
+            assert search.status == "ok"
+            assert [hit["id"] for hit in search.payload["hits"]] == [item_id]
+            assert read.status == "ok"
+            assert read.payload["id"] == item_id
+            return _presented(display_answer="old request answer")
+        finally:
+            session.clear_memory_request()
 
     cli.agent_runner.run = MagicMock(side_effect=run_old_request)
     cli.input_router.handle_general_chat("old request")
 
     assert session.memory_thread_id is None
+    assert session.memory_request_state is None
     new_thread = manager.ensure_active_thread()
     assert new_thread.id != old_thread.id
 
     def run_new_request(**_kwargs: object) -> PresentedAgentResult:
         assert session.memory_thread_id == new_thread.id
-        assert session.build_thread_history(IntentType.GENERAL_CHAT) == []
-        assert item_id not in session.build_memory_context(IntentType.GENERAL_CHAT)
+        assert session.build_thread_history(
+            IntentType.GENERAL_CHAT,
+            max_tokens=10_000,
+        ) == []
         assert manager.search(
             "old thread topic", thread_id=session.memory_thread_id
         ) == []
@@ -1163,6 +1210,9 @@ def test_reset_clears_project_state_and_requires_reinit(cli: AutoPatchCli) -> No
     (state_dir / "workspace.json").write_text("{}", encoding="utf-8")
     (state_dir / "history.txt").write_text("/status\n", encoding="utf-8")
     (state_dir / "memory-export-demo.json").write_text("{}", encoding="utf-8")
+    (state_dir / "memory_summary.md").write_text(
+        "human review projection", encoding="utf-8"
+    )
     (findings_dir / "scan-demo.json").write_text("{}", encoding="utf-8")
     (runtime_dir / "cache.txt").write_text("cache", encoding="utf-8")
     memory_db = state_dir / "memory.db"
@@ -1173,6 +1223,9 @@ def test_reset_clears_project_state_and_requires_reinit(cli: AutoPatchCli) -> No
     assert state_dir.exists()
     assert memory_db.exists()
     assert (state_dir / "memory-export-demo.json").exists()
+    assert (state_dir / "memory_summary.md").read_text(encoding="utf-8") == (
+        "human review projection"
+    )
     assert (state_dir / "history.txt").read_text(encoding="utf-8") == "/status\n"
     assert not findings_dir.exists()
     assert not runtime_dir.exists()
@@ -1204,13 +1257,21 @@ def test_new_flushes_old_thread_aborts_pending_patch_and_starts_thread(cli: Auto
     manager = MagicMock()
     manager.ensure_active_thread.return_value = SimpleNamespace(id="thread-old")
     manager.start_new_thread.return_value = SimpleNamespace(id="thread-new")
-    manager.flush_once.return_value = SimpleNamespace(failed=0, pending=0)
+    manager.flush_thread_watermark.return_value = SimpleNamespace(
+        failed=0,
+        pending=0,
+        errors=(),
+    )
     cli.runtime.memory_manager = manager
     cli.runtime.agent.reset_history = MagicMock()
 
     cli.command_handlers.handle_new()
 
-    manager.flush_once.assert_called_once_with(reason="new", thread_id="thread-old")
+    manager.flush_thread_watermark.assert_called_once_with(
+        reason="new",
+        thread_id="thread-old",
+        wait_seconds=5,
+    )
     manager.start_new_thread.assert_called_once_with(expected_thread_id="thread-old")
     assert cli.runtime.workspace_manager.load().has_pending_patch() is False
     cli.runtime.agent.reset_history.assert_called_once_with()
@@ -1248,6 +1309,46 @@ def test_memory_export_reports_raw_snapshot_path(cli: AutoPatchCli, tmp_path: Pa
     message = cli.renderer.print_success.call_args.args[0]
     assert str(export_path) in message
     assert "未脱敏" in message
+
+
+def test_memory_summary_rebuild_reports_state_count_and_path(
+    cli: AutoPatchCli,
+    tmp_path: Path,
+) -> None:
+    summary_path = tmp_path / ".autopatch-j" / "memory_summary.md"
+    cli.runtime.memory_manager.rebuild_summary = MagicMock(
+        return_value=SimpleNamespace(
+            status=SimpleNamespace(
+                state="current",
+                path=summary_path,
+                active_item_count=3,
+            ),
+            changed=True,
+        )
+    )
+    cli.agent_runner.run = MagicMock()
+
+    cli.command_handlers.handle_memory(["summary"])
+
+    cli.runtime.memory_manager.rebuild_summary.assert_called_once_with()
+    cli.agent_runner.run.assert_not_called()
+    message = cli.renderer.print_success.call_args.args[0]
+    assert "state=current" in message
+    assert str(summary_path) in message
+    assert "active items=3" in message
+
+
+def test_memory_status_includes_review_projection_state(cli: AutoPatchCli) -> None:
+    result = cli.runtime.memory_manager.rebuild_summary()
+    assert result.status.state == "current"
+
+    cli.command_handlers.handle_memory(["status"])
+
+    table = cli.renderer.print_panel.call_args.args[0]
+    cells = [str(cell) for column in table.columns for cell in column._cells]
+    assert str(result.status.path) in cells
+    assert "current" in cells
+    assert result.status.last_projected_at in cells
 
 
 def _memory_status_with_error(db_path: Path, error: str) -> MemoryStatus:

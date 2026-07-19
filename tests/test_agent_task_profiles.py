@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,7 +30,7 @@ from autopatch_j.agent.prompts import (
 )
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.core.review import ProjectArtifactStore
-from autopatch_j.core.memory import MemoryManager
+from autopatch_j.core.memory import MemoryManager, MemoryStorageError
 from autopatch_j.core.project import SourceReader
 from autopatch_j.core.domain import (
     CodeScope,
@@ -61,6 +62,16 @@ def _build_agent(
         memory_manager = MagicMock()
         memory_manager.build_thread_history.return_value = []
         memory_manager.build_routing_context.return_value = ""
+    if isinstance(memory_manager, MagicMock):
+        memory_manager.ensure_active_thread.return_value.id = "thread-1"
+        memory_manager.active_thread_checkpoint.return_value = ""
+        memory_manager.open_memory_request.return_value = SimpleNamespace(
+            memory_map=SimpleNamespace(entries=(), omitted_count=0, estimated_tokens=0)
+        )
+        memory_manager.refresh_memory_request.return_value = (
+            memory_manager.open_memory_request.return_value.memory_map
+        )
+        memory_manager.render_memory_map.return_value = ""
     symbol_indexer = SymbolIndex(repo_root)
     patch_engine = SearchReplacePatchEngine(repo_root)
     code_fetcher = SourceReader(repo_root)
@@ -80,6 +91,28 @@ def _build_agent(
 def _fetch_tool_names(mock_llm: MagicMock) -> list[str]:
     tools = mock_llm.chat.call_args.kwargs["tools"]
     return [tool["function"]["name"] for tool in tools]
+
+
+def test_patch_runtime_constraint_is_path_bound_and_cleared_with_review(
+    tmp_path: Path,
+) -> None:
+    agent = _build_agent(tmp_path, MagicMock())
+
+    agent.session.record_runtime_patch_constraint(
+        "src/main/java/demo/A.java",
+        "这次不要使用三元表达式",
+    )
+
+    assert "不要使用三元表达式" in agent.session.build_runtime_patch_constraint_context(
+        "src/main/java/demo/A.java"
+    )
+    assert agent.session.build_runtime_patch_constraint_context(
+        "src/main/java/demo/B.java"
+    ) == ""
+    agent.reset_history()
+    assert agent.session.build_runtime_patch_constraint_context(
+        "src/main/java/demo/A.java"
+    ) == ""
 
 
 def test_perform_code_explain_uses_navigation_tool_profile_by_default(tmp_path: Path) -> None:
@@ -114,18 +147,15 @@ def test_task_system_prompt_declares_java_context() -> None:
     assert "## 禁止事项" in prompt
 
 
-def test_task_system_prompt_wraps_memory_context_once() -> None:
+def test_task_system_prompt_does_not_embed_memory() -> None:
     prompt = build_task_system_prompt(
         intent=IntentType.CODE_EXPLAIN,
         pending_file=None,
         last_scan=None,
-        memory_context="### 用户协作偏好\n- 输出简洁中文",
     )
 
-    assert prompt.count("## Memory Context") == 1
-    assert "仅在当前问题相关时使用" in prompt
-    assert "当前用户指令始终优先于历史记忆" in prompt
-    assert "### 用户协作偏好" in prompt
+    assert "## Memory Context" not in prompt
+    assert "## Project Memory" not in prompt
 
 
 def test_task_profiles_define_tool_boundaries() -> None:
@@ -135,6 +165,8 @@ def test_task_profiles_define_tool_boundaries() -> None:
         FunctionToolName.READ_SOURCE_BLOCK,
         FunctionToolName.READ_SOURCE_FILE,
         FunctionToolName.PROPOSE_PATCH,
+        FunctionToolName.MEMORY_SEARCH,
+        FunctionToolName.MEMORY_READ,
     )
     assert fetch_code_explain_profile(allow_symbol_search=True).tool_names == (
         FunctionToolName.SEARCH_SYMBOLS,
@@ -160,6 +192,8 @@ def test_task_profiles_define_tool_boundaries() -> None:
         FunctionToolName.READ_SOURCE_BLOCK,
         FunctionToolName.READ_SOURCE_CONTEXT,
         FunctionToolName.PROPOSE_PATCH,
+        FunctionToolName.MEMORY_SEARCH,
+        FunctionToolName.MEMORY_READ,
     )
 
 
@@ -187,22 +221,32 @@ def test_ordinary_request_uses_persistent_history_and_returns_only_current_trace
         {"role": "user", "content": "之前聊过 Optional"},
         {"role": "assistant", "content": "它表达可能为空的值"},
     ]
-    memory_manager.build_routing_context.return_value = "### 项目决定\n- 使用 Java 17"
     agent = _build_agent(tmp_path, mock_llm, memory_manager)
+    memory_manager.render_memory_map.return_value = (
+        "## Project Memory\n- `memory_1_r1` 使用 Java 17"
+    )
 
     result = agent.perform_general_chat("Optional 怎么用")
 
     messages = mock_llm.chat.call_args.kwargs["messages"]
-    assert [message["role"] for message in messages] == ["system", "user", "assistant", "user"]
+    assert [message["role"] for message in messages] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+        "user",
+    ]
     assert messages[1]["content"] == "之前聊过 Optional"
+    assert messages[-2]["role"] == "user"
+    assert "<memory_map>" in messages[-2]["content"]
+    assert "使用 Java 17" in messages[-2]["content"]
     assert messages[-1]["content"] == "Optional 怎么用"
-    assert messages[0]["content"].count("## Memory Context") == 1
-    assert "使用 Java 17" in messages[0]["content"]
+    assert "Project Memory" not in messages[0]["content"]
     assert result.final_answer == "Optional 用于表达可能为空的值。"
     assert [message["role"] for message in result.trace_messages] == ["user", "assistant"]
     assert result.trace_messages[0]["content"] == "Optional 怎么用"
-    memory_manager.build_thread_history.assert_called_once_with()
-    memory_manager.build_routing_context.assert_called_once_with(IntentType.GENERAL_CHAT)
+    memory_manager.build_thread_history.assert_called_once()
+    assert memory_manager.build_thread_history.call_args.kwargs["max_tokens"] > 0
 
 
 def test_agent_does_not_share_trace_between_requests(tmp_path: Path) -> None:
@@ -246,6 +290,8 @@ def test_perform_code_audit_uses_finding_driven_tool_profile(tmp_path: Path) -> 
         "read_source_block",
         "read_source_file",
         "propose_patch",
+        "memory_search",
+        "memory_read",
     ]
 
 
@@ -261,6 +307,8 @@ def test_perform_zero_finding_review_uses_lightweight_tool_profile(tmp_path: Pat
         "read_source_block",
         "read_source_context",
         "propose_patch",
+        "memory_search",
+        "memory_read",
     ]
 
 
@@ -278,6 +326,8 @@ def test_perform_patch_revise_uses_rewrite_tool_profile(tmp_path: Path) -> None:
         "read_source_context",
         "get_finding_detail",
         "revise_patch",
+        "memory_search",
+        "memory_read",
     ]
 
 
@@ -293,6 +343,8 @@ def test_perform_patch_explain_keeps_read_only_tool_profile(tmp_path: Path) -> N
         "read_source_file",
         "read_source_block",
         "read_source_context",
+        "memory_search",
+        "memory_read",
     ]
 
 
@@ -329,7 +381,6 @@ def test_patch_explain_system_prompt_limits_report_style() -> None:
         intent=IntentType.PATCH_EXPLAIN,
         pending_file="src/main/java/demo/LegacyConfig.java",
         last_scan="scan-1",
-        memory_context="- general_chat; 用户关注: Optional",
     )
 
     assert "控制在 3 到 5 行" in prompt
@@ -428,6 +479,24 @@ def test_perform_general_chat_exposes_only_memory_tools(tmp_path: Path) -> None:
     assert _fetch_tool_names(mock_llm) == ["memory_search", "memory_read"]
 
 
+def test_thread_checkpoint_storage_error_disables_memory_projection(
+    tmp_path: Path,
+) -> None:
+    mock_llm = MagicMock()
+    mock_llm.chat.return_value = LLMResponse(content="chat answer")
+    memory_manager = MagicMock(spec=MemoryManager)
+    memory_manager.active_thread_checkpoint.side_effect = MemoryStorageError(
+        "database is temporarily locked"
+    )
+    agent = _build_agent(tmp_path, mock_llm, memory_manager)
+
+    response = agent.perform_general_chat("continue")
+
+    assert response.final_answer == "chat answer"
+    assert agent.session.memory_request_state is None
+    memory_manager.refresh_memory_request.assert_not_called()
+
+
 def test_tool_executor_rejects_tools_outside_task_profile(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     agent = _build_agent(tmp_path, mock_llm)
@@ -508,7 +577,7 @@ def test_react_loop_blocks_repeated_no_progress_tool_calls(tmp_path: Path) -> No
     assert observations[-1][1] == "工具调用无进展，已阻断"
 
 
-def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_path: Path) -> None:
+def test_dehydrate_history_only_prunes_replayable_tools_on_request(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     mock_llm.chat.return_value = LLMResponse(content="done")
     agent = _build_agent(tmp_path, mock_llm)
@@ -545,7 +614,12 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
         {"role": "user", "content": "second"},
     ]
 
-    dehydrated = agent.message_adapter.dehydrate_history(messages, "system prompt")
+    full = agent.message_adapter.dehydrate_history(messages, "system prompt")
+    dehydrated = agent.message_adapter.dehydrate_history(
+        messages,
+        "system prompt",
+        prune_replayable_tools=True,
+    )
 
     assert [message["role"] for message in dehydrated] == [
         "system",
@@ -558,7 +632,9 @@ def test_dehydrate_history_preserves_tool_sequence_and_compresses_old_tools(tmp_
         "assistant",
         "user",
     ]
-    assert dehydrated[3]["content"].endswith("... [已脱水压缩] ...")
+    assert full[3]["content"] == long_content
+    assert "observation 已卸载" in dehydrated[3]["content"]
+    assert "重新读取" in dehydrated[3]["content"]
     assert dehydrated[4]["content"] == long_content
 
 
@@ -605,8 +681,8 @@ def test_consecutive_repair_requests_are_isolated_from_memory(
         assert [message["role"] for message in messages] == ["system", "user"]
         assert "ordinary secret history" not in str(messages)
         assert "## Memory Context" not in messages[0]["content"]
-        assert "memory_search" not in tool_names
-        assert "memory_read" not in tool_names
+        assert "memory_search" in tool_names
+        assert "memory_read" in tool_names
     memory_manager.build_thread_history.assert_not_called()
     memory_manager.build_routing_context.assert_not_called()
 
@@ -675,19 +751,25 @@ def test_real_sqlite_restart_supplies_initial_history_to_agent(tmp_path: Path) -
     assert messages[3]["content"] == "继续刚才的话题"
 
 
-def test_routing_context_has_hard_budget_and_single_heading(tmp_path: Path) -> None:
+def test_memory_map_is_synthetic_user_context_not_system_prompt(tmp_path: Path) -> None:
     mock_llm = MagicMock()
     mock_llm.chat.return_value = LLMResponse(content="done")
     memory_manager = MagicMock()
     memory_manager.build_thread_history.return_value = []
-    memory_manager.build_routing_context.return_value = "## Memory Context\n" + ("x" * 5_000)
     agent = _build_agent(tmp_path, mock_llm, memory_manager)
+    memory_manager.render_memory_map.return_value = (
+        "## Project Memory\n- `memory_1_r1` 回答默认保持简洁"
+    )
 
     agent.perform_general_chat("question")
 
-    system_prompt = mock_llm.chat.call_args.kwargs["messages"][0]["content"]
-    assert system_prompt.count("## Memory Context") == 1
-    assert len(agent.session.build_memory_context(IntentType.GENERAL_CHAT)) == 4_000
+    messages = mock_llm.chat.call_args.kwargs["messages"]
+    assert "Project Memory" not in messages[0]["content"]
+    assert messages[-2]["role"] == "user"
+    assert "<memory_map>" in messages[-2]["content"]
+    assert "memory_1_r1" in messages[-2]["content"]
+    assert messages[-1]["content"] == "question"
+    memory_manager.build_routing_context.assert_not_called()
 
 
 def test_memory_debug_summary_exposes_safe_background_diagnostic(tmp_path: Path) -> None:

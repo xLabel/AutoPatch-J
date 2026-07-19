@@ -12,6 +12,7 @@ from autopatch_j.llm.diagnostics import (
     MAX_RAW_LLM_ERROR_CHARS,
     format_raw_llm_exception,
 )
+from autopatch_j.llm.context_window import ModelContextProfile
 from autopatch_j.llm.options import LLMCallPurpose, LLMReasoningMode, resolve_request_options
 
 
@@ -357,15 +358,17 @@ def test_classifier_purpose_uses_non_stream_response_without_reasoning_effort() 
 
 
 @pytest.mark.parametrize(
-    ("purpose", "max_tokens"),
+    ("purpose", "max_tokens", "timeout"),
     [
-        (LLMCallPurpose.MEMORY_EXTRACTION, 1800),
-        (LLMCallPurpose.MEMORY_CONSOLIDATION, 2200),
+        (LLMCallPurpose.MEMORY_EXTRACTION, 1800, 60),
+        (LLMCallPurpose.MEMORY_CONSOLIDATION, 2200, 60),
+        (LLMCallPurpose.CONTEXT_COMPACTION, 16_384, 120),
     ],
 )
 def test_memory_purposes_use_bounded_non_stream_response(
     purpose: LLMCallPurpose,
     max_tokens: int,
+    timeout: int,
 ) -> None:
     client = LLMClient(
         api_key="test-key",
@@ -388,13 +391,40 @@ def test_memory_purposes_use_bounded_non_stream_response(
     assert kwargs["stream"] is False
     assert kwargs["max_tokens"] == max_tokens
     assert kwargs["temperature"] == 0
-    assert kwargs["timeout"] == 60
+    assert kwargs["timeout"] == timeout
     assert "reasoning_effort" not in kwargs
     assert kwargs["extra_body"] == {
         "thinking": {"type": "disabled"},
         "enable_thinking": False,
     }
     assert response.content == '{"episode_summaries": []}'
+
+
+def test_purpose_output_limit_cannot_exceed_context_profile_reserve() -> None:
+    client = LLMClient(
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+        model="test-model",
+        context_profile=ModelContextProfile(
+            model="test-model",
+            context_window=100_000,
+            max_output_tokens=4_096,
+            provider_safety_tokens=1_000,
+        ),
+    )
+    client.client = MagicMock()
+    client.client.chat.completions.create.return_value = _non_stream_response(
+        content="checkpoint",
+    )
+
+    client.chat(
+        messages=[{"role": "user", "content": "compact"}],
+        tools=None,
+        purpose=LLMCallPurpose.CONTEXT_COMPACTION,
+    )
+
+    kwargs = client.client.chat.completions.create.call_args.kwargs
+    assert kwargs["max_tokens"] == 4_096
 
 
 def test_classifier_purpose_retries_without_disabled_thinking_when_unsupported() -> None:

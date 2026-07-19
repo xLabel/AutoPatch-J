@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Event
+from time import monotonic, sleep
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
 from autopatch_j.core.memory import (
-    MemoryItemSummary,
     MemoryManager,
+    RecallQuery,
     MemoryStorageError,
 )
 from autopatch_j.core.memory.models import (
@@ -20,6 +21,7 @@ from autopatch_j.core.memory.models import (
     ExtractionResult,
 )
 from autopatch_j.core.memory.constants import MAX_JOB_ERROR_CHARS
+from autopatch_j.core.memory.pipeline import PipelineStepResult
 from autopatch_j.llm.diagnostics import MAX_RAW_LLM_ERROR_CHARS
 
 
@@ -40,9 +42,15 @@ class RecordingMemoryLLM:
                         "candidates": [
                             {
                                 "kind": "user_preference",
-                                "title": "简洁回答",
+                                "subject": "answer brevity",
+                                "statement": "回答默认保持简洁",
                                 "content": "用户明确偏好简洁回答",
+                                "strength": "hard",
+                                "origin": "explicit",
+                                "recall_mode": "always",
+                                "applies_to_paths": [],
                                 "aliases": ["concise answers", "短回答"],
+                                "keywords": ["回答风格", "response style"],
                                 "sources": [
                                     {
                                         "turn_id": turn["turn_id"],
@@ -57,17 +65,27 @@ class RecordingMemoryLLM:
                 )
             )
         candidate = payload["candidates"][0]
+        target_id = (
+            payload["active_items"][0]["id"]
+            if payload.get("active_items")
+            else None
+        )
         return SimpleNamespace(
             content=json.dumps(
                 {
                     "operations": [
                         {
-                            "operation": "create",
+                            "operation": "revise" if target_id else "create",
                             "candidate_ids": [candidate["id"]],
-                            "target_id": None,
-                            "title": "简洁回答",
+                            "target_id": target_id,
+                            "kind": "user_preference",
+                            "subject": "answer brevity",
+                            "statement": "回答默认保持简洁",
                             "content": "用户明确偏好简洁回答",
-                            "synopsis": "回答保持简洁",
+                            "strength": "hard",
+                            "origin": "explicit",
+                            "recall_mode": "always",
+                            "applies_to_paths": [],
                             "aliases": ["concise answers", "短回答"],
                             "keywords": ["回答风格", "response style"],
                         }
@@ -140,6 +158,78 @@ class TransientPipeline:
         return None
 
 
+class BlockingEmptyMemoryLLM:
+    def __init__(self) -> None:
+        self.started = Event()
+        self.release = Event()
+
+    def chat(self, messages, tools=None, purpose=None):
+        del messages, tools, purpose
+        self.started.set()
+        assert self.release.wait(timeout=3)
+        return SimpleNamespace(
+            content=json.dumps(
+                {
+                    "thread_compaction": "本轮无长期候选",
+                    "candidates": [],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+class FakeClock:
+    def __init__(self) -> None:
+        self.current = datetime(2026, 7, 19, tzinfo=timezone.utc)
+
+    def __call__(self) -> datetime:
+        return self.current
+
+    def advance(self, seconds: int) -> None:
+        self.current += timedelta(seconds=seconds)
+
+
+class AdvancingWatermarkPipeline:
+    def __init__(self, clock: FakeClock) -> None:
+        self.clock = clock
+        self.started = Event()
+        self.release = Event()
+        self.finished = Event()
+        self.calls = 0
+
+    def process_one(
+        self,
+        *,
+        force: bool = False,
+        thread_id: str | None = None,
+        allowed_job_ids=None,
+    ) -> PipelineStepResult:
+        del force, thread_id
+        assert allowed_job_ids
+        self.calls += 1
+        if self.calls == 1:
+            self.started.set()
+            assert self.release.wait(timeout=3)
+            self.clock.advance(70)
+            return PipelineStepResult(
+                processed=1,
+                succeeded=1,
+                failed=0,
+                processed_job_ids=(next(iter(allowed_job_ids)),),
+                job_kind="extraction",
+                spawned_job_ids=("child-job",),
+            )
+        self.clock.advance(70)
+        self.finished.set()
+        return PipelineStepResult(
+            processed=1,
+            succeeded=1,
+            failed=0,
+            processed_job_ids=("child-job",),
+            job_kind="consolidation",
+        )
+
+
 def _seed_pending_consolidation(manager: MemoryManager) -> str:
     turn = manager.begin_turn(
         intent="general_chat",
@@ -155,9 +245,15 @@ def _seed_pending_consolidation(manager: MemoryManager) -> str:
             candidates=(
                 ExtractionCandidateInput(
                     kind="user_preference",
-                    title="详细回答",
+                    subject="answer detail",
+                    statement="回答默认提供详细说明",
                     content="用户明确偏好详细回答",
+                    strength="hard",
+                    origin="explicit",
+                    recall_mode="always",
+                    applies_to_paths=(),
                     aliases=("detailed answers",),
+                    keywords=("回答风格",),
                     sources=(
                         CandidateSource(
                             turn_id=turn.id,
@@ -189,7 +285,6 @@ def test_end_to_end_extraction_consolidation_search_read_and_forget(
     hits_cn = manager.search("短回答")
     hits_en = manager.search("concise answers")
     detail = manager.read(hits_cn[0].id)
-    routing = manager.build_routing_context("general_chat")
     forgotten = manager.forget(detail.id)
 
     assert result.processed == 2
@@ -197,7 +292,6 @@ def test_end_to_end_extraction_consolidation_search_read_and_forget(
     assert hits_cn[0].id == hits_en[0].id
     assert detail.sources[0].quote == "偏好简洁回答"
     assert detail.access_count == 1
-    assert "明确偏好" in routing
     assert forgotten.raw_turns_retained
     assert manager.search("简洁回答") == []
     assert manager.status().turn_count == 1
@@ -290,7 +384,7 @@ def test_new_thread_hides_old_discussion_but_keeps_repo_memory(tmp_path: Path) -
 
     manager.start_new_thread(expected_thread_id=active.id)
 
-    assert manager.search("简洁回答")
+    assert manager.search("短回答")
     assert manager.build_thread_history() == []
 
 
@@ -303,44 +397,19 @@ def test_degraded_memory_is_not_silently_projected_as_empty(tmp_path: Path) -> N
     with pytest.raises(MemoryStorageError):
         manager.build_thread_history()
     with pytest.raises(MemoryStorageError):
-        manager.build_routing_context("general_chat")
-    assert manager.build_routing_context("code_audit") == ""
-
-
-def test_routing_budget_keeps_all_indexes_before_compaction(tmp_path: Path) -> None:
-    manager = MemoryManager(db_path=tmp_path / "memory.db")
-    store = MagicMock()
-    store.active_thread_compaction.return_value = "c" * 4_000
-
-    def summaries(kind: str) -> list[MemoryItemSummary]:
-        return [
-            MemoryItemSummary(
-                id=f"{kind}-{index}",
-                kind=kind,
-                title="标题" * 80,
-                synopsis="摘要" * 120,
-                updated_at="2026-07-13T00:00:00+00:00",
-            )
-            for index in range(5)
-        ]
-
-    preferences = summaries("user_preference")
-    decisions = summaries("project_decision")
-    discussions = summaries("discussion_context")
-    store.active_items_for_routing.return_value = (
-        preferences,
-        decisions,
-        discussions,
-    )
-    manager._store = store
-
-    context = manager.build_routing_context("general_chat")
-
-    assert len(context) <= 4_000
-    assert preferences[-1].id in context
-    assert decisions[-1].id in context
-    assert discussions[-1].id in context
-    assert "### 当前 thread 摘要" in context
+        manager.build_memory_map(
+            RecallQuery(
+                intent="general_chat",
+                thread_id="unavailable",
+                user_text="anything",
+            ),
+            manager.build_recall_policy(
+                intent="general_chat",
+                thread_id="unavailable",
+                durable_token_budget=100,
+                map_token_budget=50,
+            ),
+        )
 
 
 def test_extraction_payload_preserves_complete_raw_turn(tmp_path: Path) -> None:
@@ -486,3 +555,68 @@ def test_worker_survives_transient_pipeline_failure(tmp_path: Path) -> None:
         assert manager._thread.is_alive()
     finally:
         manager.close()
+
+
+def test_thread_watermark_returns_on_deadline_and_finishes_in_background(
+    tmp_path: Path,
+) -> None:
+    llm = BlockingEmptyMemoryLLM()
+    manager = MemoryManager(db_path=tmp_path / "memory.db", llm=llm)
+    thread = manager.ensure_active_thread()
+    turn = manager.begin_turn(intent="general_chat", user_text="待异步处理")
+    manager.complete_turn(turn.id, assistant_text="收到")
+
+    result = manager.flush_thread_watermark(
+        reason="new",
+        thread_id=thread.id,
+        wait_seconds=0.01,
+    )
+
+    assert llm.started.is_set()
+    assert result.pending == 1
+    assert "后台继续" in result.errors[0]
+
+    manager.start_new_thread(expected_thread_id=thread.id)
+    llm.release.set()
+    deadline = monotonic() + 3
+    status = manager.status()
+    while (
+        status.pending_jobs + status.leased_jobs + status.retry_wait_jobs
+        and monotonic() < deadline
+    ):
+        sleep(0.01)
+        status = manager.status()
+
+    assert status.pending_jobs + status.leased_jobs + status.retry_wait_jobs == 0
+    assert manager.ensure_active_thread().id != thread.id
+
+
+def test_background_watermark_heartbeats_new_thread_turn(tmp_path: Path) -> None:
+    clock = FakeClock()
+    manager = MemoryManager(
+        db_path=tmp_path / "memory.db",
+        llm=RecordingMemoryLLM(),
+        clock=clock,
+    )
+    old_thread = manager.ensure_active_thread()
+    old_turn = manager.begin_turn(intent="general_chat", user_text="旧 thread turn")
+    manager.complete_turn(old_turn.id, assistant_text="收到")
+    pipeline = AdvancingWatermarkPipeline(clock)
+    manager._pipeline = pipeline
+
+    result = manager.flush_thread_watermark(
+        reason="new",
+        thread_id=old_thread.id,
+        wait_seconds=0.01,
+    )
+
+    assert pipeline.started.is_set()
+    assert "后台继续" in result.errors[0]
+    manager.start_new_thread(expected_thread_id=old_thread.id)
+    new_turn = manager.begin_turn(intent="general_chat", user_text="新 thread turn")
+    pipeline.release.set()
+    assert pipeline.finished.wait(timeout=3)
+
+    completed = manager.complete_turn(new_turn.id, assistant_text="新 turn 完成")
+
+    assert completed.state == "completed"
