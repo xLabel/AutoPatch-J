@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from autopatch_j.cli.agent_stream_presenter import PresentedAgentResult
 from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
+from autopatch_j.cli.workflows.memory_turn import run_durable_memory_turn
 from autopatch_j.core.domain import CodeScopeKind, IntentType
 
 
@@ -110,30 +111,18 @@ class ChatWorkflow:
         scope_paths: list[str],
         run: Callable[[], PresentedAgentResult],
     ) -> PresentedAgentResult:
-        manager = self.services.runtime.memory_manager
-        turn = manager.begin_turn(
+        runtime = self.services.runtime
+        return run_durable_memory_turn(
+            manager=runtime.memory_manager,
+            session=runtime.agent.session,
             intent=intent,
             user_text=text,
             scope_paths=scope_paths,
+            evidence_keys=[],
+            run=run,
+            assistant_text=lambda result: result.display_answer,
+            on_degraded=self.services.renderer.print_agent_text,
         )
-        session = self.services.runtime.agent.session
-        session.bind_memory_thread(turn.thread_id)
-        try:
-            try:
-                result = run()
-            except BaseException as exc:
-                error = f"{type(exc).__name__}: {exc}".strip()
-                try:
-                    manager.fail_turn(turn.id, error=error)
-                except Exception as memory_exc:
-                    raise RuntimeError(
-                        f"普通对话失败，且 Memory turn 状态更新失败：{memory_exc}"
-                    ) from exc
-                raise
-            manager.complete_turn(turn.id, assistant_text=result.display_answer)
-            return result
-        finally:
-            session.clear_memory_thread()
 
     def _present_local_answer(self, answer: str) -> PresentedAgentResult:
         self.services.renderer.print_agent_text(answer)

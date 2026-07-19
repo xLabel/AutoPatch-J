@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING, Any
 
 from autopatch_j.core.domain import IntentType
+from autopatch_j.core.memory.errors import MemoryStorageError
 from autopatch_j.llm.options import LLMCallDiagnostic
 from autopatch_j.core.project import (
     UnsafeRepoPathError,
+    is_project_state_path,
     normalize_repo_path,
     resolve_repo_path,
     to_repo_relative_path,
@@ -17,6 +20,7 @@ if TYPE_CHECKING:
     from autopatch_j.core.review import ProjectArtifactStore
     from autopatch_j.core.project import SourceReader
     from autopatch_j.core.memory import MemoryManager
+    from autopatch_j.core.memory.models import MemoryRequestState
     from autopatch_j.core.patching import SearchReplacePatchDraft, SearchReplacePatchEngine
     from autopatch_j.core.patching import PatchQualityVerifier
     from autopatch_j.core.project import SymbolIndex
@@ -24,8 +28,13 @@ if TYPE_CHECKING:
     from autopatch_j.tools.contract import ToolExecutionResult
 
 
-MEMORY_ROUTING_CONTEXT_MAX_CHARS = 4_000
 ORDINARY_MEMORY_INTENTS = {IntentType.CODE_EXPLAIN, IntentType.GENERAL_CHAT}
+_PATCH_CONSTRAINT_RE = re.compile(
+    r"(?:不要|禁止|避免|必须|不能|别用|改成|改为|请用|"
+    r"\bdo not\b|\bdon't\b|\bavoid\b|\bmust\b|\binstead\b)",
+    re.IGNORECASE,
+)
+MAX_RUNTIME_PATCH_CONSTRAINT_CHARS = 1_000
 
 
 @dataclass
@@ -47,6 +56,7 @@ class AgentSession:
     patch_verifier: PatchQualityVerifier | None = None
     memory_manager: MemoryManager | None = None
     memory_thread_id: str | None = None
+    memory_request_state: MemoryRequestState | None = None
 
     focus_paths: list[str] = field(default_factory=list)
     source_read_cache: dict[tuple[str, str, int | None], ToolExecutionResult] = field(default_factory=dict)
@@ -54,6 +64,7 @@ class AgentSession:
     proposed_patch_draft: SearchReplacePatchDraft | None = None
     revised_patch_draft: SearchReplacePatchDraft | None = None
     code_explain_allow_symbol_search: bool = True
+    runtime_patch_constraints: dict[str, list[str]] = field(default_factory=dict)
 
     def set_focus_paths(self, paths: list[str] | None) -> None:
         normalized: list[str] = []
@@ -62,7 +73,7 @@ class AgentSession:
                 clean = to_repo_relative_path(self.repo_root, resolve_repo_path(self.repo_root, path))
             except UnsafeRepoPathError:
                 continue
-            if clean and clean not in normalized:
+            if clean and not is_project_state_path(clean) and clean not in normalized:
                 normalized.append(clean)
         self.focus_paths = normalized
 
@@ -73,6 +84,8 @@ class AgentSession:
         try:
             safe_path = to_repo_relative_path(self.repo_root, resolve_repo_path(self.repo_root, path))
         except UnsafeRepoPathError:
+            return False
+        if is_project_state_path(safe_path):
             return False
         if not self.focus_paths:
             return True
@@ -86,6 +99,12 @@ class AgentSession:
 
     def clear_memory_thread(self) -> None:
         self.memory_thread_id = None
+
+    def bind_memory_request(self, state: MemoryRequestState) -> None:
+        self.memory_request_state = state
+
+    def clear_memory_request(self) -> None:
+        self.memory_request_state = None
 
     def fetch_cached_source_read(self, tool_name: str, path: str, line: int | None) -> ToolExecutionResult | None:
         key = (tool_name, self.normalize_repo_path(path), line)
@@ -120,36 +139,53 @@ class AgentSession:
         self.revised_patch_draft = None
         return draft
 
-    def build_thread_history(self, intent: IntentType) -> list[dict[str, Any]]:
+    def record_runtime_patch_constraint(self, file_path: str, user_text: str) -> None:
+        text = " ".join(user_text.split())[:MAX_RUNTIME_PATCH_CONSTRAINT_CHARS]
+        if not text or not _PATCH_CONSTRAINT_RE.search(text):
+            return
+        path = self.normalize_repo_path(file_path)
+        constraints = self.runtime_patch_constraints.setdefault(path, [])
+        if text not in constraints:
+            constraints.append(text)
+
+    def build_runtime_patch_constraint_context(self, file_path: str) -> str:
+        if not self.runtime_patch_constraints:
+            return ""
+        constraints = self.runtime_patch_constraints.get(
+            self.normalize_repo_path(file_path),
+            (),
+        )
+        if not constraints:
+            return ""
+        lines = [
+            "## 当前补丁临时约束",
+            "以下约束只绑定当前 review，不是项目长期规则：",
+        ]
+        lines.extend(f"- {item}" for item in constraints)
+        return "\n".join(lines)
+
+    def build_thread_history(
+        self,
+        intent: IntentType,
+        *,
+        max_tokens: int,
+    ) -> list[dict[str, Any]]:
         if self.memory_manager is None or intent not in ORDINARY_MEMORY_INTENTS:
             return []
         build_history = getattr(self.memory_manager, "build_thread_history", None)
         if build_history is None:
             return []
-        if self.memory_thread_id is None:
-            history = build_history()
-        else:
-            history = build_history(thread_id=self.memory_thread_id)
+        try:
+            if self.memory_thread_id is None:
+                history = build_history(max_tokens=max_tokens)
+            else:
+                history = build_history(
+                    thread_id=self.memory_thread_id,
+                    max_tokens=max_tokens,
+                )
+        except MemoryStorageError:
+            return []
         return [dict(message) for message in history]
-
-    def build_memory_context(self, intent: IntentType) -> str:
-        if self.memory_manager is None or intent not in ORDINARY_MEMORY_INTENTS:
-            return ""
-        build_context = getattr(self.memory_manager, "build_routing_context", None)
-        if build_context is None:
-            return ""
-        if self.memory_thread_id is None:
-            context = str(build_context(intent)).strip()
-        else:
-            context = str(
-                build_context(intent, thread_id=self.memory_thread_id)
-            ).strip()
-        heading = "## Memory Context"
-        if context == heading:
-            return ""
-        if context.startswith(f"{heading}\n"):
-            context = context[len(heading) :].lstrip()
-        return context[:MEMORY_ROUTING_CONTEXT_MAX_CHARS].rstrip()
 
     def build_memory_debug_summary(
         self,
@@ -159,10 +195,7 @@ class AgentSession:
         del current_user_text
         if intent not in ORDINARY_MEMORY_INTENTS:
             return ""
-        context = self.build_memory_context(intent)
         lines: list[str] = []
-        if context:
-            lines.append(f"Memory routing context: {len(context)} chars")
         manager = self.memory_manager
         fetch_diagnostic = getattr(manager, "latest_diagnostic", None)
         diagnostic = fetch_diagnostic() if callable(fetch_diagnostic) else None
@@ -193,3 +226,4 @@ class AgentSession:
         self.proposed_patch_draft = None
         self.revised_patch_draft = None
         self.code_explain_allow_symbol_search = True
+        self.runtime_patch_constraints.clear()

@@ -38,6 +38,7 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
             FunctionToolName.READ_SOURCE_BLOCK,
             FunctionToolName.READ_SOURCE_FILE,
             FunctionToolName.PROPOSE_PATCH,
+            *MEMORY_READING_TOOLS,
         ),
     ),
     IntentType.CODE_EXPLAIN: TaskProfile(
@@ -57,6 +58,7 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
         tool_names=(
             FunctionToolName.SEARCH_SYMBOLS,
             *SOURCE_READING_TOOLS,
+            *MEMORY_READING_TOOLS,
         ),
     ),
     IntentType.PATCH_REVISE: TaskProfile(
@@ -66,6 +68,7 @@ TASK_PROFILES: dict[IntentType, TaskProfile] = {
             *SOURCE_READING_TOOLS,
             FunctionToolName.GET_FINDING_DETAIL,
             FunctionToolName.REVISE_PATCH,
+            *MEMORY_READING_TOOLS,
         ),
     ),
 }
@@ -79,6 +82,7 @@ ZERO_FINDING_REVIEW_PROFILE = TaskProfile(
     tool_names=(
         *SOURCE_READING_TOOLS,
         FunctionToolName.PROPOSE_PATCH,
+        *MEMORY_READING_TOOLS,
     ),
 )
 

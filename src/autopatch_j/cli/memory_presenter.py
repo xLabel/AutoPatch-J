@@ -6,7 +6,12 @@ from rich.table import Table
 from rich.text import Text
 
 from autopatch_j.cli.render import BODY_STYLE, MUTED_STYLE, SYSTEM_STYLE, CliRenderer
-from autopatch_j.core.memory import MemoryDetail, MemoryItemSummary, MemoryStatus
+from autopatch_j.core.memory import (
+    MemoryDetail,
+    MemoryItemSummary,
+    MemoryStatus,
+    MemorySummaryStatus,
+)
 
 
 class MemoryPresenter:
@@ -16,7 +21,11 @@ class MemoryPresenter:
         self.renderer = renderer
         self.show_raw_errors = show_raw_errors
 
-    def render_status(self, status: MemoryStatus) -> None:
+    def render_status(
+        self,
+        status: MemoryStatus,
+        summary_status: MemorySummaryStatus | None = None,
+    ) -> None:
         table = Table(box=None, show_header=False, padding=(0, 2))
         table.add_column("Key", style=f"bold {SYSTEM_STYLE}", width=20)
         table.add_column("Value", style=BODY_STYLE)
@@ -28,7 +37,7 @@ class MemoryPresenter:
                 if self.show_raw_errors
                 else "已记录（启用 AUTOPATCH_DEBUG=true 查看 RAW 错误）"
             )
-        rows = (
+        rows: list[tuple[str, object]] = [
             ("状态", state),
             ("数据库", status.db_path),
             ("Schema", status.schema_version),
@@ -42,7 +51,24 @@ class MemoryPresenter:
             ("Retry jobs", status.retry_wait_jobs),
             ("Last success", status.last_succeeded_at or "无"),
             ("Last error", last_error),
-        )
+        ]
+        if summary_status is not None:
+            summary_error = "无"
+            if summary_status.last_error:
+                summary_error = (
+                    summary_status.last_error
+                    if self.show_raw_errors
+                    else "已记录（启用 AUTOPATCH_DEBUG=true 查看 RAW 错误）"
+                )
+            rows.extend(
+                (
+                    ("审阅摘要", summary_status.path),
+                    ("摘要状态", summary_status.state),
+                    ("摘要 active items", summary_status.active_item_count),
+                    ("摘要更新时间", summary_status.last_projected_at or "无"),
+                    ("摘要错误", summary_error),
+                )
+            )
         for label, value in rows:
             table.add_row(label, Text(str(value), style=BODY_STYLE))
         self.renderer.print_panel(table, title="Memory 状态", style=SYSTEM_STYLE)
@@ -54,15 +80,15 @@ class MemoryPresenter:
         table = Table(show_header=True, header_style=f"bold {SYSTEM_STYLE}", box=None)
         table.add_column("ID", style=SYSTEM_STYLE)
         table.add_column("类型")
-        table.add_column("标题")
-        table.add_column("摘要")
+        table.add_column("主题")
+        table.add_column("陈述")
         table.add_column("更新时间", style=MUTED_STYLE)
         for item in items:
             table.add_row(
                 Text(str(item.id), style=SYSTEM_STYLE),
                 Text(str(item.kind), style=BODY_STYLE),
-                Text(str(item.title), style=BODY_STYLE),
-                Text(str(item.synopsis), style=BODY_STYLE),
+                Text(str(item.subject), style=BODY_STYLE),
+                Text(str(item.statement), style=BODY_STYLE),
                 Text(str(item.updated_at), style=MUTED_STYLE),
             )
         self.renderer.print_table(table)
@@ -77,11 +103,14 @@ class MemoryPresenter:
             ("Revision", detail.revision),
             ("类型", detail.kind),
             ("Thread", detail.thread_id or "repo"),
-            ("标题", detail.title),
-            ("摘要", detail.synopsis),
+            ("主题", detail.subject),
+            ("陈述", detail.statement),
             ("正文", detail.content),
+            ("强度", detail.strength),
+            ("来源类型", detail.origin),
+            ("召回模式", detail.recall_mode),
+            ("适用路径", ", ".join(detail.applies_to_paths) or "项目全局"),
             ("状态", detail.status),
-            ("Non-factual", detail.non_factual),
             ("Access count", detail.access_count),
             ("Last accessed", detail.last_accessed_at or "无"),
         )

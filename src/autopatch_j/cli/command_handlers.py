@@ -124,7 +124,7 @@ class CommandHandlers:
             return
 
         old_thread = runtime.memory_manager.ensure_active_thread()
-        self._flush_memory_once(runtime, reason="new", thread_id=old_thread.id)
+        self._flush_memory_watermark(runtime, thread_id=old_thread.id)
         had_pending_patch = runtime.workspace_manager.load().has_pending_patch()
         runtime.workspace_manager.clear()
         runtime.agent.reset_history()
@@ -150,7 +150,25 @@ class CommandHandlers:
         )
         try:
             if subcommand == "status" and not rest:
-                presenter.render_status(runtime.memory_manager.status())
+                presenter.render_status(
+                    runtime.memory_manager.status(),
+                    runtime.memory_manager.summary_status(),
+                )
+                return
+            if subcommand == "summary" and not rest:
+                result = runtime.memory_manager.rebuild_summary()
+                status = result.status
+                if status.state == "current":
+                    self.host.renderer.print_success(
+                        "Memory 审阅摘要已更新："
+                        f"state=current，active items={status.active_item_count}，"
+                        f"path={status.path}。"
+                    )
+                else:
+                    self.host.renderer.print_error(
+                        "Memory 审阅摘要更新失败；SQLite Memory 不受影响。"
+                        f"状态={status.state}，路径={status.path}。"
+                    )
                 return
             if subcommand == "list" and not rest:
                 presenter.render_list(runtime.memory_manager.list_items())
@@ -206,9 +224,31 @@ class CommandHandlers:
                 "剩余任务已保留。"
             )
 
+    def _flush_memory_watermark(
+        self,
+        runtime: CliRuntime,
+        *,
+        thread_id: str,
+    ) -> None:
+        try:
+            result = runtime.flush_memory_watermark(
+                reason="new",
+                thread_id=thread_id,
+                wait_seconds=5,
+            )
+        except Exception as exc:
+            self.host.renderer.print_error(
+                f"Memory 本次处理失败，任务已保留：{exc}"
+            )
+            return
+        if result.failed or result.pending or result.errors:
+            self.host.renderer.print_error(
+                "旧 thread Memory 尚未完全物化；任务已保留并在后台继续。"
+            )
+
     def _render_memory_usage(self) -> None:
         self.host.renderer.print_error(
-            "用法：/memory status|list|show <id>|forget <id>|clear --confirm|export"
+            "用法：/memory status|summary|list|show <id>|forget <id>|clear --confirm|export"
         )
 
     def handle_apply(self, pending: SearchReplacePatchDraft) -> PatchApplicationResult:

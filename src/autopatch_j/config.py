@@ -60,6 +60,10 @@ class AppConfig:
     # 可选值：standard、bailian-dsml；阿里云百炼旧版 DeepSeek DSML 流式输出使用 bailian-dsml。
     llm_stream_dialect: str
 
+    # 模型 context 容量；未知模型必须显式配置 window。
+    llm_context_window: int | None
+    llm_max_output_tokens: int | None
+
     # 仅 "true" 开启调试输出。
     debug_mode: bool
 
@@ -85,6 +89,12 @@ class AppConfig:
             llm_extra_body = llm_extra_body,
             llm_extra_body_error = cls._validate_llm_extra_body(llm_extra_body),
             llm_stream_dialect = os.getenv("AUTOPATCH_LLM_STREAM_DIALECT", "standard"),
+            llm_context_window = cls._optional_positive_int_env(
+                "AUTOPATCH_LLM_CONTEXT_WINDOW"
+            ),
+            llm_max_output_tokens = cls._optional_positive_int_env(
+                "AUTOPATCH_LLM_MAX_OUTPUT_TOKENS"
+            ),
             debug_mode = os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true",
             semgrep_version = "1.160.0",
             semgrep_install_lock_timeout = 600,
@@ -105,6 +115,15 @@ class AppConfig:
             f"3. AUTOPATCH_LLM_MODEL (可选，默认 {self.llm_model})"
         )
 
+    def resolve_llm_context_profile(self):
+        from autopatch_j.llm.context_window import resolve_context_profile
+
+        return resolve_context_profile(
+            model=self.llm_model,
+            context_window=self.llm_context_window,
+            max_output_tokens=self.llm_max_output_tokens,
+        )
+
     @staticmethod
     def _validate_llm_extra_body(value: str) -> str | None:
         try:
@@ -122,6 +141,19 @@ class AppConfig:
         except ValueError:
             return default
         return value if value > 0 else default
+
+    @staticmethod
+    def _optional_positive_int_env(name: str) -> int | None:
+        raw = os.getenv(name)
+        if raw is None or not raw.strip():
+            return None
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ValueError(f"{name} 必须是正整数") from exc
+        if value <= 0:
+            raise ValueError(f"{name} 必须是正整数")
+        return value
 
 
 GlobalConfig = AppConfig.from_env()

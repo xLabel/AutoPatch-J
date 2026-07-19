@@ -8,6 +8,9 @@ from uuid import uuid4
 
 
 _SEPARATOR_RE = re.compile(r"[^\w./:$#@+-]+", re.UNICODE)
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_TERM_SEPARATOR_RE = re.compile(r"[^\w\u3400-\u9fff]+", re.UNICODE)
+_HAN_RUN_RE = re.compile(r"[\u3400-\u9fff]+")
 
 
 def utc_now() -> datetime:
@@ -66,13 +69,50 @@ def content_terms(value: Any, *, limit: int, item_limit: int) -> tuple[str, ...]
 
     terms: list[str] = []
     seen: set[str] = set()
-    for token in normalize_text(value).split():
+    for token in recall_terms((str(value or ""),), limit=limit):
         if not token or len(token) > item_limit or token in seen:
             continue
         terms.append(token)
         seen.add(token)
         if len(terms) >= limit:
             break
+    return tuple(terms)
+
+
+def recall_terms(values: Iterable[str], *, limit: int = 32) -> tuple[str, ...]:
+    """NFKC/case-fold 后拆分 Java identifier、repo path 与连续汉字段。"""
+
+    terms: list[str] = []
+    seen: set[str] = set()
+    han_runs: list[str] = []
+    for raw in values:
+        camel_split = _CAMEL_BOUNDARY_RE.sub(" ", str(raw or ""))
+        normalized_full = normalize_text(camel_split)
+        candidates = [normalized_full]
+        expanded = unicodedata.normalize("NFKC", camel_split).casefold()
+        candidates.extend(
+            token
+            for token in _TERM_SEPARATOR_RE.split(expanded.replace("_", " "))
+            if token
+        )
+        for candidate in candidates:
+            term = " ".join(candidate.split())
+            if not term or term in seen:
+                continue
+            terms.append(term)
+            seen.add(term)
+            han_runs.extend(_HAN_RUN_RE.findall(term))
+            if len(terms) >= limit:
+                return tuple(terms)
+    for run in han_runs:
+        for index in range(len(run) - 1):
+            term = run[index : index + 2]
+            if term in seen:
+                continue
+            terms.append(term)
+            seen.add(term)
+            if len(terms) >= limit:
+                return tuple(terms)
     return tuple(terms)
 
 

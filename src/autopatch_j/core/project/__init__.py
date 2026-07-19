@@ -1,5 +1,6 @@
 from autopatch_j.core.project.repo_path import (
     UnsafeRepoPathError,
+    is_project_state_path,
     normalize_repo_path,
     resolve_repo_path,
     to_repo_relative_path,
@@ -15,6 +16,7 @@ __all__ = [
     "SymbolIndex",
     "SymbolIndexEntry",
     "UnsafeRepoPathError",
+    "is_project_state_path",
     "normalize_repo_path",
     "resolve_repo_path",
     "to_repo_relative_path",

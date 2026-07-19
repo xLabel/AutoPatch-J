@@ -3,7 +3,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .constants import MAX_COMPACTION_CHARS, MEMORY_KINDS
+from autopatch_j.llm.context_window import estimate_text_tokens
+
+from .constants import (
+    MAX_COMPACTION_CHARS,
+    MAX_MEMORY_STATEMENT_TOKENS,
+    MEMORY_KINDS,
+    MEMORY_ORIGINS,
+    MEMORY_RECALL_MODES,
+    MEMORY_STRENGTHS,
+)
 from .errors import MemoryContractError
 from .models import (
     CandidateSource,
@@ -16,16 +25,33 @@ from .text_utils import compact_text
 
 
 _EXTRACTION_KEYS = {"thread_compaction", "candidates"}
-_CANDIDATE_KEYS = {"kind", "title", "content", "aliases", "sources"}
+_CANDIDATE_KEYS = {
+    "kind",
+    "subject",
+    "statement",
+    "content",
+    "strength",
+    "origin",
+    "recall_mode",
+    "applies_to_paths",
+    "aliases",
+    "keywords",
+    "sources",
+}
 _SOURCE_KEYS = {"turn_id", "role", "quote"}
 _CONSOLIDATION_KEYS = {"operations"}
 _OPERATION_KEYS = {
     "operation",
     "candidate_ids",
     "target_id",
-    "title",
+    "kind",
+    "subject",
+    "statement",
     "content",
-    "synopsis",
+    "strength",
+    "origin",
+    "recall_mode",
+    "applies_to_paths",
     "aliases",
     "keywords",
 }
@@ -48,9 +74,32 @@ def parse_extraction_response(content: str) -> ExtractionResult:
         kind = _required_string(item["kind"], f"candidate[{index}].kind")
         if kind not in MEMORY_KINDS:
             raise MemoryContractError(f"不允许的 candidate kind: {kind}")
-        title = _bounded_string(item["title"], 160, f"candidate[{index}].title")
+        subject = _bounded_string(item["subject"], 160, f"candidate[{index}].subject")
+        statement = _memory_statement(
+            item["statement"], f"candidate[{index}].statement"
+        )
         body = _bounded_string(item["content"], 4_000, f"candidate[{index}].content")
+        strength = _enum_string(
+            item["strength"], MEMORY_STRENGTHS, f"candidate[{index}].strength"
+        )
+        origin = _enum_string(
+            item["origin"], MEMORY_ORIGINS, f"candidate[{index}].origin"
+        )
+        recall_mode = _enum_string(
+            item["recall_mode"],
+            MEMORY_RECALL_MODES,
+            f"candidate[{index}].recall_mode",
+        )
+        applies_to_paths = _string_array(
+            item["applies_to_paths"],
+            10,
+            400,
+            f"candidate[{index}].applies_to_paths",
+        )
         aliases = _string_array(item["aliases"], 12, 160, f"candidate[{index}].aliases")
+        keywords = _string_array(
+            item["keywords"], 24, 160, f"candidate[{index}].keywords"
+        )
         sources_raw = item["sources"]
         if not isinstance(sources_raw, list) or not sources_raw or len(sources_raw) > 8:
             raise MemoryContractError("candidate sources 必须是 1..8 项数组")
@@ -72,9 +121,15 @@ def parse_extraction_response(content: str) -> ExtractionResult:
         candidates.append(
             ExtractionCandidateInput(
                 kind=kind,
-                title=title,
+                subject=subject,
+                statement=statement,
                 content=body,
+                strength=strength,
+                origin=origin,
+                recall_mode=recall_mode,
+                applies_to_paths=applies_to_paths,
                 aliases=aliases,
+                keywords=keywords,
                 sources=tuple(sources),
             )
         )
@@ -104,9 +159,16 @@ def parse_consolidation_response(content: str) -> ConsolidationResult:
         target_id = target_raw.strip() if isinstance(target_raw, str) else None
         if target_id == "":
             target_id = None
-        title = _optional_bounded_string(item["title"], 160, "title")
+        kind = _optional_enum_string(item["kind"], MEMORY_KINDS, "kind")
+        subject = _optional_bounded_string(item["subject"], 160, "subject")
+        statement = _optional_memory_statement(item["statement"], "statement")
         body = _optional_bounded_string(item["content"], 4_000, "content")
-        synopsis = _optional_bounded_string(item["synopsis"], 400, "synopsis")
+        strength = _optional_enum_string(item["strength"], MEMORY_STRENGTHS, "strength")
+        origin = _optional_enum_string(item["origin"], MEMORY_ORIGINS, "origin")
+        recall_mode = _optional_enum_string(
+            item["recall_mode"], MEMORY_RECALL_MODES, "recall_mode"
+        )
+        applies_to_paths = _string_array(item["applies_to_paths"], 10, 400, "applies_to_paths")
         aliases = _string_array(item["aliases"], 16, 160, "aliases")
         keywords = _string_array(item["keywords"], 24, 160, "keywords")
         operations.append(
@@ -114,9 +176,14 @@ def parse_consolidation_response(content: str) -> ConsolidationResult:
                 operation=operation,
                 candidate_ids=candidate_ids,
                 target_id=target_id,
-                title=title,
+                kind=kind,
+                subject=subject,
+                statement=statement,
                 content=body,
-                synopsis=synopsis,
+                strength=strength,
+                origin=origin,
+                recall_mode=recall_mode,
+                applies_to_paths=applies_to_paths,
                 aliases=aliases,
                 keywords=keywords,
             )
@@ -162,6 +229,42 @@ def _optional_bounded_string(value: Any, limit: int, label: str) -> str:
     if len(value) > limit:
         raise MemoryContractError(f"{label} 超过 {limit} 字符")
     return value.strip()
+
+
+def _memory_statement(value: Any, label: str) -> str:
+    text = _required_string(value, label)
+    if estimate_text_tokens(text) > MAX_MEMORY_STATEMENT_TOKENS:
+        raise MemoryContractError(
+            f"{label} 超过 {MAX_MEMORY_STATEMENT_TOKENS} tokens"
+        )
+    return text
+
+
+def _optional_memory_statement(value: Any, label: str) -> str:
+    if not isinstance(value, str):
+        raise MemoryContractError(f"{label} 必须是 string")
+    text = value.strip()
+    if text and estimate_text_tokens(text) > MAX_MEMORY_STATEMENT_TOKENS:
+        raise MemoryContractError(
+            f"{label} 超过 {MAX_MEMORY_STATEMENT_TOKENS} tokens"
+        )
+    return text
+
+
+def _enum_string(value: Any, allowed: set[str], label: str) -> str:
+    text = _required_string(value, label)
+    if text not in allowed:
+        raise MemoryContractError(f"{label} 不允许值: {text}")
+    return text
+
+
+def _optional_enum_string(value: Any, allowed: set[str], label: str) -> str:
+    if not isinstance(value, str):
+        raise MemoryContractError(f"{label} 必须是 string")
+    text = value.strip()
+    if text and text not in allowed:
+        raise MemoryContractError(f"{label} 不允许值: {text}")
+    return text
 
 
 def _string_array(value: Any, limit: int, item_limit: int, label: str) -> tuple[str, ...]:

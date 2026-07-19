@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from autopatch_j.core.project import UnsafeRepoPathError, resolve_repo_path, to_repo_relative_path
+from autopatch_j.core.project import (
+    UnsafeRepoPathError,
+    is_project_state_path,
+    resolve_repo_path,
+    to_repo_relative_path,
+)
 from autopatch_j.tools.contract import FunctionTool, ToolExecutionResult, ToolRuntimeContext
 
 
@@ -21,6 +26,13 @@ class SourceReadToolBase(FunctionTool):
             normalized_path = to_repo_relative_path(context.repo_root, full_path)
         except UnsafeRepoPathError as exc:
             return ToolExecutionResult(status="error", message=f"读取失败：{exc}", summary=f"读取失败: {path}")
+
+        if is_project_state_path(normalized_path):
+            return ToolExecutionResult(
+                status="error",
+                message=f"读取失败：项目状态目录不属于源码范围：{normalized_path}",
+                summary=f"读取失败: {normalized_path}",
+            )
 
         if not full_path.exists():
             filename = Path(normalized_path).name

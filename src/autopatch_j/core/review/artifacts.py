@@ -100,6 +100,7 @@ class ProjectArtifactStore:
         return (
             name == "history.txt"
             or name.startswith("memory.db")
+            or name == "memory_summary.md"
             or name.startswith("memory-export")
         )
 

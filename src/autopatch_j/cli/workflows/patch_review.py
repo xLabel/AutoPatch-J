@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
+from autopatch_j.cli.workflows.memory_turn import run_durable_memory_turn
 from autopatch_j.core.domain import (
     IntentType,
     PatchDraftSnapshot,
@@ -11,6 +12,13 @@ from autopatch_j.core.domain import (
 from autopatch_j.core.finding import SourceRegion
 from autopatch_j.core.patching import SyntaxCheckResult
 from autopatch_j.core.patching.types import normalize_patch_path
+
+
+def _finding_evidence_keys(current_item: ReviewPatchItem) -> list[str]:
+    scan_id = current_item.draft.source_scan_id
+    if not scan_id:
+        return []
+    return [f"{scan_id}:{finding_id}" for finding_id in current_item.finding_ids]
 
 
 class PatchReviewWorkflow:
@@ -79,15 +87,25 @@ class PatchReviewWorkflow:
 
         focus_paths = self.services.summary_provider.fetch_review_scope_paths(current_item)
         runtime.agent.session.set_focus_paths(focus_paths)
-        self.services.agent_runner.run(
-            prompt=text,
-            agent_call=lambda p, **kwargs: runtime.agent.perform_patch_explain(
+        run_durable_memory_turn(
+            manager=runtime.memory_manager,
+            session=runtime.agent.session,
+            intent=IntentType.PATCH_EXPLAIN,
+            user_text=text,
+            scope_paths=[current_item.file_path],
+            evidence_keys=_finding_evidence_keys(current_item),
+            run=lambda: self.services.agent_runner.run(
+                prompt=text,
+                agent_call=lambda p, **kwargs: runtime.agent.perform_patch_explain(
+                    raw_user_text=text,
+                    current_item=current_item,
+                    **kwargs,
+                ),
+                answer_intent=IntentType.PATCH_EXPLAIN,
                 raw_user_text=text,
-                current_item=current_item,
-                **kwargs,
             ),
-            answer_intent=IntentType.PATCH_EXPLAIN,
-            raw_user_text=text,
+            assistant_text=lambda result: result.display_answer,
+            on_degraded=self.services.renderer.print_agent_text,
         )
 
     def handle_patch_revise(self, text: str) -> None:
@@ -105,13 +123,23 @@ class PatchReviewWorkflow:
         runtime.agent.session.set_focus_paths([current_item.file_path])
         runtime.agent.session.revised_patch_draft = None
 
-        self.services.agent_runner.run(
-            prompt=text,
-            agent_call=lambda p, **kwargs: runtime.agent.perform_patch_revise(
-                raw_user_text=text,
-                current_item=current_item,
-                **kwargs,
+        run_durable_memory_turn(
+            manager=runtime.memory_manager,
+            session=runtime.agent.session,
+            intent=IntentType.PATCH_REVISE,
+            user_text=text,
+            scope_paths=[current_item.file_path],
+            evidence_keys=_finding_evidence_keys(current_item),
+            run=lambda: self.services.agent_runner.run(
+                prompt=text,
+                agent_call=lambda p, **kwargs: runtime.agent.perform_patch_revise(
+                    raw_user_text=text,
+                    current_item=current_item,
+                    **kwargs,
+                ),
             ),
+            assistant_text=lambda result: result.display_answer,
+            on_degraded=self.services.renderer.print_agent_text,
         )
         revised_patch = runtime.agent.session.pop_revised_patch_draft()
         if revised_patch is None:

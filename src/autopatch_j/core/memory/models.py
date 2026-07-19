@@ -24,6 +24,27 @@ class MemoryKind(str, Enum):
     DISCUSSION_CONTEXT = "discussion_context"
 
 
+class MemoryStrength(str, Enum):
+    HARD = "hard"
+    SOFT = "soft"
+
+
+class MemoryOrigin(str, Enum):
+    EXPLICIT = "explicit"
+    ADOPTED_PROPOSAL = "adopted_proposal"
+    INFERRED_REPETITION = "inferred_repetition"
+
+
+class MemoryRecallMode(str, Enum):
+    ALWAYS = "always"
+    ON_MATCH = "on_match"
+
+
+class MemoryRecallLane(str, Enum):
+    STANDING = "standing"
+    RELEVANT = "relevant"
+
+
 class MemoryItemStatus(str, Enum):
     ACTIVE = "active"
     SUPERSEDED = "superseded"
@@ -80,6 +101,7 @@ class TurnRecord:
     user_text: str
     assistant_text: str
     scope_paths: tuple[str, ...]
+    evidence_keys: tuple[str, ...]
     state: str
     lease_owner: str
     lease_expires_at: str
@@ -124,11 +146,16 @@ class MemoryCandidate:
     extraction_job_id: str
     thread_id: str
     kind: str
-    title: str
+    subject: str
+    statement: str
     content: str
+    strength: str
+    origin: str
+    recall_mode: str
+    applies_to_paths: tuple[str, ...]
     aliases: tuple[str, ...]
+    keywords: tuple[str, ...]
     status: str
-    non_factual: bool
     sources: tuple[CandidateSource, ...]
     created_at: str
 
@@ -145,8 +172,8 @@ class MemorySource:
 class MemorySearchHit:
     id: str
     kind: str
-    title: str
-    synopsis: str
+    subject: str
+    statement: str
     match_type: str
 
 
@@ -154,8 +181,12 @@ class MemorySearchHit:
 class MemoryItemSummary:
     id: str
     kind: str
-    title: str
-    synopsis: str
+    subject: str
+    statement: str
+    strength: str
+    origin: str
+    recall_mode: str
+    applies_to_paths: tuple[str, ...]
     updated_at: str
 
 
@@ -166,14 +197,113 @@ class MemoryDetail:
     revision: int
     kind: str
     thread_id: str | None
-    title: str
+    subject: str
+    statement: str
     content: str
-    synopsis: str
+    strength: str
+    origin: str
+    recall_mode: str
+    applies_to_paths: tuple[str, ...]
+    aliases: tuple[str, ...]
+    keywords: tuple[str, ...]
     status: str
-    non_factual: bool
     sources: tuple[MemorySource, ...]
     access_count: int
     last_accessed_at: str | None
+    updated_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySummarySnapshot:
+    active_thread_id: str
+    thread_checkpoint: str
+    items: tuple[MemoryDetail, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySummaryStatus:
+    path: Path
+    state: str
+    active_item_count: int
+    last_projected_at: str | None
+    last_error: str
+
+
+@dataclass(frozen=True, slots=True)
+class MemorySummaryRefreshResult:
+    status: MemorySummaryStatus
+    changed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RecallQuery:
+    intent: str
+    thread_id: str
+    user_text: str
+    paths: tuple[str, ...] = ()
+    finding_path: str | None = None
+    check_id: str | None = None
+    finding_message: str | None = None
+    patch_path: str | None = None
+    bound_finding_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RecallPolicy:
+    intent: str
+    thread_id: str
+    allowed_kinds: tuple[str, ...]
+    allow_recent_history: bool
+    allow_thread_checkpoint: bool
+    allow_discussion: bool
+    durable_token_budget: int
+    map_token_budget: int
+    max_search_calls: int = 4
+    max_search_results: int = 8
+    max_read_ids: int = 8
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMapEntry:
+    id: str
+    lane: str
+    kind: str
+    subject: str
+    statement: str
+    strength: str
+    origin: str
+    applies_to_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryMap:
+    entries: tuple[MemoryMapEntry, ...]
+    omitted_count: int
+    estimated_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryRecallMatch:
+    entry: MemoryMapEntry
+    match_type: str
+    path_specificity: int
+    subject_exact: bool
+    alias_or_keyword_exact: bool
+    content_term_coverage: int
+    updated_at: str
+
+
+@dataclass(slots=True)
+class MemoryRequestState:
+    query: RecallQuery
+    policy: RecallPolicy
+    memory_map: MemoryMap
+    remaining_tokens: int
+    readable_ids: set[str] = field(default_factory=set)
+    search_queries: set[str] = field(default_factory=set)
+    search_cache: dict[str, tuple[MemorySearchHit, ...]] = field(default_factory=dict)
+    read_ids: set[str] = field(default_factory=set)
+    read_cache: dict[str, MemoryDetail] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,9 +368,15 @@ class ExtractionSourceInput:
 @dataclass(frozen=True, slots=True)
 class ExtractionCandidateInput:
     kind: str
-    title: str
+    subject: str
+    statement: str
     content: str
+    strength: str
+    origin: str
+    recall_mode: str
+    applies_to_paths: tuple[str, ...]
     aliases: tuple[str, ...]
+    keywords: tuple[str, ...]
     sources: tuple[CandidateSource, ...]
 
 
@@ -255,9 +391,14 @@ class ConsolidationOperation:
     operation: str
     candidate_ids: tuple[str, ...]
     target_id: str | None
-    title: str
+    kind: str
+    subject: str
+    statement: str
     content: str
-    synopsis: str
+    strength: str
+    origin: str
+    recall_mode: str
+    applies_to_paths: tuple[str, ...]
     aliases: tuple[str, ...]
     keywords: tuple[str, ...]
 

@@ -7,6 +7,7 @@ from collections.abc import Callable, Collection, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from functools import cache
+from itertools import combinations
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
@@ -18,19 +19,22 @@ from .constants import (
     JOB_LEASE_SECONDS,
     MAX_CONTENT_TERM_CHARS,
     MAX_CONTENT_TERMS,
-    MAX_HISTORY_CHARS,
-    MAX_HISTORY_TURNS,
     MAX_JOB_ERROR_CHARS,
     MAX_READ_SOURCES,
+    MAX_REPETITION_EVIDENCE_TOKENS,
+    MAX_REPETITION_EVIDENCE_TURNS,
     MAX_RELATED_ITEMS,
     MAX_SEARCH_QUERY_CHARS,
     MAX_SEARCH_QUERY_TOKENS,
     MAX_SEARCH_RESULTS,
+    MAX_SCOPE_PATHS,
     MAX_SOURCE_EXCERPT_CHARS,
     MEMORY_SCHEMA_VERSION,
+    REPAIR_MEMORY_INTENTS,
     RETRY_BACKOFF_SECONDS,
     TURN_LEASE_SECONDS,
 )
+from autopatch_j.llm.context_window import estimate_messages_tokens, estimate_text_tokens
 from .errors import (
     MemoryContractError,
     MemoryCorruptError,
@@ -44,6 +48,7 @@ from .models import (
     CandidateSource,
     ClaimedJobBatch,
     ClearResult,
+    ConsolidationOperation,
     ConsolidationResult,
     ExportResult,
     ExtractionCandidateInput,
@@ -55,10 +60,15 @@ from .models import (
     MemoryDetail,
     MemoryItemSummary,
     MemoryJob,
+    MemoryMapEntry,
+    MemoryRecallMatch,
     MemorySearchHit,
     MemorySource,
     MemoryStatus,
+    MemorySummarySnapshot,
     MemoryThread,
+    RecallPolicy,
+    RecallQuery,
     TurnHandle,
     TurnRecord,
     TurnState,
@@ -69,6 +79,7 @@ from .text_utils import (
     generate_id,
     iso_from_timestamp,
     normalize_text,
+    recall_terms,
     retrieval_terms,
     timestamp,
     utc_now,
@@ -100,6 +111,11 @@ _DURABLE_PREFERENCE_RE = re.compile(
 _TEMPORARY_REQUEST_RE = re.compile(
     r"(?:这次|本次|仅此(?:次|轮)|当前回答|这条回复"
     r"|\bfor (?:this|the current) (?:answer|reply|turn)\b|\bjust this time\b)",
+    re.IGNORECASE,
+)
+_LOCAL_REPAIR_REQUEST_RE = re.compile(
+    r"(?:这里|此处|当前补丁|这个补丁|本补丁"
+    r"|\bhere\b|\b(?:this|the current) patch\b)",
     re.IGNORECASE,
 )
 _DECISION_SIGNAL_RE = re.compile(
@@ -202,6 +218,10 @@ _JOB_ERROR_TRUNCATION_MARKER = (
 )
 
 
+def _paths_json(paths: Sequence[str]) -> str:
+    return json.dumps(sorted(set(paths)), ensure_ascii=False, separators=(",", ":"))
+
+
 def _evidence_clauses(value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in _CLAUSE_SPLIT_RE.split(value) if part.strip())
 
@@ -215,6 +235,30 @@ def _quoted_clauses(raw: str, quote: str) -> tuple[str, ...]:
         clause
         for clause in _evidence_clauses(raw)
         if quote in clause or clause in quote
+    )
+
+
+def _source_has_local_repair_scope(
+    source: CandidateSource,
+    turn: sqlite3.Row,
+) -> bool:
+    if str(turn["intent"]) not in REPAIR_MEMORY_INTENTS:
+        return False
+    raw_user_text = str(turn["user_text"])
+    return any(
+        _LOCAL_REPAIR_REQUEST_RE.search(clause)
+        for clause in _quoted_clauses(raw_user_text, source.quote)
+    )
+
+
+def _source_has_temporary_scope(
+    source: CandidateSource,
+    turn: sqlite3.Row,
+) -> bool:
+    raw_user_text = str(turn["user_text"])
+    return any(
+        _TEMPORARY_REQUEST_RE.search(clause)
+        for clause in _quoted_clauses(raw_user_text, source.quote)
     )
 
 
@@ -288,10 +332,16 @@ CREATE TABLE IF NOT EXISTS turns (
     id TEXT PRIMARY KEY,
     thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
     sequence INTEGER NOT NULL,
-    intent TEXT NOT NULL CHECK (intent IN ('code_explain', 'general_chat')),
+    intent TEXT NOT NULL CHECK (
+        intent IN (
+            'code_audit', 'code_explain', 'general_chat',
+            'patch_explain', 'patch_revise'
+        )
+    ),
     user_text TEXT NOT NULL,
     assistant_text TEXT NOT NULL DEFAULT '',
     scope_paths_json TEXT NOT NULL DEFAULT '[]',
+    evidence_keys_json TEXT NOT NULL DEFAULT '[]',
     state TEXT NOT NULL CHECK (state IN ('open', 'completed', 'failed', 'interrupted')),
     lease_owner TEXT NOT NULL,
     lease_expires_at REAL NOT NULL,
@@ -330,19 +380,22 @@ CREATE TABLE IF NOT EXISTS memory_candidates (
     kind TEXT NOT NULL CHECK (
         kind IN ('user_preference', 'project_decision', 'discussion_context')
     ),
-    title TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    statement TEXT NOT NULL,
     content TEXT NOT NULL,
+    strength TEXT NOT NULL CHECK (strength IN ('hard', 'soft')),
+    origin TEXT NOT NULL CHECK (
+        origin IN ('explicit', 'adopted_proposal', 'inferred_repetition')
+    ),
+    recall_mode TEXT NOT NULL CHECK (recall_mode IN ('always', 'on_match')),
+    applies_to_paths_json TEXT NOT NULL DEFAULT '[]',
     aliases_json TEXT NOT NULL DEFAULT '[]',
+    keywords_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL CHECK (
         status IN ('pending', 'consolidated', 'rejected', 'suppressed')
     ),
-    non_factual INTEGER NOT NULL CHECK (non_factual IN (0, 1)),
     created_at REAL NOT NULL,
-    updated_at REAL NOT NULL,
-    CHECK (
-        (kind = 'discussion_context' AND non_factual = 1)
-        OR (kind IN ('user_preference', 'project_decision') AND non_factual = 0)
-    )
+    updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS candidates_status ON memory_candidates(status, created_at);
 
@@ -362,11 +415,18 @@ CREATE TABLE IF NOT EXISTS memory_items (
         kind IN ('user_preference', 'project_decision', 'discussion_context')
     ),
     thread_id TEXT REFERENCES threads(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    statement TEXT NOT NULL,
     content TEXT NOT NULL,
-    synopsis TEXT NOT NULL,
+    strength TEXT NOT NULL CHECK (strength IN ('hard', 'soft')),
+    origin TEXT NOT NULL CHECK (
+        origin IN ('explicit', 'adopted_proposal', 'inferred_repetition')
+    ),
+    recall_mode TEXT NOT NULL CHECK (recall_mode IN ('always', 'on_match')),
+    applies_to_paths_json TEXT NOT NULL DEFAULT '[]',
+    aliases_json TEXT NOT NULL DEFAULT '[]',
+    keywords_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'forgotten')),
-    non_factual INTEGER NOT NULL CHECK (non_factual IN (0, 1)),
     replaced_by_id TEXT REFERENCES memory_items(id),
     access_count INTEGER NOT NULL DEFAULT 0,
     last_accessed_at REAL,
@@ -374,11 +434,10 @@ CREATE TABLE IF NOT EXISTS memory_items (
     updated_at REAL NOT NULL,
     UNIQUE(logical_id, revision),
     CHECK (
-        (kind = 'discussion_context' AND thread_id IS NOT NULL AND non_factual = 1)
+        (kind = 'discussion_context' AND thread_id IS NOT NULL)
         OR (
             kind IN ('user_preference', 'project_decision')
             AND thread_id IS NULL
-            AND non_factual = 0
         )
     )
 );
@@ -400,7 +459,9 @@ CREATE TABLE IF NOT EXISTS memory_item_candidates (
 CREATE TABLE IF NOT EXISTS memory_terms (
     item_id TEXT NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
     term TEXT NOT NULL,
-    term_type TEXT NOT NULL CHECK (term_type IN ('title', 'alias', 'keyword', 'content')),
+    term_type TEXT NOT NULL CHECK (
+        term_type IN ('subject', 'alias', 'keyword', 'content', 'path')
+    ),
     PRIMARY KEY(item_id, term, term_type)
 );
 CREATE INDEX IF NOT EXISTS terms_lookup
@@ -442,7 +503,7 @@ def _expected_schema_manifest() -> tuple[tuple[str, str, str, str], ...]:
 
 
 class MemoryStore:
-    """SQLite v2 repository；每次操作使用短连接和显式事务。"""
+    """SQLite v3 repository；每次操作使用短连接和显式事务。"""
 
     def __init__(
         self,
@@ -456,16 +517,24 @@ class MemoryStore:
         self.legacy_json_path = legacy_json_path or self.db_path.with_name("memory.json")
         self.clock = clock
         self.busy_timeout_ms = busy_timeout_ms
-        self._delete_legacy_json()
         self._initialize()
 
-    def _delete_legacy_json(self) -> None:
-        try:
-            self.legacy_json_path.unlink(missing_ok=True)
-        except OSError as exc:
-            raise MemoryStorageError(
-                f"无法删除旧 Memory 文件 {self.legacy_json_path}: {exc}"
-            ) from exc
+    @classmethod
+    def open_recovery_view(
+        cls,
+        db_path: Path,
+        *,
+        clock: Callable[[], datetime] = utc_now,
+        busy_timeout_ms: int = 5_000,
+    ) -> "MemoryStore":
+        """打开只读诊断视图，不验证或改写 bootstrap/schema。"""
+
+        store = cls.__new__(cls)
+        store.db_path = Path(db_path)
+        store.legacy_json_path = store.db_path.with_name("memory.json")
+        store.clock = clock
+        store.busy_timeout_ms = busy_timeout_ms
+        return store
 
     def _initialize(self) -> None:
         try:
@@ -475,7 +544,7 @@ class MemoryStore:
                     connection
                 )
                 if version == MEMORY_SCHEMA_VERSION:
-                    self._validate_v2_database(connection)
+                    self._validate_v3_database(connection)
             with self._connect(enable_wal=False) as connection:
                 try:
                     connection.execute("BEGIN IMMEDIATE")
@@ -483,8 +552,8 @@ class MemoryStore:
                         connection
                     )
                     if version == 0:
-                        self._create_v2_database(connection)
-                    self._validate_v2_database(connection)
+                        self._create_v3_database(connection)
+                    self._validate_v3_database(connection)
                     connection.commit()
                 except Exception:
                     connection.rollback()
@@ -498,7 +567,7 @@ class MemoryStore:
         except OSError as exc:
             raise MemoryStorageError(f"无法初始化 Memory database: {exc}") from exc
 
-    def _create_v2_database(self, connection: sqlite3.Connection) -> None:
+    def _create_v3_database(self, connection: sqlite3.Connection) -> None:
         for statement in _SCHEMA_SQL.split(";"):
             if statement.strip():
                 connection.execute(statement)
@@ -534,12 +603,12 @@ class MemoryStore:
         if existing is not None:
             raise MemorySchemaError(
                 "拒绝把 user_version=0 且包含未知 schema object 的 "
-                "Memory database 静默升级到 v2: "
+                "Memory database 静默升级到 v3: "
                 f"{existing['type']}:{existing['name']}"
             )
         return version
 
-    def _validate_v2_database(self, connection: sqlite3.Connection) -> None:
+    def _validate_v3_database(self, connection: sqlite3.Connection) -> None:
         check = connection.execute("PRAGMA quick_check(1)").fetchone()[0]
         if check != "ok":
             raise MemoryCorruptError(f"Memory database quick_check 失败: {check}")
@@ -677,7 +746,7 @@ class MemoryStore:
         ).fetchall()
         if len(rows) != 1:
             raise MemorySchemaError(
-                "Memory v2 active thread 数量必须为 1，"
+                "Memory v3 active thread 数量必须为 1，"
                 f"实际为 {len(rows)}"
             )
         return rows[0]
@@ -686,7 +755,7 @@ class MemoryStore:
         rows = connection.execute("SELECT * FROM memory_meta ORDER BY id").fetchall()
         if len(rows) != 1 or int(rows[0]["id"]) != 1:
             raise MemorySchemaError(
-                "Memory v2 memory_meta singleton 缺失或不唯一"
+                "Memory v3 memory_meta singleton 缺失或不唯一"
             )
         return rows[0]
 
@@ -726,14 +795,22 @@ class MemoryStore:
         user_text: str,
         owner: str,
         scope_paths: Sequence[str] | None = None,
+        evidence_keys: Sequence[str] | None = None,
     ) -> TurnHandle:
-        if intent not in {"code_explain", "general_chat"}:
-            raise ValueError(f"repair intent 不得写入 Memory: {intent}")
+        if intent not in {
+            "code_audit",
+            "code_explain",
+            "general_chat",
+            "patch_explain",
+            "patch_revise",
+        }:
+            raise ValueError(f"不支持的 Memory turn intent: {intent}")
         if not owner.strip():
             raise ValueError("turn owner 不能为空")
         now = self._now()
         lease_expires_at = now + TURN_LEASE_SECONDS
         turn_id = generate_id("turn")
+        bounded_scope_paths = list(scope_paths or ())[:MAX_SCOPE_PATHS]
         with self._transaction() as connection:
             thread = self._require_active_thread_in_transaction(connection)
             sequence = int(
@@ -746,9 +823,10 @@ class MemoryStore:
                 """
                 INSERT INTO turns(
                     id, thread_id, sequence, intent, user_text, assistant_text,
-                    scope_paths_json, state, lease_owner, lease_expires_at,
+                    scope_paths_json, evidence_keys_json, state,
+                    lease_owner, lease_expires_at,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, '', ?, 'open', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, '', ?, ?, 'open', ?, ?, ?, ?)
                 """,
                 (
                     turn_id,
@@ -756,7 +834,8 @@ class MemoryStore:
                     sequence,
                     intent,
                     user_text,
-                    json.dumps(list(scope_paths or ()), ensure_ascii=False),
+                    json.dumps(bounded_scope_paths, ensure_ascii=False),
+                    json.dumps(list(evidence_keys or ()), ensure_ascii=False),
                     owner,
                     lease_expires_at,
                     now,
@@ -1104,25 +1183,84 @@ class MemoryStore:
                 """,
                 (thread_id, first_sequence),
             ).fetchone()
+            repetition_evidence = self._repetition_evidence_payload(
+                connection,
+                thread_id=str(thread_id),
+                through_sequence=max(int(row["sequence"]) for row in rows),
+                enabled=any(
+                    str(row["intent"])
+                    in {"code_audit", "patch_explain", "patch_revise"}
+                    for row in rows
+                ),
+            )
             return {
                 "thread_id": thread_id,
                 "previous_compaction": thread["compaction"] if thread else "",
                 "adjacent_previous_turn": self._turn_payload(adjacent) if adjacent else None,
                 "turns": [self._turn_payload(row) for row in rows],
+                "recent_repair_evidence": repetition_evidence,
             }
+
+    def _repetition_evidence_payload(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        thread_id: str,
+        through_sequence: int,
+        enabled: bool,
+    ) -> list[dict[str, Any]]:
+        if not enabled:
+            return []
+        rows = connection.execute(
+            """
+            SELECT * FROM turns
+            WHERE thread_id = ?
+              AND sequence <= ?
+              AND state <> 'open'
+              AND intent IN ('code_audit', 'patch_explain', 'patch_revise')
+              AND evidence_keys_json <> '[]'
+            ORDER BY sequence DESC
+            LIMIT ?
+            """,
+            (thread_id, through_sequence, MAX_REPETITION_EVIDENCE_TURNS),
+        ).fetchall()
+        selected: list[dict[str, Any]] = []
+        used_tokens = 0
+        for row in rows:
+            payload = self._turn_payload(row)
+            tokens = estimate_text_tokens(
+                json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            )
+            if used_tokens + tokens > MAX_REPETITION_EVIDENCE_TOKENS:
+                continue
+            selected.append(payload)
+            used_tokens += tokens
+        return list(reversed(selected))
 
     def complete_extraction(
         self,
         batch: ClaimedJobBatch,
         result: ExtractionResult,
+        evidence_turn_ids: Sequence[str] = (),
     ) -> tuple[str, ...]:
         self._assert_batch_shape(batch, JobKind.EXTRACTION.value)
         now = self._now()
         candidate_ids: list[str] = []
         with self._transaction() as connection:
             self._validate_lease(connection, batch)
-            valid_turns = self._turn_text_lookup(connection, batch)
-            eligible_candidates = self._validate_extraction_result(result, valid_turns)
+            primary_turn_ids = {
+                str(job.payload.get("turn_id", "")) for job in batch.jobs
+            }
+            valid_turns = self._turn_text_lookup(
+                connection,
+                batch,
+                evidence_turn_ids=evidence_turn_ids,
+            )
+            eligible_candidates = self._validate_extraction_result(
+                result,
+                valid_turns,
+                primary_turn_ids,
+            )
             max_sequence = max(int(item["sequence"]) for item in valid_turns.values())
             connection.execute(
                 """
@@ -1144,19 +1282,26 @@ class MemoryStore:
                 connection.execute(
                     """
                     INSERT INTO memory_candidates(
-                        id, extraction_job_id, thread_id, kind, title, content,
-                        aliases_json, status, non_factual, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                        id, extraction_job_id, thread_id, kind, subject, statement,
+                        content, strength, origin, recall_mode,
+                        applies_to_paths_json, aliases_json, keywords_json,
+                        status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
                     """,
                     (
                         candidate_id,
                         extraction_job_id,
                         batch.jobs[0].thread_id,
                         candidate.kind,
-                        candidate.title,
+                        candidate.subject,
+                        candidate.statement,
                         candidate.content,
+                        candidate.strength,
+                        candidate.origin,
+                        candidate.recall_mode,
+                        _paths_json(candidate.applies_to_paths),
                         json.dumps(candidate.aliases, ensure_ascii=False),
-                        1 if candidate.kind == "discussion_context" else 0,
+                        json.dumps(candidate.keywords, ensure_ascii=False),
                         now,
                         now,
                     ),
@@ -1220,8 +1365,13 @@ class MemoryStore:
         self,
         connection: sqlite3.Connection,
         batch: ClaimedJobBatch,
+        *,
+        evidence_turn_ids: Sequence[str] = (),
     ) -> dict[str, sqlite3.Row]:
-        turn_ids = [str(job.payload.get("turn_id", "")) for job in batch.jobs]
+        primary_turn_ids = [
+            str(job.payload.get("turn_id", "")) for job in batch.jobs
+        ]
+        turn_ids = list(dict.fromkeys((*primary_turn_ids, *evidence_turn_ids)))
         placeholders = ",".join("?" for _ in turn_ids)
         rows = connection.execute(
             f"SELECT * FROM turns WHERE id IN ({placeholders})", tuple(turn_ids)
@@ -1246,6 +1396,7 @@ class MemoryStore:
         self,
         result: ExtractionResult,
         turns: dict[str, sqlite3.Row],
+        primary_turn_ids: set[str],
     ) -> tuple[ExtractionCandidateInput, ...]:
         # Validate the complete provenance envelope before filtering semantics. A
         # forged source invalidates the response; an unsupported interpretation
@@ -1267,23 +1418,63 @@ class MemoryStore:
         return tuple(
             candidate
             for candidate in result.candidates
-            if self._candidate_has_explicit_evidence(candidate, turns)
+            if self._candidate_has_valid_semantics(
+                candidate,
+                turns,
+                primary_turn_ids,
+            )
         )
 
-    def _candidate_has_explicit_evidence(
+    def _candidate_has_valid_semantics(
         self,
         candidate: ExtractionCandidateInput,
         turns: dict[str, sqlite3.Row],
+        primary_turn_ids: set[str],
     ) -> bool:
+        if not self._candidate_paths_are_sourced(candidate, turns):
+            return False
+        if candidate.recall_mode == "always" and (
+            candidate.strength != "hard"
+            or candidate.origin == "inferred_repetition"
+            or candidate.kind == "discussion_context"
+        ):
+            return False
+        user_sources = [source for source in candidate.sources if source.role == "user"]
+        if candidate.origin != "inferred_repetition" and any(
+            _source_has_local_repair_scope(source, turns[source.turn_id])
+            for source in user_sources
+        ):
+            return False
+        if candidate.origin != "inferred_repetition" and not any(
+            source.turn_id in primary_turn_ids for source in user_sources
+        ):
+            return False
         if candidate.kind == "discussion_context":
-            return not _is_obvious_current_code_fact(candidate.content)
+            return (
+                candidate.strength == "soft"
+                and candidate.origin == "explicit"
+                and candidate.recall_mode == "on_match"
+                and any(source.role == "user" for source in candidate.sources)
+                and not _is_obvious_current_code_fact(
+                    " ".join((candidate.subject, candidate.statement, candidate.content))
+                )
+            )
         if candidate.kind not in {"user_preference", "project_decision"}:
             return False
 
-        user_sources = [source for source in candidate.sources if source.role == "user"]
         if not user_sources:
             return False
-        candidate_anchors = _semantic_anchors(candidate.content)
+        if candidate.origin == "inferred_repetition":
+            return self._is_supported_repetition(candidate, turns)
+        if any(
+            _source_has_temporary_scope(source, turns[source.turn_id])
+            for source in user_sources
+        ):
+            return False
+
+        candidate_anchors = _semantic_anchors(
+            " ".join((candidate.subject, candidate.statement, candidate.content))
+        )
         if not candidate_anchors:
             return False
 
@@ -1297,11 +1488,11 @@ class MemoryStore:
                 if not candidate_anchors.intersection(_semantic_anchors(clause)):
                     continue
                 if candidate.kind == "user_preference" and _is_direct_preference(clause):
-                    return True
+                    return candidate.origin == "explicit"
                 if candidate.kind == "project_decision" and _is_direct_decision(clause):
-                    return True
+                    return candidate.origin == "explicit"
 
-        if candidate.kind != "project_decision":
+        if candidate.kind != "project_decision" or candidate.origin != "adopted_proposal":
             return False
         return any(
             self._acknowledgement_has_adjacent_proposal(
@@ -1309,6 +1500,68 @@ class MemoryStore:
             )
             for source in acknowledgement_sources
         )
+
+    @staticmethod
+    def _candidate_paths_are_sourced(
+        candidate: ExtractionCandidateInput,
+        turns: dict[str, sqlite3.Row],
+    ) -> bool:
+        available = {
+            str(path)
+            for source in candidate.sources
+            for path in json.loads(turns[source.turn_id]["scope_paths_json"])
+        }
+        return set(candidate.applies_to_paths) <= available
+
+    @staticmethod
+    def _is_supported_repetition(
+        candidate: ExtractionCandidateInput,
+        turns: dict[str, sqlite3.Row],
+    ) -> bool:
+        if (
+            candidate.kind != "user_preference"
+            or candidate.strength != "soft"
+            or candidate.recall_mode != "on_match"
+        ):
+            return False
+        user_turn_ids = {
+            source.turn_id for source in candidate.sources if source.role == "user"
+        }
+        candidate_anchors = _semantic_anchors(
+            " ".join((candidate.subject, candidate.statement, candidate.content))
+        )
+        if not candidate_anchors or any(
+            not candidate_anchors.intersection(_semantic_anchors(source.quote))
+            for source in candidate.sources
+            if source.role == "user"
+        ):
+            return False
+        evidence_keys_by_turn = {
+            turn_id: {
+                str(key)
+                for key in json.loads(turns[turn_id]["evidence_keys_json"])
+            }
+            for turn_id in user_turn_ids
+        }
+        for source_turn_ids in combinations(sorted(user_turn_ids), 3):
+            key_sets = [evidence_keys_by_turn[turn_id] for turn_id in source_turn_ids]
+            if any(not keys for keys in key_sets):
+                continue
+            if len(set().union(*key_sets)) < 3:
+                continue
+            if any(
+                len(left | right) < 2
+                for left, right in combinations(key_sets, 2)
+            ):
+                continue
+            paths = {
+                str(path)
+                for turn_id in source_turn_ids
+                for path in json.loads(turns[turn_id]["scope_paths_json"])
+            }
+            if len(paths) >= 2:
+                return True
+        return False
 
     @staticmethod
     def _acknowledgement_has_adjacent_proposal(
@@ -1389,13 +1642,32 @@ class MemoryStore:
                     )
                     continue
                 selected = [candidates[item_id] for item_id in operation.candidate_ids]
-                kind, thread_id = self._validate_candidate_group(selected)
+                scope_kind, thread_id, applies_to_paths = self._validate_candidate_group(
+                    selected
+                )
+                dominant = max(selected, key=self._candidate_precedence)
+                self._validate_consolidated_semantics(
+                    operation,
+                    scope_kind=scope_kind,
+                    applies_to_paths=applies_to_paths,
+                    dominant=dominant,
+                )
                 if operation.operation == "create":
                     if operation.target_id is not None:
                         raise MemoryContractError("create 不允许 target_id")
+                    if self._has_exact_related_identity(
+                        connection,
+                        related_target_ids,
+                        operation.subject,
+                        applies_to_paths,
+                        scope_kind,
+                        thread_id,
+                    ):
+                        raise MemoryContractError(
+                            "相同 subject/applicability 已有 active item，必须选择 target_id"
+                        )
                     logical_id = generate_id("memory")
                     revision = 1
-                    previous_candidate_ids: set[str] = set()
                     old_id = None
                 else:
                     if operation.operation not in {"revise", "supersede"}:
@@ -1414,38 +1686,47 @@ class MemoryStore:
                     ).fetchone()
                     if target is None:
                         raise MemoryContractError("target item 不存在或不是 active")
-                    if target["kind"] != kind or target["thread_id"] != thread_id:
+                    if not self._target_scope_matches(
+                        target,
+                        scope_kind=scope_kind,
+                        thread_id=thread_id,
+                        applies_to_paths=applies_to_paths,
+                    ):
                         raise MemoryContractError("target item 与 candidates 的作用域不一致")
+                    if (
+                        str(target["origin"]) in {"explicit", "adopted_proposal"}
+                        and dominant.origin == "inferred_repetition"
+                    ):
+                        raise MemoryContractError("inferred candidate 不得覆盖 explicit item")
                     logical_id = str(target["logical_id"])
                     revision = int(target["revision"]) + 1
                     old_id = str(target["id"])
-                    previous_candidate_ids = {
-                        str(row[0])
-                        for row in connection.execute(
-                            "SELECT candidate_id FROM memory_item_candidates WHERE item_id = ?",
-                            (old_id,),
-                        ).fetchall()
-                    }
-                if not operation.title or not operation.content or not operation.synopsis:
+                if not operation.subject or not operation.statement or not operation.content:
                     raise MemoryContractError("create/revise/supersede 缺少 item 正文")
                 item_id = f"{logical_id}_r{revision}"
                 connection.execute(
                     """
                     INSERT INTO memory_items(
-                        id, logical_id, revision, kind, thread_id, title, content,
-                        synopsis, status, non_factual, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+                        id, logical_id, revision, kind, thread_id, subject, statement,
+                        content, strength, origin, recall_mode, applies_to_paths_json,
+                        aliases_json, keywords_json, status, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
                     """,
                     (
                         item_id,
                         logical_id,
                         revision,
-                        kind,
+                        operation.kind,
                         thread_id,
-                        operation.title,
+                        operation.subject,
+                        operation.statement,
                         operation.content,
-                        operation.synopsis,
-                        1 if kind == "discussion_context" else 0,
+                        operation.strength,
+                        operation.origin,
+                        operation.recall_mode,
+                        _paths_json(applies_to_paths),
+                        json.dumps(operation.aliases, ensure_ascii=False),
+                        json.dumps(operation.keywords, ensure_ascii=False),
                         now,
                         now,
                     ),
@@ -1459,8 +1740,7 @@ class MemoryStore:
                         """,
                         (item_id, now, old_id),
                     )
-                all_candidate_ids = previous_candidate_ids | operation_ids
-                for candidate_id in all_candidate_ids:
+                for candidate_id in operation_ids:
                     connection.execute(
                         """
                         INSERT INTO memory_item_candidates(item_id, candidate_id)
@@ -1471,10 +1751,12 @@ class MemoryStore:
                 self._insert_terms(
                     connection,
                     item_id,
-                    operation.title,
+                    operation.subject,
+                    operation.statement,
                     operation.content,
                     operation.aliases,
                     operation.keywords,
+                    applies_to_paths,
                 )
                 self._set_candidate_status(
                     connection, operation_ids, "consolidated", now
@@ -1550,71 +1832,100 @@ class MemoryStore:
         self,
         thread_id: str | None = None,
         exclude_turn_id: str | None = None,
+        max_tokens: int = 384 * 1024,
     ) -> list[dict[str, str]]:
+        if max_tokens <= 0:
+            return []
+        messages: list[dict[str, str]] = []
+        used_tokens = 0
+        before_sequence: int | None = None
         with self._operational_connection() as connection:
             effective_thread = thread_id or self._active_thread_id(connection)
             if effective_thread is None:
                 return []
-            parameters: list[Any] = [effective_thread]
-            exclude = ""
-            if exclude_turn_id is not None:
-                exclude = " AND id <> ?"
-                parameters.append(exclude_turn_id)
-            rows = connection.execute(
-                f"""
-                SELECT * FROM turns
-                WHERE thread_id = ? AND state = 'completed'{exclude}
-                ORDER BY sequence DESC LIMIT ?
-                """,
-                (*parameters, MAX_HISTORY_TURNS),
-            ).fetchall()[::-1]
-        messages: list[dict[str, str]] = []
-        total = 0
-        for row in reversed(rows):
-            user_text = str(row["user_text"])
-            assistant_text = str(row["assistant_text"])
-            size = len(user_text) + len(assistant_text)
-            remaining = MAX_HISTORY_CHARS - total
-            if size > remaining:
-                if messages or remaining < 2:
+            while True:
+                parameters: list[Any] = [effective_thread]
+                filters = ""
+                if exclude_turn_id is not None:
+                    filters += " AND id <> ?"
+                    parameters.append(exclude_turn_id)
+                if before_sequence is not None:
+                    filters += " AND sequence < ?"
+                    parameters.append(before_sequence)
+                rows = connection.execute(
+                    f"""
+                    SELECT * FROM turns
+                    WHERE thread_id = ?
+                      AND state = 'completed'
+                      AND intent IN ('code_explain', 'general_chat'){filters}
+                    ORDER BY sequence DESC
+                    LIMIT 128
+                    """,
+                    tuple(parameters),
+                ).fetchall()
+                if not rows:
                     break
-                user_text, assistant_text = self._clip_turn_pair(
-                    user_text, assistant_text, remaining
-                )
-            pair = [
-                {"role": "user", "content": user_text},
-                {"role": "assistant", "content": assistant_text},
-            ]
-            messages[0:0] = pair
-            total += len(user_text) + len(assistant_text)
+                for row in rows:
+                    user_text = str(row["user_text"])
+                    assistant_text = str(row["assistant_text"])
+                    pair = [
+                        {"role": "user", "content": user_text},
+                        {"role": "assistant", "content": assistant_text},
+                    ]
+                    pair_tokens = estimate_messages_tokens(pair)
+                    remaining = max_tokens - used_tokens
+                    if pair_tokens > remaining:
+                        if messages or remaining <= 16:
+                            return messages
+                        user_text, assistant_text = self._clip_turn_pair_tokens(
+                            user_text, assistant_text, remaining
+                        )
+                        pair = [
+                            {"role": "user", "content": user_text},
+                            {"role": "assistant", "content": assistant_text},
+                        ]
+                        pair_tokens = estimate_messages_tokens(pair)
+                    messages[0:0] = pair
+                    used_tokens += pair_tokens
+                before_sequence = int(rows[-1]["sequence"])
+                if len(rows) < 128:
+                    break
         return messages
 
-    def _clip_turn_pair(
+    def _clip_turn_pair_tokens(
         self,
         user_text: str,
         assistant_text: str,
-        budget: int,
+        token_budget: int,
     ) -> tuple[str, str]:
-        user_budget = min(len(user_text), budget // 2)
-        assistant_budget = min(len(assistant_text), budget - user_budget)
-        remaining = budget - user_budget - assistant_budget
-        if remaining and len(user_text) > user_budget:
-            extra = min(remaining, len(user_text) - user_budget)
-            user_budget += extra
-            remaining -= extra
-        if remaining and len(assistant_text) > assistant_budget:
-            assistant_budget += min(remaining, len(assistant_text) - assistant_budget)
+        content_budget = max(0, token_budget - 16)
+        user_tokens = estimate_text_tokens(user_text)
+        assistant_tokens = estimate_text_tokens(assistant_text)
+        total_tokens = max(1, user_tokens + assistant_tokens)
+        user_budget = min(
+            user_tokens,
+            max(1, int(content_budget * user_tokens / total_tokens)),
+        )
+        assistant_budget = max(0, content_budget - user_budget)
         return (
-            self._clip_raw_projection(user_text, user_budget),
-            self._clip_raw_projection(assistant_text, assistant_budget),
+            self._clip_text_projection(user_text, user_budget),
+            self._clip_text_projection(assistant_text, assistant_budget),
         )
 
-    def _clip_raw_projection(self, text: str, limit: int) -> str:
-        if len(text) <= limit:
+    def _clip_text_projection(self, text: str, token_budget: int) -> str:
+        if estimate_text_tokens(text) <= token_budget:
             return text
-        if limit <= 1:
-            return text[:limit]
-        return text[: limit - 1] + "…"
+        if token_budget <= 0:
+            return ""
+        marker = "…"
+        content_tokens = max(0, token_budget - estimate_text_tokens(marker))
+        encoded = text.encode("utf-8")[: content_tokens * 3]
+        while encoded:
+            try:
+                return encoded.decode("utf-8").rstrip() + marker
+            except UnicodeDecodeError:
+                encoded = encoded[:-1]
+        return marker if token_budget else ""
 
     def active_thread_compaction(self, thread_id: str | None = None) -> str:
         with self._operational_connection() as connection:
@@ -1639,6 +1950,263 @@ class MemoryStore:
                 (active_thread,),
             ).fetchall()
             return [self._summary_from_row(row) for row in rows]
+
+    def summary_snapshot(self) -> MemorySummarySnapshot:
+        with self._connect() as connection:
+            try:
+                connection.execute("BEGIN")
+                self._require_bootstrap_state(connection)
+                active_thread = self._require_active_thread_in_transaction(connection)
+                active_thread_id = str(active_thread["id"])
+                item_rows = connection.execute(
+                    """
+                    SELECT * FROM memory_items
+                    WHERE status = 'active'
+                      AND (kind <> 'discussion_context' OR thread_id = ?)
+                    ORDER BY updated_at DESC, id ASC
+                    """,
+                    (active_thread_id,),
+                ).fetchall()
+                source_rows = connection.execute(
+                    """
+                    WITH unique_sources AS (
+                        SELECT DISTINCT
+                            mic.item_id,
+                            cs.turn_id,
+                            cs.role,
+                            cs.quote,
+                            t.created_at
+                        FROM memory_item_candidates AS mic
+                        JOIN memory_items AS item ON item.id = mic.item_id
+                        JOIN candidate_sources AS cs
+                          ON cs.candidate_id = mic.candidate_id
+                        JOIN turns AS t ON t.id = cs.turn_id
+                        WHERE item.status = 'active'
+                          AND (
+                              item.kind <> 'discussion_context'
+                              OR item.thread_id = ?
+                          )
+                    ), ranked_sources AS (
+                        SELECT
+                            *,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY item_id
+                                ORDER BY
+                                    created_at ASC,
+                                    turn_id ASC,
+                                    role ASC,
+                                    quote ASC
+                            ) AS source_rank
+                        FROM unique_sources
+                    )
+                    SELECT * FROM ranked_sources
+                    WHERE source_rank <= ?
+                    ORDER BY item_id ASC, source_rank ASC
+                    """,
+                    (active_thread_id, MAX_READ_SOURCES),
+                ).fetchall()
+                sources_by_item: dict[str, list[MemorySource]] = {}
+                for source in source_rows:
+                    sources_by_item.setdefault(str(source["item_id"]), []).append(
+                        MemorySource(
+                            turn_id=str(source["turn_id"]),
+                            role=str(source["role"]),
+                            quote=compact_text(
+                                source["quote"], MAX_SOURCE_EXCERPT_CHARS
+                            ),
+                            created_at=iso_from_timestamp(source["created_at"])
+                            or "",
+                        )
+                    )
+                snapshot = MemorySummarySnapshot(
+                    active_thread_id=active_thread_id,
+                    thread_checkpoint=str(active_thread["compaction"]),
+                    items=tuple(
+                        self._detail_from_row_with_sources(
+                            row,
+                            tuple(sources_by_item.get(str(row["id"]), ())),
+                        )
+                        for row in item_rows
+                    ),
+                )
+                connection.commit()
+                return snapshot
+            except Exception:
+                connection.rollback()
+                raise
+
+    def match_recall(
+        self,
+        query: RecallQuery,
+        policy: RecallPolicy,
+        *,
+        include_standing_without_match: bool,
+    ) -> list[MemoryRecallMatch]:
+        if query.intent != policy.intent or query.thread_id != policy.thread_id:
+            raise MemoryContractError("RecallQuery 与 RecallPolicy binding 不一致")
+        allowed_kinds = tuple(
+            kind
+            for kind in policy.allowed_kinds
+            if kind != "discussion_context" or policy.allow_discussion
+        )
+        if not allowed_kinds:
+            return []
+        placeholders = ",".join("?" for _ in allowed_kinds)
+        with self._operational_connection() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM memory_items
+                WHERE status = 'active'
+                  AND kind IN ({placeholders})
+                  AND (kind <> 'discussion_context' OR thread_id = ?)
+                ORDER BY id COLLATE BINARY ASC
+                """,
+                (*allowed_kinds, policy.thread_id),
+            ).fetchall()
+            matches = [
+                match
+                for row in rows
+                if (
+                    match := self._recall_match_from_row(
+                        connection,
+                        row,
+                        query,
+                        include_standing_without_match=include_standing_without_match,
+                    )
+                )
+                is not None
+            ]
+        matches.sort(key=lambda match: match.entry.id)
+        matches.sort(key=lambda match: match.updated_at, reverse=True)
+        matches.sort(key=self._recall_rank, reverse=True)
+        return matches
+
+    def _recall_match_from_row(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        query: RecallQuery,
+        *,
+        include_standing_without_match: bool,
+    ) -> MemoryRecallMatch | None:
+        item_paths = tuple(json.loads(row["applies_to_paths_json"]))
+        request_paths = tuple(
+            path
+            for path in (
+                *query.paths,
+                query.finding_path,
+                query.patch_path,
+            )
+            if path
+        )
+        path_specificity = self._path_specificity(item_paths, request_paths)
+        if path_specificity < 0:
+            return None
+        query_terms = set(
+            recall_terms(
+                (
+                    query.check_id or "",
+                    query.finding_message or "",
+                    query.bound_finding_id or "",
+                    query.user_text,
+                ),
+                limit=32,
+            )
+        )
+        term_rows = connection.execute(
+            "SELECT term, term_type FROM memory_terms WHERE item_id = ?",
+            (row["id"],),
+        ).fetchall()
+        terms_by_type: dict[str, set[str]] = {}
+        for term_row in term_rows:
+            terms_by_type.setdefault(str(term_row["term_type"]), set()).add(
+                str(term_row["term"])
+            )
+        subject_exact = bool(query_terms & terms_by_type.get("subject", set()))
+        alias_or_keyword_exact = bool(
+            query_terms
+            & (
+                terms_by_type.get("alias", set())
+                | terms_by_type.get("keyword", set())
+            )
+        )
+        content_term_coverage = len(
+            query_terms & terms_by_type.get("content", set())
+        )
+        has_lexical_match = (
+            subject_exact or alias_or_keyword_exact or content_term_coverage >= 2
+        )
+        is_standing = str(row["recall_mode"]) == "always"
+        if is_standing and include_standing_without_match:
+            lane = "standing"
+            match_type = "standing"
+        elif has_lexical_match:
+            lane = "relevant"
+            match_type = (
+                "subject"
+                if subject_exact
+                else "alias_or_keyword"
+                if alias_or_keyword_exact
+                else "content_terms"
+            )
+        else:
+            return None
+        entry = MemoryMapEntry(
+            id=str(row["id"]),
+            lane=lane,
+            kind=str(row["kind"]),
+            subject=str(row["subject"]),
+            statement=str(row["statement"]),
+            strength=str(row["strength"]),
+            origin=str(row["origin"]),
+            applies_to_paths=item_paths,
+        )
+        return MemoryRecallMatch(
+            entry=entry,
+            match_type=match_type,
+            path_specificity=path_specificity,
+            subject_exact=subject_exact,
+            alias_or_keyword_exact=alias_or_keyword_exact,
+            content_term_coverage=content_term_coverage,
+            updated_at=iso_from_timestamp(row["updated_at"]) or "",
+        )
+
+    @staticmethod
+    def _path_specificity(
+        item_paths: Sequence[str],
+        request_paths: Sequence[str],
+    ) -> int:
+        if not item_paths:
+            return 0
+        if not request_paths:
+            return -1
+        best = -1
+        for item_path in item_paths:
+            normalized_item = str(item_path).strip("/")
+            for request_path in request_paths:
+                normalized_request = str(request_path).strip("/")
+                if normalized_request == normalized_item or normalized_request.startswith(
+                    normalized_item + "/"
+                ):
+                    best = max(best, len(normalized_item))
+        return best
+
+    @staticmethod
+    def _recall_rank(match: MemoryRecallMatch) -> tuple[int, int, int, int, int, int]:
+        origin_score = {
+            "explicit": 3,
+            "adopted_proposal": 2,
+            "inferred_repetition": 1,
+        }.get(match.entry.origin, 0)
+        strength_score = 1 if match.entry.strength == "hard" else 0
+        return (
+            match.path_specificity,
+            int(match.subject_exact),
+            int(match.alias_or_keyword_exact),
+            match.content_term_coverage,
+            origin_score,
+            strength_score,
+        )
 
     def search(
         self,
@@ -1692,8 +2260,8 @@ class MemoryStore:
             MemorySearchHit(
                 id=str(row["id"]),
                 kind=str(row["kind"]),
-                title=str(row["title"]),
-                synopsis=str(row["synopsis"]),
+                subject=str(row["subject"]),
+                statement=str(row["statement"]),
                 match_type=str(row["match_type"]),
             )
             for row in rows
@@ -1711,18 +2279,18 @@ class MemoryStore:
             """
             WITH matches AS (
                 SELECT
-                    i.id, i.kind, i.title, i.synopsis, i.updated_at,
+                    i.id, i.kind, i.subject, i.statement, i.updated_at,
                     mt.term_type, mt.term,
                     CASE
                         WHEN mt.term = :query THEN
                             40 + CASE mt.term_type
-                                WHEN 'title' THEN 3
+                                WHEN 'subject' THEN 3
                                 WHEN 'alias' THEN 2
                                 ELSE 1
                             END
                         ELSE
                             30 + CASE mt.term_type
-                                WHEN 'title' THEN 3
+                                WHEN 'subject' THEN 3
                                 WHEN 'alias' THEN 2
                                 ELSE 1
                             END
@@ -1731,7 +2299,7 @@ class MemoryStore:
                         AS match_type
                 FROM memory_terms AS mt
                 JOIN memory_items AS i ON i.id = mt.item_id
-                WHERE mt.term_type IN ('title', 'alias', 'keyword')
+                WHERE mt.term_type IN ('subject', 'alias', 'keyword')
                   AND mt.term >= :query AND mt.term < :prefix_upper_bound
                   AND i.status = 'active'
                   AND (
@@ -1752,7 +2320,7 @@ class MemoryStore:
                 ) AS row_number
                 FROM matches
             )
-            SELECT id, kind, title, synopsis, updated_at, match_type
+            SELECT id, kind, subject, statement, updated_at, match_type
             FROM ranked
             WHERE row_number = 1
             ORDER BY score DESC, updated_at DESC, id COLLATE BINARY ASC
@@ -1788,17 +2356,17 @@ class MemoryStore:
             f"""
             WITH matches AS (
                 SELECT
-                    i.id, i.kind, i.title, i.synopsis, i.updated_at,
+                    i.id, i.kind, i.subject, i.statement, i.updated_at,
                     mt.term_type, mt.term,
                     20 + CASE mt.term_type
-                        WHEN 'title' THEN 3
+                        WHEN 'subject' THEN 3
                         WHEN 'alias' THEN 2
                         ELSE 1
                     END AS score,
                     'substring' AS match_type
                 FROM memory_terms AS mt
                 JOIN memory_items AS i ON i.id = mt.item_id
-                WHERE mt.term_type IN ('title', 'alias', 'keyword')
+                WHERE mt.term_type IN ('subject', 'alias', 'keyword')
                   AND instr(mt.term, :query) > 0
                   AND NOT (
                       mt.term >= :query AND mt.term < :prefix_upper_bound
@@ -1823,7 +2391,7 @@ class MemoryStore:
                 ) AS row_number
                 FROM matches
             )
-            SELECT id, kind, title, synopsis, updated_at, match_type
+            SELECT id, kind, subject, statement, updated_at, match_type
             FROM ranked
             WHERE row_number = 1
             ORDER BY score DESC, updated_at DESC, id COLLATE BINARY ASC
@@ -1854,7 +2422,7 @@ class MemoryStore:
                 VALUES {", ".join(token_placeholders)}
             )
             SELECT
-                i.id, i.kind, i.title, i.synopsis, i.updated_at,
+                i.id, i.kind, i.subject, i.statement, i.updated_at,
                 'content_term' AS match_type
             FROM query_terms AS query_term
             JOIN memory_terms AS mt
@@ -1873,7 +2441,7 @@ class MemoryStore:
                   )
               )
               {exclusion}
-            GROUP BY i.id, i.kind, i.title, i.synopsis, i.updated_at
+            GROUP BY i.id, i.kind, i.subject, i.statement, i.updated_at
             ORDER BY i.updated_at DESC, i.id COLLATE BINARY ASC
             LIMIT :limit
             """,
@@ -1921,8 +2489,53 @@ class MemoryStore:
             ).fetchone()
             return self._detail_from_row(connection, row, bounded=True)
 
+    def read_recall(
+        self,
+        memory_id: str,
+        query: RecallQuery,
+        policy: RecallPolicy,
+    ) -> MemoryDetail:
+        if query.intent != policy.intent or query.thread_id != policy.thread_id:
+            raise MemoryContractError("RecallQuery 与 RecallPolicy binding 不一致")
+        now = self._now()
+        with self._transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM memory_items WHERE id = ? AND status = 'active'",
+                (memory_id,),
+            ).fetchone()
+            if row is None or str(row["kind"]) not in policy.allowed_kinds:
+                raise MemoryNotFoundError(f"Memory 不存在或 policy 不允许: {memory_id}")
+            if row["kind"] == "discussion_context" and (
+                not policy.allow_discussion or row["thread_id"] != policy.thread_id
+            ):
+                raise MemoryNotFoundError(f"Memory 不在当前 thread: {memory_id}")
+            item_paths = tuple(json.loads(row["applies_to_paths_json"]))
+            request_paths = tuple(
+                path
+                for path in (
+                    *query.paths,
+                    query.finding_path,
+                    query.patch_path,
+                )
+                if path
+            )
+            if self._path_specificity(item_paths, request_paths) < 0:
+                raise MemoryNotFoundError(f"Memory 不适用于当前 path: {memory_id}")
+            connection.execute(
+                """
+                UPDATE memory_items
+                SET access_count = access_count + 1, last_accessed_at = ?
+                WHERE id = ?
+                """,
+                (now, memory_id),
+            )
+            refreshed = connection.execute(
+                "SELECT * FROM memory_items WHERE id = ?", (memory_id,)
+            ).fetchone()
+            return self._detail_from_row(connection, refreshed, bounded=True)
+
     def show_item(self, memory_id: str) -> MemoryDetail:
-        with self._connect() as connection:
+        with self._connect(enable_wal=False) as connection:
             row = connection.execute(
                 "SELECT * FROM memory_items WHERE id = ?", (memory_id,)
             ).fetchone()
@@ -2014,26 +2627,30 @@ class MemoryStore:
             destination_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise MemoryStorageError(f"无法创建 Memory export 目录: {exc}") from exc
-        with self._connect() as connection:
+        with self._connect(enable_wal=False) as connection:
             connection.execute("BEGIN")
             try:
+                schema_version = int(
+                    connection.execute("PRAGMA user_version").fetchone()[0]
+                )
                 snapshot: dict[str, Any] = {
-                    "schema_version": MEMORY_SCHEMA_VERSION,
+                    "schema_version": schema_version,
                     "exported_at": iso_from_timestamp(self._now()),
                 }
-                for table in (
-                    "memory_meta",
-                    "threads",
-                    "turns",
-                    "memory_jobs",
-                    "memory_candidates",
-                    "candidate_sources",
-                    "memory_items",
-                    "memory_item_candidates",
-                    "memory_terms",
-                ):
+                tables = [
+                    str(row[0])
+                    for row in connection.execute(
+                        """
+                        SELECT name FROM sqlite_master
+                        WHERE type = 'table' AND name NOT GLOB 'sqlite_*'
+                        ORDER BY name
+                        """
+                    ).fetchall()
+                ]
+                for table in tables:
+                    quoted_table = table.replace('"', '""')
                     rows = connection.execute(
-                        f"SELECT * FROM {table} ORDER BY rowid"
+                        f'SELECT * FROM "{quoted_table}" ORDER BY rowid'
                     ).fetchall()
                     snapshot[table] = [dict(row) for row in rows]
                 connection.commit()
@@ -2090,9 +2707,9 @@ class MemoryStore:
             ) from cleanup_error
         return ExportResult(
             path=path,
-            thread_count=len(snapshot["threads"]),
-            turn_count=len(snapshot["turns"]),
-            item_count=len(snapshot["memory_items"]),
+            thread_count=len(snapshot.get("threads", [])),
+            turn_count=len(snapshot.get("turns", [])),
+            item_count=len(snapshot.get("memory_items", [])),
         )
 
     def status(self) -> MemoryStatus:
@@ -2130,36 +2747,6 @@ class MemoryStore:
                 last_error=str(meta["last_error"]),
                 last_succeeded_at=iso_from_timestamp(meta["last_succeeded_at"]),
             )
-
-    def active_items_for_routing(
-        self,
-        thread_id: str | None = None,
-        per_kind_limit: int = 5,
-    ) -> tuple[list[MemoryItemSummary], list[MemoryItemSummary], list[MemoryItemSummary]]:
-        with self._operational_connection() as connection:
-            effective_thread = thread_id or self._active_thread_id(connection)
-            groups: list[list[MemoryItemSummary]] = []
-            for kind in ("user_preference", "project_decision", "discussion_context"):
-                if kind == "discussion_context":
-                    rows = connection.execute(
-                        """
-                        SELECT * FROM memory_items
-                        WHERE status = 'active' AND kind = ? AND thread_id = ?
-                        ORDER BY updated_at DESC LIMIT ?
-                        """,
-                        (kind, effective_thread, per_kind_limit),
-                    ).fetchall()
-                else:
-                    rows = connection.execute(
-                        """
-                        SELECT * FROM memory_items
-                        WHERE status = 'active' AND kind = ?
-                        ORDER BY updated_at DESC LIMIT ?
-                        """,
-                        (kind, per_kind_limit),
-                    ).fetchall()
-                groups.append([self._summary_from_row(row) for row in rows])
-            return groups[0], groups[1], groups[2]
 
     def _generation(self, connection: sqlite3.Connection) -> int:
         return int(self._require_meta_row(connection)["generation"])
@@ -2248,17 +2835,113 @@ class MemoryStore:
 
     def _validate_candidate_group(
         self, candidates: Sequence[MemoryCandidate]
-    ) -> tuple[str, str | None]:
+    ) -> tuple[str, str | None, tuple[str, ...]]:
+        if not candidates:
+            raise MemoryContractError("item operation 缺少 candidate")
         kinds = {item.kind for item in candidates}
-        if len(kinds) != 1:
-            raise MemoryContractError("一个 item operation 不能合并不同 kind")
-        kind = next(iter(kinds))
-        if kind == "discussion_context":
+        path_sets = {tuple(sorted(set(item.applies_to_paths))) for item in candidates}
+        if len(path_sets) != 1:
+            raise MemoryContractError("一个 item operation 不能合并不同 applicability")
+        applies_to_paths = next(iter(path_sets))
+        if "discussion_context" in kinds:
+            if kinds != {"discussion_context"}:
+                raise MemoryContractError("discussion context 不能与 project item 合并")
             threads = {item.thread_id for item in candidates}
             if len(threads) != 1:
                 raise MemoryContractError("discussion context 不能跨 thread 合并")
-            return kind, next(iter(threads))
-        return kind, None
+            return "discussion", next(iter(threads)), applies_to_paths
+        if not kinds <= {"user_preference", "project_decision"}:
+            raise MemoryContractError("project item kind 非法")
+        return "project", None, applies_to_paths
+
+    @staticmethod
+    def _candidate_precedence(candidate: MemoryCandidate) -> tuple[int, int, str]:
+        origin_score = {
+            "inferred_repetition": 0,
+            "adopted_proposal": 1,
+            "explicit": 2,
+        }.get(candidate.origin, -1)
+        strength_score = 1 if candidate.strength == "hard" else 0
+        return origin_score, strength_score, candidate.created_at
+
+    @staticmethod
+    def _validate_consolidated_semantics(
+        operation: ConsolidationOperation,
+        *,
+        scope_kind: str,
+        applies_to_paths: tuple[str, ...],
+        dominant: MemoryCandidate,
+    ) -> None:
+        if scope_kind == "discussion":
+            if operation.kind != "discussion_context":
+                raise MemoryContractError("discussion operation kind 非法")
+        elif operation.kind not in {"user_preference", "project_decision"}:
+            raise MemoryContractError("project operation kind 非法")
+        if tuple(sorted(set(operation.applies_to_paths))) != applies_to_paths:
+            raise MemoryContractError("operation applicability 与 candidates 不一致")
+        if (
+            operation.strength != dominant.strength
+            or operation.origin != dominant.origin
+            or operation.recall_mode != dominant.recall_mode
+        ):
+            raise MemoryContractError("operation 不得改写 candidate 的信号强度或来源")
+        if operation.origin == "inferred_repetition" and (
+            operation.kind != "user_preference"
+            or operation.strength != "soft"
+            or operation.recall_mode != "on_match"
+        ):
+            raise MemoryContractError("inferred operation 语义组合非法")
+        if operation.recall_mode == "always" and (
+            operation.strength != "hard"
+            or operation.origin == "inferred_repetition"
+            or operation.kind == "discussion_context"
+        ):
+            raise MemoryContractError("always recall 只允许 durable hard project item")
+
+    @staticmethod
+    def _target_scope_matches(
+        target: sqlite3.Row,
+        *,
+        scope_kind: str,
+        thread_id: str | None,
+        applies_to_paths: tuple[str, ...],
+    ) -> bool:
+        target_paths = tuple(sorted(set(json.loads(target["applies_to_paths_json"]))))
+        if target_paths != applies_to_paths:
+            return False
+        if scope_kind == "project":
+            return target["kind"] in {"user_preference", "project_decision"} and target[
+                "thread_id"
+            ] is None
+        return target["kind"] == "discussion_context" and target["thread_id"] == thread_id
+
+    def _has_exact_related_identity(
+        self,
+        connection: sqlite3.Connection,
+        target_ids: set[str],
+        subject: str,
+        applies_to_paths: tuple[str, ...],
+        scope_kind: str,
+        thread_id: str | None,
+    ) -> bool:
+        if not target_ids:
+            return False
+        placeholders = ",".join("?" for _ in target_ids)
+        rows = connection.execute(
+            f"SELECT * FROM memory_items WHERE id IN ({placeholders})",
+            tuple(sorted(target_ids)),
+        ).fetchall()
+        normalized_subject = normalize_text(subject)
+        return any(
+            normalize_text(str(row["subject"])) == normalized_subject
+            and self._target_scope_matches(
+                row,
+                scope_kind=scope_kind,
+                thread_id=thread_id,
+                applies_to_paths=applies_to_paths,
+            )
+            for row in rows
+        )
 
     def _set_candidate_status(
         self,
@@ -2277,19 +2960,22 @@ class MemoryStore:
         self,
         connection: sqlite3.Connection,
         item_id: str,
-        title: str,
+        subject: str,
+        statement: str,
         content: str,
         aliases: Sequence[str],
         keywords: Sequence[str],
+        applies_to_paths: Sequence[str],
     ) -> None:
         term_groups = (
-            ("title", retrieval_terms([title])),
-            ("alias", retrieval_terms(aliases)),
-            ("keyword", retrieval_terms(keywords)),
+            ("subject", recall_terms([subject], limit=32)),
+            ("alias", recall_terms(aliases, limit=64)),
+            ("keyword", recall_terms(keywords, limit=64)),
+            ("path", recall_terms(applies_to_paths, limit=64)),
             (
                 "content",
                 content_terms(
-                    content,
+                    f"{statement}\n{content}",
                     limit=MAX_CONTENT_TERMS,
                     item_limit=MAX_CONTENT_TERM_CHARS,
                 ),
@@ -2328,24 +3014,28 @@ class MemoryStore:
     ) -> list[sqlite3.Row]:
         lookup_rows = {
             (
-                candidate.kind,
-                candidate.thread_id,
+                "discussion" if candidate.kind == "discussion_context" else "project",
+                candidate.thread_id or "",
+                _paths_json(candidate.applies_to_paths),
                 term,
                 term + "\U0010ffff",
             )
             for candidate in candidates
-            for term in retrieval_terms((candidate.title, *candidate.aliases))
+            for term in retrieval_terms(
+                (candidate.subject, *candidate.aliases, *candidate.keywords)
+            )
         }
         if not lookup_rows:
             return []
         connection.execute(
             """
             CREATE TEMP TABLE IF NOT EXISTS memory_candidate_lookup (
-                kind TEXT NOT NULL,
+                scope_kind TEXT NOT NULL,
                 thread_id TEXT NOT NULL,
+                applies_to_paths_json TEXT NOT NULL,
                 term TEXT NOT NULL,
                 prefix_upper_bound TEXT NOT NULL,
-                PRIMARY KEY(kind, thread_id, term)
+                PRIMARY KEY(scope_kind, thread_id, applies_to_paths_json, term)
             ) WITHOUT ROWID
             """
         )
@@ -2353,8 +3043,8 @@ class MemoryStore:
         connection.executemany(
             """
             INSERT INTO memory_candidate_lookup(
-                kind, thread_id, term, prefix_upper_bound
-            ) VALUES (?, ?, ?, ?)
+                scope_kind, thread_id, applies_to_paths_json, term, prefix_upper_bound
+            ) VALUES (?, ?, ?, ?, ?)
             """,
             sorted(lookup_rows),
         )
@@ -2364,7 +3054,7 @@ class MemoryStore:
                 SELECT
                     items.*,
                     40 + CASE terms.term_type
-                        WHEN 'title' THEN 3
+                        WHEN 'subject' THEN 3
                         WHEN 'alias' THEN 2
                         ELSE 1
                     END AS score,
@@ -2373,17 +3063,20 @@ class MemoryStore:
                     lookup.term AS candidate_term
                 FROM memory_candidate_lookup AS lookup
                 JOIN memory_terms AS terms
-                  ON terms.term_type IN ('title', 'alias', 'keyword')
+                  ON terms.term_type IN ('subject', 'alias', 'keyword')
                  AND terms.term = lookup.term
                 JOIN memory_items AS items
-                  ON items.id = terms.item_id AND items.kind = lookup.kind
+                  ON items.id = terms.item_id
+                 AND items.applies_to_paths_json = lookup.applies_to_paths_json
                 WHERE items.status = 'active'
                   AND (
                       (
+                          lookup.scope_kind = 'project' AND
                           items.kind IN ('user_preference', 'project_decision')
                           AND items.thread_id IS NULL
                       )
                       OR (
+                          lookup.scope_kind = 'discussion' AND
                           items.kind = 'discussion_context'
                           AND items.thread_id = lookup.thread_id
                       )
@@ -2394,7 +3087,7 @@ class MemoryStore:
                 SELECT
                     items.*,
                     30 + CASE terms.term_type
-                        WHEN 'title' THEN 3
+                        WHEN 'subject' THEN 3
                         WHEN 'alias' THEN 2
                         ELSE 1
                     END AS score,
@@ -2403,19 +3096,22 @@ class MemoryStore:
                     lookup.term AS candidate_term
                 FROM memory_candidate_lookup AS lookup
                 JOIN memory_terms AS terms
-                  ON terms.term_type IN ('title', 'alias', 'keyword')
+                  ON terms.term_type IN ('subject', 'alias', 'keyword')
                  AND terms.term >= lookup.term
                  AND terms.term < lookup.prefix_upper_bound
                  AND terms.term <> lookup.term
                 JOIN memory_items AS items
-                  ON items.id = terms.item_id AND items.kind = lookup.kind
+                  ON items.id = terms.item_id
+                 AND items.applies_to_paths_json = lookup.applies_to_paths_json
                 WHERE items.status = 'active'
                   AND (
                       (
+                          lookup.scope_kind = 'project' AND
                           items.kind IN ('user_preference', 'project_decision')
                           AND items.thread_id IS NULL
                       )
                       OR (
+                          lookup.scope_kind = 'discussion' AND
                           items.kind = 'discussion_context'
                           AND items.thread_id = lookup.thread_id
                       )
@@ -2426,7 +3122,7 @@ class MemoryStore:
                 SELECT
                     items.*,
                     20 + CASE terms.term_type
-                        WHEN 'title' THEN 3
+                        WHEN 'subject' THEN 3
                         WHEN 'alias' THEN 2
                         ELSE 1
                     END AS score,
@@ -2435,21 +3131,24 @@ class MemoryStore:
                     lookup.term AS candidate_term
                 FROM memory_candidate_lookup AS lookup
                 JOIN memory_terms AS terms
-                  ON terms.term_type IN ('title', 'alias', 'keyword')
+                  ON terms.term_type IN ('subject', 'alias', 'keyword')
                  AND instr(terms.term, lookup.term) > 0
                  AND NOT (
                      terms.term >= lookup.term
                      AND terms.term < lookup.prefix_upper_bound
                  )
                 JOIN memory_items AS items
-                  ON items.id = terms.item_id AND items.kind = lookup.kind
+                  ON items.id = terms.item_id
+                 AND items.applies_to_paths_json = lookup.applies_to_paths_json
                 WHERE items.status = 'active'
                   AND (
                       (
+                          lookup.scope_kind = 'project' AND
                           items.kind IN ('user_preference', 'project_decision')
                           AND items.thread_id IS NULL
                       )
                       OR (
+                          lookup.scope_kind = 'discussion' AND
                           items.kind = 'discussion_context'
                           AND items.thread_id = lookup.thread_id
                       )
@@ -2507,20 +3206,33 @@ class MemoryStore:
             )
             for source in source_rows
         )
+        return self._detail_from_row_with_sources(row, sources)
+
+    def _detail_from_row_with_sources(
+        self,
+        row: sqlite3.Row,
+        sources: tuple[MemorySource, ...],
+    ) -> MemoryDetail:
         return MemoryDetail(
             id=str(row["id"]),
             logical_id=str(row["logical_id"]),
             revision=int(row["revision"]),
             kind=str(row["kind"]),
             thread_id=str(row["thread_id"]) if row["thread_id"] is not None else None,
-            title=str(row["title"]),
+            subject=str(row["subject"]),
+            statement=str(row["statement"]),
             content=str(row["content"]),
-            synopsis=str(row["synopsis"]),
+            strength=str(row["strength"]),
+            origin=str(row["origin"]),
+            recall_mode=str(row["recall_mode"]),
+            applies_to_paths=tuple(json.loads(row["applies_to_paths_json"])),
+            aliases=tuple(json.loads(row["aliases_json"])),
+            keywords=tuple(json.loads(row["keywords_json"])),
             status=str(row["status"]),
-            non_factual=bool(row["non_factual"]),
             sources=sources,
             access_count=int(row["access_count"]),
             last_accessed_at=iso_from_timestamp(row["last_accessed_at"]),
+            updated_at=iso_from_timestamp(row["updated_at"]) or "",
         )
 
     def _active_thread_id(self, connection: sqlite3.Connection) -> str | None:
@@ -2548,6 +3260,7 @@ class MemoryStore:
             user_text=str(row["user_text"]),
             assistant_text=str(row["assistant_text"]),
             scope_paths=tuple(json.loads(row["scope_paths_json"])),
+            evidence_keys=tuple(json.loads(row["evidence_keys_json"])),
             state=str(row["state"]),
             lease_owner=str(row["lease_owner"]),
             lease_expires_at=iso_from_timestamp(row["lease_expires_at"]) or "",
@@ -2593,11 +3306,16 @@ class MemoryStore:
             extraction_job_id=str(row["extraction_job_id"]),
             thread_id=str(row["thread_id"]),
             kind=str(row["kind"]),
-            title=str(row["title"]),
+            subject=str(row["subject"]),
+            statement=str(row["statement"]),
             content=str(row["content"]),
+            strength=str(row["strength"]),
+            origin=str(row["origin"]),
+            recall_mode=str(row["recall_mode"]),
+            applies_to_paths=tuple(json.loads(row["applies_to_paths_json"])),
             aliases=tuple(json.loads(row["aliases_json"])),
+            keywords=tuple(json.loads(row["keywords_json"])),
             status=str(row["status"]),
-            non_factual=bool(row["non_factual"]),
             sources=sources,
             created_at=iso_from_timestamp(row["created_at"]) or "",
         )
@@ -2606,8 +3324,12 @@ class MemoryStore:
         return MemoryItemSummary(
             id=str(row["id"]),
             kind=str(row["kind"]),
-            title=str(row["title"]),
-            synopsis=str(row["synopsis"]),
+            subject=str(row["subject"]),
+            statement=str(row["statement"]),
+            strength=str(row["strength"]),
+            origin=str(row["origin"]),
+            recall_mode=str(row["recall_mode"]),
+            applies_to_paths=tuple(json.loads(row["applies_to_paths_json"])),
             updated_at=iso_from_timestamp(row["updated_at"]) or "",
         )
 
@@ -2620,6 +3342,7 @@ class MemoryStore:
             "assistant": str(row["assistant_text"]),
             "state": str(row["state"]),
             "scope_paths": json.loads(row["scope_paths_json"]),
+            "evidence_keys": json.loads(row["evidence_keys_json"]),
         }
 
     def _candidate_payload(self, candidate: MemoryCandidate) -> dict[str, Any]:
@@ -2627,10 +3350,15 @@ class MemoryStore:
             "id": candidate.id,
             "thread_id": candidate.thread_id,
             "kind": candidate.kind,
-            "title": candidate.title,
+            "subject": candidate.subject,
+            "statement": candidate.statement,
             "content": candidate.content,
+            "strength": candidate.strength,
+            "origin": candidate.origin,
+            "recall_mode": candidate.recall_mode,
+            "applies_to_paths": list(candidate.applies_to_paths),
             "aliases": list(candidate.aliases),
-            "non_factual": candidate.non_factual,
+            "keywords": list(candidate.keywords),
             "sources": [
                 {
                     "turn_id": source.turn_id,
@@ -2648,7 +3376,13 @@ class MemoryStore:
             "revision": int(row["revision"]),
             "kind": str(row["kind"]),
             "thread_id": row["thread_id"],
-            "title": str(row["title"]),
+            "subject": str(row["subject"]),
+            "statement": str(row["statement"]),
             "content": str(row["content"]),
-            "synopsis": str(row["synopsis"]),
+            "strength": str(row["strength"]),
+            "origin": str(row["origin"]),
+            "recall_mode": str(row["recall_mode"]),
+            "applies_to_paths": json.loads(row["applies_to_paths_json"]),
+            "aliases": json.loads(row["aliases_json"]),
+            "keywords": json.loads(row["keywords_json"]),
         }

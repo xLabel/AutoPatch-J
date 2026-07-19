@@ -20,6 +20,7 @@ class AgentMessage:
     tool_calls: list[dict[str, Any]] | None = None
     reasoning_content: str | None = None
     tool_status: str | None = None
+    tool_summary: str | None = None
     tool_payload: Any | None = None
 
     @classmethod
@@ -32,6 +33,7 @@ class AgentMessage:
             tool_calls=record.get("tool_calls"),
             reasoning_content=record.get("reasoning_content"),
             tool_status=record.get("tool_status"),
+            tool_summary=record.get("tool_summary"),
             tool_payload=record.get("tool_payload"),
         )
 
@@ -61,6 +63,7 @@ class AgentMessage:
         name: str,
         content: str,
         status: str | None,
+        summary: str | None,
         payload: Any | None,
     ) -> AgentMessage:
         return cls(
@@ -69,6 +72,7 @@ class AgentMessage:
             name=name,
             content=content,
             tool_status=status,
+            tool_summary=summary,
             tool_payload=payload,
         )
 
@@ -87,6 +91,8 @@ class AgentMessage:
             record["name"] = self.name
         if self.tool_status is not None:
             record["tool_status"] = self.tool_status
+        if self.tool_summary is not None:
+            record["tool_summary"] = self.tool_summary
         if self.tool_payload is not None:
             record["tool_payload"] = self.tool_payload
         return record

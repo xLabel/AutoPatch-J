@@ -59,6 +59,19 @@ class CliRuntime:
     def flush_memory_once(self, reason: str, thread_id: str | None = None) -> FlushResult:
         return self.memory_manager.flush_once(reason=reason, thread_id=thread_id)
 
+    def flush_memory_watermark(
+        self,
+        *,
+        reason: str,
+        thread_id: str,
+        wait_seconds: float,
+    ) -> FlushResult:
+        return self.memory_manager.flush_thread_watermark(
+            reason=reason,
+            thread_id=thread_id,
+            wait_seconds=wait_seconds,
+        )
+
     def close(self) -> None:
         if self._closed:
             return

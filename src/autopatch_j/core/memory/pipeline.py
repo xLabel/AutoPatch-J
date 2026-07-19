@@ -80,7 +80,15 @@ class MemoryPipeline:
                 purpose=LLMCallPurpose.MEMORY_EXTRACTION,
             )
             result = parse_extraction_response(response.content)
-            candidate_ids = self.store.complete_extraction(batch, result)
+            evidence_turn_ids = tuple(
+                str(turn["turn_id"])
+                for turn in payload.get("recent_repair_evidence", ())
+            )
+            candidate_ids = self.store.complete_extraction(
+                batch,
+                result,
+                evidence_turn_ids=evidence_turn_ids,
+            )
             spawned_job_ids = self.store.consolidation_job_ids_for_candidates(
                 candidate_ids
             )

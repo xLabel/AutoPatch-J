@@ -27,6 +27,7 @@ class CliCommand:
 
 MEMORY_SUBCOMMANDS: tuple[CliSubcommand, ...] = (
     CliSubcommand("status", "查看 Memory 运行状态"),
+    CliSubcommand("summary", "重建人类审阅用 Memory 摘要"),
     CliSubcommand("list", "列出 active Memory"),
     CliSubcommand("show", "查看单条 Memory 与来源"),
     CliSubcommand("forget", "忘记单条派生 Memory"),
@@ -75,7 +76,7 @@ CLI_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand(
         name="/memory",
         handler_name="handle_memory",
-        help_description="管理 Memory：status/list/show/forget/clear/export",
+        help_description="管理 Memory：status/summary/list/show/forget/clear/export",
         completion_description="查看和管理 Memory",
         accepts_arguments=True,
         subcommands=MEMORY_SUBCOMMANDS,

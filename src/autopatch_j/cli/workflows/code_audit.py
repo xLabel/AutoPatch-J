@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
+from autopatch_j.cli.workflows.memory_turn import run_durable_memory_turn
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.domain import AuditAttemptOutcome, FindingTask, CodeScope
+from autopatch_j.core.domain import AuditAttemptOutcome, CodeScope, FindingTask, IntentType
 
 
 class CodeAuditWorkflow:
@@ -19,7 +20,25 @@ class CodeAuditWorkflow:
         self.services = services
 
     def handle_code_audit(self, text: str) -> None:
-        backlog = self._prepare_audit_workspace(text)
+        runtime = self.services.runtime
+        scope = runtime.scope_service.resolve(text, default_to_project=True)
+        if scope is None:
+            self.services.renderer.print_error("未解析到可检查范围")
+            return
+        run_durable_memory_turn(
+            manager=runtime.memory_manager,
+            session=runtime.agent.session,
+            intent=IntentType.CODE_AUDIT,
+            user_text=text,
+            scope_paths=scope.focus_files,
+            evidence_keys=[],
+            run=lambda: self._run_code_audit(text, scope),
+            assistant_text=lambda _: "",
+            on_degraded=self.services.renderer.print_agent_text,
+        )
+
+    def _run_code_audit(self, text: str, scope: CodeScope) -> None:
+        backlog = self._prepare_audit_workspace(text, scope)
         if backlog is None:
             return
 
@@ -44,13 +63,12 @@ class CodeAuditWorkflow:
             "请确认当前补丁后再次发起检查继续处理。"
         )
 
-    def _prepare_audit_workspace(self, text: str) -> list[FindingTask] | None:
+    def _prepare_audit_workspace(
+        self,
+        text: str,
+        scope: CodeScope,
+    ) -> list[FindingTask] | None:
         runtime = self.services.runtime
-        scope = runtime.scope_service.resolve(text, default_to_project=True)
-        if scope is None:
-            self.services.renderer.print_error("未解析到可检查范围")
-            return None
-
         runtime.agent.session.set_focus_paths(scope.focus_files if scope.is_locked else [])
         try:
             self.services.renderer.print_tool_start("scan_project", caller="AGENT")

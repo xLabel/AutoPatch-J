@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from .diagnostics import MAX_RAW_LLM_ERROR_CHARS, format_raw_llm_exception
+from .context_window import ModelContextProfile
 from .dialects import MessageDialect, StandardDialect, DeepSeekAliyunDialect
 from .models import LLMResponse
 from .options import LLMCallDiagnostic, LLMCallPurpose, resolve_request_options
@@ -28,12 +29,20 @@ class LLMClient:
         model: str,
         reasoning_effort: str | None = None,
         stream_dialect: str = "standard",
+        context_profile: ModelContextProfile | None = None,
     ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.stream_dialect = stream_dialect
+        self.context_profile = context_profile
         self.transport = OpenAIChatTransport(api_key=api_key, base_url=base_url)
-        self.request_builder = LLMRequestBuilder(model=model, reasoning_effort=reasoning_effort)
+        self.request_builder = LLMRequestBuilder(
+            model=model,
+            reasoning_effort=reasoning_effort,
+            max_output_tokens=(
+                context_profile.max_output_tokens if context_profile is not None else None
+            ),
+        )
         self.response_parser = LLMResponseParser(self._create_dialect)
         self.diagnostics: list[LLMCallDiagnostic] = []
 

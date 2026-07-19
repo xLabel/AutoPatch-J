@@ -13,4 +13,5 @@ def build_default_llm_client() -> LLMClient | None:
         model=GlobalConfig.llm_model,
         reasoning_effort=GlobalConfig.llm_reasoning_effort,
         stream_dialect=GlobalConfig.llm_stream_dialect,
+        context_profile=GlobalConfig.resolve_llm_context_profile(),
     )

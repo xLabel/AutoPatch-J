@@ -11,6 +11,7 @@ class LLMCallPurpose(Enum):
     CLASSIFIER = auto()
     MEMORY_EXTRACTION = auto()
     MEMORY_CONSOLIDATION = auto()
+    CONTEXT_COMPACTION = auto()
 
 
 class LLMReasoningMode(Enum):
@@ -72,6 +73,13 @@ _PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
         max_tokens=2200,
         temperature=0,
         timeout_seconds=60,
+    ),
+    LLMCallPurpose.CONTEXT_COMPACTION: LLMRequestOptions(
+        stream=False,
+        reasoning=LLMReasoningMode.DISABLED,
+        max_tokens=16_384,
+        temperature=0,
+        timeout_seconds=120,
     ),
 }
 

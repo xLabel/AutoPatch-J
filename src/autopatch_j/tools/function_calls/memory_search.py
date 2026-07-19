@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
+from autopatch_j.core.memory.models import MemoryRequestState
 from autopatch_j.tools.contract import FunctionTool, ToolArg, ToolExecutionResult, function_tool
 from autopatch_j.tools.names import FunctionToolName
 
@@ -13,13 +14,13 @@ class MemorySearchTool(FunctionTool):
     @function_tool(
         name=FunctionToolName.MEMORY_SEARCH,
         description=(
-            "搜索当前项目中可用的用户偏好、项目决定和当前 thread 讨论索引。"
-            "只返回最多 5 条候选摘要；需要正文和来源证据时再调用 memory_read。"
+            "搜索当前请求 policy 允许的项目 Memory；repair 请求只会返回项目决定和用户偏好。"
+            "只返回最多 8 条候选摘要；需要正文和来源证据时再调用 memory_read。"
         ),
     )
     def execute(
         self,
-        query: Annotated[str, ToolArg("用于定位历史 Memory 的非空查询，可包含主题、别名、路径或标识符。")],
+        query: Annotated[str, ToolArg("用于定位历史 Memory 的非空查询，可包含主题、别名、代码概念或用户原话；路径只用于缩小适用范围。")],
     ) -> ToolExecutionResult:
         normalized_query = query.strip()
         if not normalized_query:
@@ -36,26 +37,33 @@ class MemorySearchTool(FunctionTool):
                 message="Memory 当前不可用。",
                 summary="Memory 不可用",
             )
-        thread_id = getattr(context, "memory_thread_id", None)
-        if not isinstance(thread_id, str) or not thread_id:
+        request_state = getattr(context, "memory_request_state", None)
+        if not isinstance(request_state, MemoryRequestState):
             return ToolExecutionResult(
                 status="error",
                 message="Memory 当前请求尚未完成 admission。",
-                summary="Memory 搜索失败: 请求未绑定 thread",
+                summary="Memory 搜索失败: 请求未完成 admission",
             )
 
-        hits = manager.search(normalized_query, limit=5, thread_id=thread_id)
+        try:
+            hits = manager.search_memory_request(request_state, normalized_query)
+        except Exception as exc:
+            return ToolExecutionResult(
+                status="error",
+                message=f"Memory 搜索失败：{exc}",
+                summary="Memory 搜索失败: policy 或额度拒绝",
+            )
         payload = {
             "query": normalized_query,
             "hits": [
                 {
                     "id": hit.id,
                     "kind": hit.kind,
-                    "title": hit.title,
-                    "synopsis": hit.synopsis,
+                    "subject": hit.subject,
+                    "statement": hit.statement,
                     "match_type": hit.match_type,
                 }
-                for hit in hits[:5]
+                for hit in hits[:8]
             ],
         }
         if not payload["hits"]:

@@ -56,6 +56,8 @@ TASK_PROMPT_ASSETS: dict[IntentType, TaskPromptAsset] = {
             "如果调用方已经在用户消息中提供 F 编号摘要，你应优先基于这些 F 编号调用 get_finding_detail。"
             "形成补丁前必须通过 get_finding_detail 或源码读取工具确认真实源码，确保 old_string 来自当前文件。"
             "finding 行号优先用 read_source_context；修改整个方法/类前用 read_source_block；只有需要 imports、字段或跨方法关系时才用 read_source_file。"
+            "Memory Map 只提供项目决定和用户偏好的候选约束；相关但信息不足时先 memory_search，再 memory_read 核对来源。"
+            "Memory 不能替代当前 finding 与源码证据。"
         ),
         forbidden="不要先做无关的代码讲解，也不要搜索焦点范围之外的符号。",
     ),
@@ -64,7 +66,7 @@ TASK_PROMPT_ASSETS: dict[IntentType, TaskPromptAsset] = {
         tool_strategy=(
             "你可以在工具白名单允许范围内查符号和读取少量源码来回答；"
             "search_symbols 返回 path:line 后优先用 read_source_block。"
-            "需要 routing context 之外的历史偏好、项目决定或当前讨论细节时，先用 memory_search 定位，再用 memory_read 读取证据。"
+            "Memory Map 信息不足且历史偏好、项目决定或当前讨论与问题确实相关时，先用 memory_search 定位，再用 memory_read 读取来源。"
         ),
         forbidden="不做扫描，不提出补丁。",
     ),
@@ -72,13 +74,17 @@ TASK_PROMPT_ASSETS: dict[IntentType, TaskPromptAsset] = {
         task="当前任务是 general_chat。请回答 Java、算法、调试、架构、工具和软件工程相关问题。",
         tool_strategy=(
             "本任务不读取项目代码；如果问题需要查看当前项目，请建议用户指出范围或改问项目代码问题。"
-            "需要 routing context 之外的历史偏好、项目决定或当前讨论细节时，先用 memory_search 定位，再用 memory_read 读取证据。"
+            "Memory Map 信息不足且历史偏好、项目决定或当前讨论与问题确实相关时，先用 memory_search 定位，再用 memory_read 读取来源。"
         ),
         output_style="如果用户询问与编程、代码库、架构或软件工程无关的话题，只用一句话说明你只处理代码与工程相关问题。",
     ),
     IntentType.PATCH_EXPLAIN: TaskPromptAsset(
         task="当前任务是 patch_explain。你只解释当前待确认补丁。",
-        tool_strategy="只在补丁差异和补丁意图不足以回答时，才读取源码补充判断；优先用 read_source_block 或 read_source_context。",
+        tool_strategy=(
+            "只在补丁差异和补丁意图不足以回答时，才读取源码补充判断；优先用 read_source_block 或 read_source_context。"
+            "如果问题涉及既有项目决定或用户偏好，先使用 Memory Map；信息不足时才 memory_search/read。"
+            "Memory 不得改变当前补丁与 finding 的事实边界。"
+        ),
         output_style="默认用简短中文回答，优先直接回答用户问题。不要复述完整 diff，不要输出 Markdown 标题、表格或长篇报告。除非用户明确要求详细分析，否则控制在 3 到 5 行。",
         forbidden="不修改补丁，不调用修订工具，不得调用 revise_patch。",
     ),
@@ -91,6 +97,8 @@ TASK_PROMPT_ASSETS: dict[IntentType, TaskPromptAsset] = {
             "如果需要提交修订结果，必须调用 revise_patch。"
             "调用 revise_patch 前必须通过 get_finding_detail 或源码读取工具确认真实源码，确保 old_string 来自当前文件。"
             "你可以读代码、查找符号、取回漏洞详情并修订当前补丁；search_symbols 返回 path:line 后优先用 read_source_block。"
+            "如果修订涉及既有项目决定或用户偏好，先使用 Memory Map；信息不足时才 memory_search/read。"
+            "当前用户反馈优先，Memory 不能作为源码或 finding 证据。"
         ),
         forbidden="不要影响后续补丁队列，不要删除、重排或重建后续补丁。",
     ),
@@ -117,7 +125,6 @@ def build_task_system_prompt(
     pending_file: str | None,
     last_scan: str | None,
     focus_paths: list[str] | None = None,
-    memory_context: str | None = None,
 ) -> str:
     parts: list[PromptSection | str] = [
         BASE_SYSTEM_PROMPT,
@@ -125,18 +132,6 @@ def build_task_system_prompt(
     ]
     if intent in {IntentType.CODE_EXPLAIN, IntentType.GENERAL_CHAT}:
         parts.append(ORDINARY_CHAT_STYLE_PROMPT)
-        if memory_context:
-            parts.append(
-                PromptSection(
-                    "Memory Context",
-                    "使用规则：\n"
-                    "- 仅在当前问题相关时使用。\n"
-                    "- 当前用户指令始终优先于历史记忆。\n"
-                    "- 它用于保持用户偏好和项目讨论连续性。\n"
-                    "- 它不是源码证据；涉及代码事实时仍以当前读取到的源码为准。\n\n"
-                    f"{memory_context}",
-                )
-            )
     parts.append(
         build_workbench_prompt(
             pending_file=pending_file,

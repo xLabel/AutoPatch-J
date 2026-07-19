@@ -3,6 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 
+PROJECT_STATE_DIR_NAME = ".autopatch-j"
+
+
 class UnsafeRepoPathError(ValueError):
     """用户输入路径无法安全解析到当前仓库内部。"""
 
@@ -13,6 +16,13 @@ def normalize_repo_path(path: str) -> str:
     while clean.startswith("./"):
         clean = clean[2:]
     return clean or "."
+
+
+def is_project_state_path(path: str) -> bool:
+    """Return whether a normalized repository-relative path is project state."""
+
+    parts = Path(normalize_repo_path(path)).parts
+    return bool(parts and parts[0].casefold() == PROJECT_STATE_DIR_NAME.casefold())
 
 
 def resolve_repo_path(repo_root: Path, path: str) -> Path:

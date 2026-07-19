@@ -13,9 +13,15 @@ class LLMRequestBuilder:
     根据调用用途解析出的 options，组装模型、工具、stream、reasoning 和供应商扩展参数。
     """
 
-    def __init__(self, model: str, reasoning_effort: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str,
+        reasoning_effort: str | None = None,
+        max_output_tokens: int | None = None,
+    ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
+        self.max_output_tokens = max_output_tokens
 
     def build_request_kwargs(
         self,
@@ -36,7 +42,20 @@ class LLMRequestBuilder:
         if options.reasoning is LLMReasoningMode.INHERIT and self.reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
         if options.max_tokens is not None:
-            kwargs["max_tokens"] = options.max_tokens
+            kwargs["max_tokens"] = (
+                min(options.max_tokens, self.max_output_tokens)
+                if self.max_output_tokens is not None
+                else options.max_tokens
+            )
+        elif options.stream:
+            max_output_tokens = self.max_output_tokens
+            if max_output_tokens is None:
+                from autopatch_j.config import GlobalConfig
+
+                max_output_tokens = (
+                    GlobalConfig.resolve_llm_context_profile().max_output_tokens
+                )
+            kwargs["max_tokens"] = max_output_tokens
         if options.temperature is not None:
             kwargs["temperature"] = options.temperature
         if options.timeout_seconds is not None:

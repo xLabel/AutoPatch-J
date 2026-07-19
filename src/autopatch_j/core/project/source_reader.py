@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from autopatch_j.core.project.java_blocks import JavaBlockExtractor
-from autopatch_j.core.project.repo_path import UnsafeRepoPathError, normalize_repo_path, resolve_repo_path
+from autopatch_j.core.project.repo_path import (
+    UnsafeRepoPathError,
+    is_project_state_path,
+    normalize_repo_path,
+    resolve_repo_path,
+    to_repo_relative_path,
+)
 from autopatch_j.core.project.symbol_index import SymbolIndexEntry
 
 
@@ -30,7 +36,7 @@ class SourceReader:
 
     def fetch_entry_source(self, entry: SymbolIndexEntry) -> str:
         try:
-            full_path = resolve_repo_path(self.repo_root, entry.path)
+            full_path = self._resolve_source_path(entry.path)
         except UnsafeRepoPathError as exc:
             return f"错误：{exc}"
         if not full_path.exists():
@@ -72,7 +78,7 @@ class SourceReader:
 
     def fetch_block_source(self, file_path: str, line: int) -> str:
         try:
-            full_path = resolve_repo_path(self.repo_root, file_path)
+            full_path = self._resolve_source_path(file_path)
         except UnsafeRepoPathError as exc:
             return f"错误：{exc}"
         if not full_path.exists():
@@ -87,7 +93,7 @@ class SourceReader:
 
     def fetch_lines(self, file_path: str, start_line: int, end_line: int) -> str:
         try:
-            full_path = resolve_repo_path(self.repo_root, file_path)
+            full_path = self._resolve_source_path(file_path)
         except UnsafeRepoPathError:
             return ""
         if not full_path.exists():
@@ -107,7 +113,7 @@ class SourceReader:
         after_lines: int = 80,
     ) -> SourceRange:
         try:
-            full_path = resolve_repo_path(self.repo_root, file_path)
+            full_path = self._resolve_source_path(file_path)
         except UnsafeRepoPathError:
             return SourceRange(code="", start_line=line, end_line=line, total_lines=0)
         if not full_path.exists() or full_path.is_dir():
@@ -137,6 +143,10 @@ class SourceReader:
         fallback_snippet: str | None = None,
     ) -> str:
         normalized_path = normalize_repo_path(file_path)
+        try:
+            self._resolve_source_path(normalized_path)
+        except UnsafeRepoPathError:
+            return ""
         safe_start_line = max(1, start_line)
         safe_end_line = max(safe_start_line, end_line)
         snippet = self.fetch_lines(normalized_path, safe_start_line, safe_end_line).strip()
@@ -156,6 +166,15 @@ class SourceReader:
             "请优先使用 search_symbols 查找特定特征，或使用 read_source_block/read_source_context 缩小范围。"
             "严禁使用 read_source_file 读取全量内容。"
         )
+
+    def _resolve_source_path(self, file_path: str) -> Path:
+        full_path = resolve_repo_path(self.repo_root, file_path)
+        repo_path = to_repo_relative_path(self.repo_root, full_path)
+        if is_project_state_path(repo_path):
+            raise UnsafeRepoPathError(
+                f"项目状态目录不属于源码范围：{repo_path}"
+            )
+        return full_path
 
     def _extract_java_block(self, content: str, line: int) -> str:
         extractor = JavaBlockExtractor()

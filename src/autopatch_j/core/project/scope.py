@@ -7,6 +7,7 @@ from pathlib import Path
 from autopatch_j.core.domain.scope import CodeScope, CodeScopeKind
 from autopatch_j.core.project.repo_path import (
     UnsafeRepoPathError,
+    is_project_state_path,
     normalize_repo_path,
     resolve_repo_path,
     to_repo_relative_path,
@@ -79,6 +80,8 @@ class ScopeResolver:
             return None
         if candidate.exists():
             rel_path = to_repo_relative_path(self.repo_root, candidate)
+            if is_project_state_path(rel_path):
+                return None
             if candidate.is_dir():
                 return SymbolIndexEntry(path=rel_path, name=candidate.name, kind="dir")
             return SymbolIndexEntry(path=rel_path, name=candidate.name, kind="file")
@@ -88,6 +91,7 @@ class ScopeResolver:
             entry
             for entry in self.symbol_index.search(normalized_name, limit=20)
             if entry.kind in {"file", "dir"}
+            and self._is_source_entry(entry.path)
         ]
         for entry in results:
             if normalize_repo_path(entry.path) == normalized:
@@ -97,6 +101,14 @@ class ScopeResolver:
                 return entry
         return None
 
+    def _is_source_entry(self, path: str) -> bool:
+        try:
+            resolved = resolve_repo_path(self.repo_root, path)
+            repo_path = to_repo_relative_path(self.repo_root, resolved)
+        except UnsafeRepoPathError:
+            return False
+        return not is_project_state_path(repo_path)
+
     def _expand_directory_java_files(self, rel_dir: str) -> list[str]:
         try:
             target_dir = resolve_repo_path(self.repo_root, rel_dir)
@@ -104,11 +116,15 @@ class ScopeResolver:
             return []
         if not target_dir.exists() or not target_dir.is_dir():
             return []
+        if is_project_state_path(to_repo_relative_path(self.repo_root, target_dir)):
+            return []
         java_files: list[str] = []
         for full_path in sorted(target_dir.rglob("*.java")):
             try:
                 rel_path = to_repo_relative_path(self.repo_root, full_path)
             except UnsafeRepoPathError:
+                continue
+            if is_project_state_path(rel_path):
                 continue
             if any(part in self.ignored_dirs for part in Path(rel_path).parts):
                 continue
@@ -119,7 +135,15 @@ class ScopeResolver:
     def _fetch_project_java_files(self) -> list[str]:
         java_files: list[str] = []
         for root, dirs, files in os.walk(self.repo_root):
-            dirs[:] = [directory for directory in dirs if directory not in self.ignored_dirs]
+            root_path = Path(root)
+            dirs[:] = [
+                directory
+                for directory in dirs
+                if directory not in self.ignored_dirs
+                and not is_project_state_path(
+                    (root_path / directory).relative_to(self.repo_root).as_posix()
+                )
+            ]
             for file_name in sorted(files):
                 if not file_name.endswith(".java"):
                     continue

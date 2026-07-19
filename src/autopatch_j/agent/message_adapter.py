@@ -10,6 +10,17 @@ from autopatch_j.tools.catalog import FunctionToolCatalog
 from autopatch_j.tools.names import ToolNameLike
 
 
+REPLAYABLE_TOOL_NAMES = {
+    "read_source_file",
+    "read_source_block",
+    "read_source_context",
+    "memory_search",
+    "memory_read",
+}
+RECENT_TOOL_MESSAGE_COUNT = 5
+MAX_PRUNED_TOOL_SUMMARY_CHARS = 600
+
+
 class AgentMessageAdapter:
     """
     Agent 本地消息与 LLM wire format 的适配器。
@@ -27,25 +38,58 @@ class AgentMessageAdapter:
         self,
         messages: list[dict[str, Any]],
         current_system_prompt: str,
+        *,
+        prune_replayable_tools: bool = False,
+        aggressive: bool = False,
     ) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = [{"role": "system", "content": current_system_prompt}]
+        replayable_calls = self._replayable_tool_calls(messages)
 
         for i, message in enumerate(messages):
             agent_message = AgentMessage.from_record(message)
             new_message = self.fetch_llm_message(agent_message)
 
-            if agent_message.role == "tool":
-                is_recent = i >= len(messages) - 5
-                is_scan = agent_message.name == "scan_project"
-
-                if not is_recent and not is_scan:
-                    content = agent_message.content
-                    if len(content) > 200:
-                        new_message["content"] = content[:100] + "\n... [已脱水压缩] ..."
+            if (
+                prune_replayable_tools
+                and agent_message.role == "tool"
+                and agent_message.tool_call_id in replayable_calls
+                and (aggressive or i < len(messages) - RECENT_TOOL_MESSAGE_COUNT)
+            ):
+                new_message["content"] = self._pruned_tool_content(agent_message)
 
             result.append(new_message)
 
         return result
+
+    def _replayable_tool_calls(self, messages: list[dict[str, Any]]) -> set[str]:
+        call_ids: set[str] = set()
+        for record in messages:
+            message = AgentMessage.from_record(record)
+            if message.role != "assistant":
+                continue
+            for call in message.tool_calls or []:
+                function = call.get("function")
+                if not isinstance(function, dict):
+                    continue
+                if str(function.get("name", "")) not in REPLAYABLE_TOOL_NAMES:
+                    continue
+                call_id = str(call.get("id", ""))
+                if call_id:
+                    call_ids.add(call_id)
+        return call_ids
+
+    def _pruned_tool_content(self, message: AgentMessage) -> str:
+        summary = (message.tool_summary or "").strip()
+        if not summary:
+            summary = message.content[: MAX_PRUNED_TOOL_SUMMARY_CHARS // 2].strip()
+        summary = summary[:MAX_PRUNED_TOOL_SUMMARY_CHARS].rstrip()
+        name = message.name or "tool"
+        status = message.tool_status or "unknown"
+        return (
+            f"[{name} observation 已卸载；status={status}]\n"
+            f"{summary}\n"
+            "如需完整内容，请使用原 tool call 参数重新读取。"
+        ).rstrip()
 
     def fetch_llm_message(self, message: AgentMessage | dict[str, Any]) -> dict[str, Any]:
         agent_message = message if isinstance(message, AgentMessage) else AgentMessage.from_record(message)
