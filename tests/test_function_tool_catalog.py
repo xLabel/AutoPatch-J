@@ -5,7 +5,14 @@ from typing import Annotated
 from unittest.mock import MagicMock
 
 import autopatch_j.tools as tools
-from autopatch_j.core.memory import MemoryMap, RecallPolicy, RecallQuery
+from autopatch_j.core.memory import (
+    MemoryContractError,
+    MemoryMap,
+    MemoryNotFoundError,
+    MemoryStorageError,
+    RecallPolicy,
+    RecallQuery,
+)
 from autopatch_j.core.memory.models import MemoryRequestState
 from autopatch_j.tools.catalog import FunctionToolCatalog
 from autopatch_j.tools.contract import FunctionTool, ToolArg, ToolExecutionResult, function_tool
@@ -170,6 +177,65 @@ def test_memory_search_tool_returns_bounded_structured_hits() -> None:
     )
 
 
+def test_memory_search_tool_surfaces_storage_failure_as_degraded() -> None:
+    context = MagicMock()
+    context.memory_request_state = _memory_request_state()
+    context.memory_manager.search_memory_request.side_effect = MemoryStorageError(
+        "database unavailable"
+    )
+    notice = "Memory degraded：本轮继续执行。原因：database unavailable"
+    context.memory_manager.degraded_notice.return_value = notice
+    tool = FunctionToolCatalog.for_context(context).get(
+        FunctionToolName.MEMORY_SEARCH
+    )
+
+    result = tool.execute(query="Java 17")
+
+    assert result.status == "error"
+    assert result.message == notice
+    assert result.summary == notice
+    context.memory_manager.degraded_notice.assert_called_once()
+
+
+def test_memory_search_tool_distinguishes_contract_rejection() -> None:
+    context = MagicMock()
+    context.memory_request_state = _memory_request_state()
+    context.memory_manager.search_memory_request.side_effect = MemoryContractError(
+        "durable recall token pool 不足"
+    )
+    tool = FunctionToolCatalog.for_context(context).get(
+        FunctionToolName.MEMORY_SEARCH
+    )
+
+    result = tool.execute(query="Java 17")
+
+    assert result.status == "error"
+    assert result.message == (
+        "Memory 搜索被请求约束拒绝：durable recall token pool 不足"
+    )
+    assert result.summary == "Memory 搜索失败: 请求约束拒绝"
+    context.memory_manager.degraded_notice.assert_not_called()
+
+
+def test_memory_search_tool_does_not_label_unexpected_error_as_policy() -> None:
+    context = MagicMock()
+    context.memory_request_state = _memory_request_state()
+    context.memory_manager.search_memory_request.side_effect = RuntimeError(
+        "unexpected failure"
+    )
+    tool = FunctionToolCatalog.for_context(context).get(
+        FunctionToolName.MEMORY_SEARCH
+    )
+
+    result = tool.execute(query="Java 17")
+
+    assert result.status == "error"
+    assert result.summary == "Memory 搜索失败: 执行异常"
+    assert "RuntimeError" in result.message
+    assert "policy" not in result.message
+    context.memory_manager.degraded_notice.assert_not_called()
+
+
 def test_memory_read_tool_bounds_content_and_provenance() -> None:
     context = MagicMock()
     context.memory_request_state = _memory_request_state()
@@ -201,6 +267,60 @@ def test_memory_read_tool_bounds_content_and_provenance() -> None:
         context.memory_request_state,
         "m-1",
     )
+
+
+def test_memory_read_tool_maps_only_not_found_to_unreadable() -> None:
+    context = MagicMock()
+    context.memory_request_state = _memory_request_state()
+    context.memory_manager.read_memory_request.side_effect = MemoryNotFoundError(
+        "policy denied"
+    )
+    tool = FunctionToolCatalog.for_context(context).get(FunctionToolName.MEMORY_READ)
+
+    result = tool.execute(memory_id="m-1")
+
+    assert result.status == "error"
+    assert result.message == "Memory 不存在或当前不可读取：m-1"
+    assert "degraded" not in result.message
+    context.memory_manager.degraded_notice.assert_not_called()
+
+
+def test_memory_read_tool_surfaces_storage_failure_as_degraded() -> None:
+    context = MagicMock()
+    context.memory_request_state = _memory_request_state()
+    context.memory_manager.read_memory_request.side_effect = MemoryStorageError(
+        "database unavailable"
+    )
+    notice = "Memory degraded：本轮继续执行。原因：database unavailable"
+    context.memory_manager.degraded_notice.return_value = notice
+    tool = FunctionToolCatalog.for_context(context).get(FunctionToolName.MEMORY_READ)
+
+    result = tool.execute(memory_id="m-1")
+
+    assert result.status == "error"
+    assert result.message == notice
+    assert result.summary == notice
+    assert "不存在" not in result.message
+    context.memory_manager.degraded_notice.assert_called_once()
+
+
+def test_memory_read_tool_distinguishes_contract_rejection() -> None:
+    context = MagicMock()
+    context.memory_request_state = _memory_request_state()
+    context.memory_manager.read_memory_request.side_effect = MemoryContractError(
+        "durable recall token pool 不足"
+    )
+    tool = FunctionToolCatalog.for_context(context).get(FunctionToolName.MEMORY_READ)
+
+    result = tool.execute(memory_id="m-1")
+
+    assert result.status == "error"
+    assert result.message == (
+        "Memory 读取被请求约束拒绝：durable recall token pool 不足"
+    )
+    assert result.summary == "Memory 读取失败: 请求约束拒绝"
+    assert "不存在" not in result.message
+    context.memory_manager.degraded_notice.assert_not_called()
 
 
 def test_memory_tools_require_an_admitted_request_thread() -> None:

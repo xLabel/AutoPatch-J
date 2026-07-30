@@ -4,7 +4,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from time import monotonic, sleep
 from types import SimpleNamespace
 
@@ -17,12 +17,37 @@ from autopatch_j.core.memory import (
 )
 from autopatch_j.core.memory.models import (
     CandidateSource,
+    ClaimedJobBatch,
+    ConsolidationOperation,
+    ConsolidationResult,
     ExtractionCandidateInput,
     ExtractionResult,
+    ExtractionSourceInput,
 )
 from autopatch_j.core.memory.constants import MAX_JOB_ERROR_CHARS
-from autopatch_j.core.memory.pipeline import PipelineStepResult
+from autopatch_j.core.memory.pipeline import MemoryPipeline, PipelineStepResult
+from autopatch_j.core.memory.prompts import MEMORY_CONSOLIDATION_SYSTEM_PROMPT
+from autopatch_j.core.memory.store import MemoryStore
 from autopatch_j.llm.diagnostics import MAX_RAW_LLM_ERROR_CHARS
+from autopatch_j.llm.context_window import ModelContextProfile
+
+
+def _complete_extraction(
+    store: MemoryStore,
+    batch: ClaimedJobBatch,
+    result: ExtractionResult,
+) -> tuple[str, ...]:
+    source_inputs = tuple(
+        ExtractionSourceInput(source.turn_id, source.role, source.quote)
+        for candidate in result.candidates
+        for source in candidate.sources
+    )
+    return MemoryStore.complete_extraction(
+        store,
+        batch,
+        result,
+        source_inputs=source_inputs,
+    )
 
 
 class RecordingMemoryLLM:
@@ -124,6 +149,39 @@ class EmptyCandidateLLM:
                 ensure_ascii=False,
             )
         )
+
+
+class TinyCapacityMemoryLLM:
+    context_profile = ModelContextProfile(
+        model="tiny",
+        context_window=120,
+        max_output_tokens=40,
+        provider_safety_tokens=40,
+    )
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(self, messages, tools=None, purpose=None):
+        del messages, tools, purpose
+        self.calls += 1
+        raise AssertionError("capacity skip must happen before provider")
+
+
+class CapacityGuardMemoryLLM:
+    def __init__(self, input_capacity: int) -> None:
+        self.context_profile = ModelContextProfile(
+            model="capacity-guard",
+            context_window=input_capacity + 2,
+            max_output_tokens=1,
+            provider_safety_tokens=1,
+        )
+        self.calls = 0
+
+    def chat(self, messages, tools=None, purpose=None):
+        del messages, tools, purpose
+        self.calls += 1
+        raise AssertionError("full consolidation registry must not be truncated")
 
 
 class InjectingMemoryLLM(RecordingMemoryLLM):
@@ -238,7 +296,7 @@ def _seed_pending_consolidation(manager: MemoryManager) -> str:
     manager.complete_turn(turn.id, assistant_text="收到")
     extraction = manager.store.claim_extraction_batch("seed-worker", force=True)
     assert extraction is not None
-    candidate_ids = manager.store.complete_extraction(
+    candidate_ids = _complete_extraction(manager.store,
         extraction,
         ExtractionResult(
             thread_compaction="用户在讨论回答风格",
@@ -509,6 +567,155 @@ def test_extraction_without_candidates_succeeds_once_without_child_job(
     assert manager.store.claim_extraction_batch("other-worker", force=True) is None
 
 
+def test_memory_capacity_failure_completes_without_retrying_provider(
+    tmp_path: Path,
+) -> None:
+    llm = TinyCapacityMemoryLLM()
+    manager = MemoryManager(db_path=tmp_path / "memory.db", llm=llm)
+    turn = manager.begin_turn(intent="general_chat", user_text="x" * 2_000)
+    manager.complete_turn(turn.id, assistant_text="y" * 2_000)
+
+    first = manager.flush_once("capacity")
+    second = manager.flush_once("capacity-again")
+
+    assert first.processed == 1
+    assert first.succeeded == 1
+    assert first.failed == 0
+    assert first.pending == 0
+    assert "capacity" in first.errors[0]
+    assert second.processed == 0
+    assert llm.calls == 0
+    with sqlite3.connect(tmp_path / "memory.db") as connection:
+        status, attempts = connection.execute(
+            "SELECT status, attempt_count FROM memory_jobs WHERE kind = 'extraction'"
+        ).fetchone()
+    assert status == "succeeded_no_output"
+    assert attempts == 1
+
+
+def test_consolidation_capacity_keeps_full_registry_and_suppresses_candidates(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "memory.db"
+    store = MemoryStore(db_path)
+    first_text = "以后默认偏好简洁回答"
+    first_turn = store.begin_turn("general_chat", first_text, "first-turn")
+    store.complete_turn(first_turn.id, "收到", "first-turn")
+    first_batch = store.claim_extraction_batch("first-extract", force=True)
+    assert first_batch is not None
+    first_candidates = _complete_extraction(
+        store,
+        first_batch,
+        ExtractionResult(
+            "用户偏好简洁回答",
+            (
+                ExtractionCandidateInput(
+                    kind="user_preference",
+                    subject="answer brevity",
+                    statement="回答默认保持简洁",
+                    content="用户明确偏好简洁回答",
+                    strength="hard",
+                    origin="explicit",
+                    recall_mode="always",
+                    applies_to_paths=(),
+                    aliases=("concise answers",),
+                    keywords=("response style",),
+                    sources=(CandidateSource(first_turn.id, "user", first_text),),
+                ),
+            ),
+        ),
+    )
+    first_consolidation = store.claim_consolidation_job(
+        "first-consolidate", force=True
+    )
+    assert first_consolidation is not None
+    store.apply_consolidation(
+        first_consolidation,
+        ConsolidationResult(
+            operations=(
+                ConsolidationOperation(
+                    operation="create",
+                    candidate_ids=first_candidates,
+                    target_id=None,
+                    kind="user_preference",
+                    subject="answer brevity",
+                    statement="回答默认保持简洁",
+                    content="用户明确偏好简洁回答",
+                    strength="hard",
+                    origin="explicit",
+                    recall_mode="always",
+                    applies_to_paths=(),
+                    aliases=("concise answers",),
+                    keywords=("response style",),
+                ),
+            )
+        ),
+    )
+
+    second_text = "以后默认仍然偏好简洁回答"
+    second_turn = store.begin_turn("general_chat", second_text, "second-turn")
+    store.complete_turn(second_turn.id, "收到", "second-turn")
+    second_batch = store.claim_extraction_batch("second-extract", force=True)
+    assert second_batch is not None
+    second_candidates = _complete_extraction(
+        store,
+        second_batch,
+        ExtractionResult(
+            "用户再次确认简洁回答",
+            (
+                ExtractionCandidateInput(
+                    kind="user_preference",
+                    subject="answer brevity",
+                    statement="回答默认保持简洁",
+                    content="用户再次明确偏好简洁回答",
+                    strength="hard",
+                    origin="explicit",
+                    recall_mode="always",
+                    applies_to_paths=(),
+                    aliases=("concise answers",),
+                    keywords=("response style",),
+                    sources=(CandidateSource(second_turn.id, "user", second_text),),
+                ),
+            ),
+        ),
+    )
+    consolidation = store.claim_consolidation_job("capacity-worker", force=True)
+    assert consolidation is not None
+    payload = store.consolidation_payload(consolidation)
+    assert payload["active_items"]
+    candidate_only = {**payload, "active_items": []}
+    candidate_tokens = MemoryPipeline._payload_tokens(
+        MEMORY_CONSOLIDATION_SYSTEM_PROMPT,
+        candidate_only,
+    )
+    full_tokens = MemoryPipeline._payload_tokens(
+        MEMORY_CONSOLIDATION_SYSTEM_PROMPT,
+        payload,
+    )
+    assert candidate_tokens < full_tokens
+    llm = CapacityGuardMemoryLLM(candidate_tokens)
+
+    step = MemoryPipeline(store, llm, "capacity-worker")._process_consolidation(
+        consolidation
+    )
+
+    assert step.succeeded == 1
+    assert step.failed == 0
+    assert llm.calls == 0
+    with sqlite3.connect(db_path) as connection:
+        candidate_status = connection.execute(
+            "SELECT status FROM memory_candidates WHERE id = ?",
+            (second_candidates[0],),
+        ).fetchone()[0]
+        job_status = connection.execute(
+            "SELECT status FROM memory_jobs WHERE id = ?",
+            (consolidation.jobs[0].id,),
+        ).fetchone()[0]
+    assert candidate_status == "suppressed"
+    assert job_status == "succeeded_no_output"
+    assert store.claim_consolidation_job("other-worker", force=True) is None
+
+
 def test_flush_attempts_a_failed_job_at_most_once_per_snapshot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -572,7 +779,7 @@ def test_thread_watermark_returns_on_deadline_and_finishes_in_background(
         wait_seconds=0.01,
     )
 
-    assert llm.started.is_set()
+    assert llm.started.wait(timeout=1)
     assert result.pending == 1
     assert "后台继续" in result.errors[0]
 
@@ -589,6 +796,169 @@ def test_thread_watermark_returns_on_deadline_and_finishes_in_background(
 
     assert status.pending_jobs + status.leased_jobs + status.retry_wait_jobs == 0
     assert manager.ensure_active_thread().id != thread.id
+
+
+def test_thread_watermark_ignores_pending_jobs_from_other_thread(
+    tmp_path: Path,
+) -> None:
+    manager = MemoryManager(
+        db_path=tmp_path / "memory.db",
+        llm=EmptyCandidateLLM(),
+    )
+    old_thread = manager.ensure_active_thread()
+    turn = manager.begin_turn(intent="general_chat", user_text="old pending")
+    manager.complete_turn(turn.id, assistant_text="pending")
+    current_thread = manager.start_new_thread(expected_thread_id=old_thread.id)
+
+    result = manager.flush_thread_watermark(
+        reason="new",
+        thread_id=current_thread.id,
+        wait_seconds=0.1,
+    )
+
+    assert result.pending == 0
+    assert manager.store.pending_job_count() == 1
+
+
+def test_thread_watermark_waits_for_externally_leased_job_before_deadline(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "memory.db"
+    manager = MemoryManager(db_path=db_path, llm=EmptyCandidateLLM())
+    other = MemoryStore(db_path)
+    thread = manager.ensure_active_thread()
+    turn = manager.begin_turn(intent="general_chat", user_text="leased elsewhere")
+    manager.complete_turn(turn.id, assistant_text="pending")
+    leased = other.claim_extraction_batch("other-worker", force=True)
+    assert leased is not None
+
+    releaser = Thread(
+        target=lambda: (
+            sleep(0.05),
+            _complete_extraction(other, leased, ExtractionResult("done elsewhere", ())),
+        )
+    )
+    releaser.start()
+    started_at = monotonic()
+    result = manager.flush_thread_watermark(
+        reason="new",
+        thread_id=thread.id,
+        wait_seconds=1,
+    )
+    elapsed = monotonic() - started_at
+    releaser.join()
+
+    assert elapsed >= 0.04
+    assert result.pending == 0
+    assert result.errors == ()
+
+
+def test_thread_watermark_waits_until_deadline_for_retry_wait_job(
+    tmp_path: Path,
+) -> None:
+    manager = MemoryManager(
+        db_path=tmp_path / "memory.db",
+        llm=EmptyCandidateLLM(),
+    )
+    thread = manager.ensure_active_thread()
+    turn = manager.begin_turn(intent="general_chat", user_text="retry later")
+    manager.complete_turn(turn.id, assistant_text="pending")
+    leased = manager.store.claim_extraction_batch("failed-worker", force=True)
+    assert leased is not None
+    manager.store.record_job_failure(leased, "temporary provider failure")
+
+    started_at = monotonic()
+    result = manager.flush_thread_watermark(
+        reason="new",
+        thread_id=thread.id,
+        wait_seconds=0.05,
+    )
+    elapsed = monotonic() - started_at
+
+    assert elapsed >= 0.04
+    assert result.pending == 1
+    assert "后台继续" in result.errors[0]
+
+
+def test_close_waits_for_tracked_watermark_thread(tmp_path: Path) -> None:
+    llm = BlockingEmptyMemoryLLM()
+    manager = MemoryManager(db_path=tmp_path / "memory.db", llm=llm)
+    thread = manager.ensure_active_thread()
+    turn = manager.begin_turn(intent="general_chat", user_text="blocking watermark")
+    manager.complete_turn(turn.id, assistant_text="pending")
+    result = manager.flush_thread_watermark(
+        reason="new",
+        thread_id=thread.id,
+        wait_seconds=0.01,
+    )
+    assert result.pending == 1
+
+    closed = Event()
+    closer = Thread(target=lambda: (manager.close(), closed.set()))
+    closer.start()
+    assert not closed.wait(timeout=0.05)
+    llm.release.set()
+    assert closed.wait(timeout=3)
+    closer.join()
+    assert manager._watermark_threads == set()
+
+
+def test_close_before_watermark_registration_prevents_late_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = MemoryManager(
+        db_path=tmp_path / "memory.db",
+        llm=RecordingMemoryLLM(),
+    )
+    thread = manager.ensure_active_thread()
+    turn = manager.begin_turn(intent="general_chat", user_text="待关闭的 watermark")
+    manager.complete_turn(turn.id, assistant_text="收到")
+
+    original_pending_job_ids = manager.store.pending_job_ids
+    pending_lookup_entered = Event()
+    release_pending_lookup = Event()
+
+    def blocked_pending_job_ids(thread_id=None):
+        pending_lookup_entered.set()
+        assert release_pending_lookup.wait(timeout=3)
+        return original_pending_job_ids(thread_id)
+
+    monkeypatch.setattr(manager.store, "pending_job_ids", blocked_pending_job_ids)
+
+    class CountingPipeline:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def process_one(self, **kwargs):
+            del kwargs
+            self.calls += 1
+            return None
+
+    pipeline = CountingPipeline()
+    manager._pipeline = pipeline
+    result_holder: list = []
+    flusher = Thread(
+        target=lambda: result_holder.append(
+            manager.flush_thread_watermark(
+                reason="close-race",
+                thread_id=thread.id,
+                wait_seconds=0.1,
+            )
+        )
+    )
+    flusher.start()
+    assert pending_lookup_entered.wait(timeout=1)
+
+    manager.close()
+    release_pending_lookup.set()
+    flusher.join(timeout=3)
+
+    assert not flusher.is_alive()
+    assert result_holder and result_holder[0].pending == 1
+    assert "未启动" in result_holder[0].errors[0]
+    assert pipeline.calls == 0
+    assert manager._watermark_threads == set()
 
 
 def test_background_watermark_heartbeats_new_thread_turn(tmp_path: Path) -> None:
@@ -610,7 +980,7 @@ def test_background_watermark_heartbeats_new_thread_turn(tmp_path: Path) -> None
         wait_seconds=0.01,
     )
 
-    assert pipeline.started.is_set()
+    assert pipeline.started.wait(timeout=1)
     assert "后台继续" in result.errors[0]
     manager.start_new_thread(expected_thread_id=old_thread.id)
     new_turn = manager.begin_turn(intent="general_chat", user_text="新 thread turn")

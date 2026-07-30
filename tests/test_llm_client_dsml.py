@@ -12,7 +12,7 @@ from autopatch_j.llm.diagnostics import (
     MAX_RAW_LLM_ERROR_CHARS,
     format_raw_llm_exception,
 )
-from autopatch_j.llm.context_window import ModelContextProfile
+from autopatch_j.llm.context_window import ContextCapacityError, ModelContextProfile
 from autopatch_j.llm.options import LLMCallPurpose, LLMReasoningMode, resolve_request_options
 
 
@@ -154,6 +154,34 @@ def test_llm_client_records_call_diagnostics_for_classifier() -> None:
     assert diagnostic.reasoning is LLMReasoningMode.DISABLED
     assert diagnostic.max_tokens == 128
     assert diagnostic.status == "ok"
+
+
+@pytest.mark.parametrize("purpose", list(LLMCallPurpose))
+def test_all_llm_purposes_preflight_capacity_before_transport(
+    purpose: LLMCallPurpose,
+) -> None:
+    client = LLMClient(
+        api_key="test-key",
+        base_url="https://example.invalid/v1",
+        model="test-model",
+        context_profile=ModelContextProfile(
+            model="test-model",
+            context_window=200,
+            max_output_tokens=50,
+            provider_safety_tokens=50,
+        ),
+    )
+    client.client = MagicMock()
+
+    with pytest.raises(ContextCapacityError, match="input capacity"):
+        client.chat(
+            messages=[{"role": "user", "content": "x" * 2_000}],
+            purpose=purpose,
+        )
+
+    client.client.chat.completions.create.assert_not_called()
+    assert client.diagnostics[-1].purpose is purpose
+    assert client.diagnostics[-1].status == "error"
 
 
 def test_llm_diagnostic_preserves_raw_provider_failure() -> None:

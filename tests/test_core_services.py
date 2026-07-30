@@ -13,6 +13,7 @@ from autopatch_j.core.user_input import (
     parse_intent_label,
 )
 from autopatch_j.core.user_input.prompts import INTENT_CLASSIFIER_PROMPT, build_intent_classifier_user_prompt
+from autopatch_j.llm.context_window import HEAD_TAIL_OMISSION_MARKER, ModelContextProfile
 from autopatch_j.core.domain import CodeScopeKind, IntentType
 from autopatch_j.core.review import StaticScanRunner
 from autopatch_j.core.project import ScopeResolver
@@ -157,6 +158,43 @@ def test_llm_intent_classifier_falls_back_to_react_when_fast_path_is_empty() -> 
     assert classifier is not None
     assert classifier("@LegacyConfig.java 检查代码", False) is IntentType.CODE_AUDIT
     assert llm.purposes == [LLMCallPurpose.CLASSIFIER, LLMCallPurpose.REACT]
+
+
+def test_intent_classifier_reuses_one_bounded_head_tail_projection_for_fallback() -> None:
+    class FakeResponse:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class FakeLLM:
+        context_profile = ModelContextProfile(
+            model="test",
+            context_window=1_100,
+            max_output_tokens=100,
+            provider_safety_tokens=100,
+        )
+
+        def __init__(self) -> None:
+            self.calls: list[tuple[LLMCallPurpose, list[dict[str, str]]]] = []
+
+        def chat(self, messages, **kwargs):
+            purpose = kwargs["purpose"]
+            self.calls.append((purpose, messages))
+            return FakeResponse("" if purpose is LLMCallPurpose.CLASSIFIER else "code_audit")
+
+    llm = FakeLLM()
+    classifier = build_llm_user_intent_classifier(llm)
+
+    assert classifier is not None
+    assert classifier("HEAD-" + "x" * 10_000 + "-TAIL", False) is IntentType.CODE_AUDIT
+    assert [purpose for purpose, _ in llm.calls] == [
+        LLMCallPurpose.CLASSIFIER,
+        LLMCallPurpose.REACT,
+    ]
+    assert llm.calls[0][1] == llm.calls[1][1]
+    projected = llm.calls[0][1][-1]["content"]
+    assert HEAD_TAIL_OMISSION_MARKER in projected
+    assert "HEAD-" in projected
+    assert "-TAIL" in projected
 
 
 def test_intent_diagnostics_reports_successful_react_fallback() -> None:

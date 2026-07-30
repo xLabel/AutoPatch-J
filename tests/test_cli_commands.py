@@ -15,7 +15,7 @@ from autopatch_j.cli.command_router import CommandRouter
 from autopatch_j.agent.react_runner import AgentRunResult
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.memory import MemoryManager, MemorySchemaError, MemoryStatus
-from autopatch_j.core.memory.models import RecallQuery
+from autopatch_j.core.memory.models import FlushResult, RecallQuery
 from autopatch_j.core.patching import (
     PatchApplicationResult,
     SearchReplacePatchDraft,
@@ -339,6 +339,17 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> N
         return _agent_result("done")
 
     cli.runtime.agent.perform_patch_revise = MagicMock(side_effect=revise_current)
+    complete_turn = cli.runtime.memory_manager.complete_turn
+
+    def complete_after_replacement(turn_id: str, *, assistant_text: str):
+        current = cli.runtime.workspace_manager.load().current_patch()
+        assert current is not None
+        assert current.draft.new_string == "better"
+        return complete_turn(turn_id, assistant_text=assistant_text)
+
+    cli.runtime.memory_manager.complete_turn = MagicMock(
+        side_effect=complete_after_replacement
+    )
 
     cli.input_router.handle_patch_revise("rewrite current")
 
@@ -349,10 +360,17 @@ def test_handle_patch_revise_replaces_only_current_patch(cli: AutoPatchCli) -> N
     assert updated.patch_items[1].file_path == "src/main/java/demo/UserService.java"
     assert updated.patch_items[1].draft.rationale == "fix F2"
     cli.renderer.print_agent_text.assert_any_call("已更新当前补丁，后续补丁保持不变。")
+    assert cli.runtime.memory_manager.complete_turn.call_count == 1
+    assert cli.runtime.memory_manager.complete_turn.call_args.kwargs[
+        "assistant_text"
+    ] == "已更新当前补丁，后续补丁保持不变。"
     with sqlite3.connect(cli.runtime.memory_manager.db_path) as connection:
-        evidence_keys = connection.execute(
-            "SELECT evidence_keys_json FROM turns WHERE intent = 'patch_revise'"
-        ).fetchone()[0]
+        state, assistant_text, evidence_keys = connection.execute(
+            "SELECT state, assistant_text, evidence_keys_json "
+            "FROM turns WHERE intent = 'patch_revise'"
+        ).fetchone()
+    assert state == "completed"
+    assert assistant_text == "已更新当前补丁，后续补丁保持不变。"
     assert json.loads(evidence_keys) == ["scan-1:F1"]
 
 
@@ -382,6 +400,53 @@ def test_handle_patch_revise_keeps_queue_when_no_revision_created(cli: AutoPatch
     assert updated.patch_items[0].draft.rationale == "fix F1"
     assert updated.patch_items[1].draft.rationale == "fix F2"
     cli.renderer.print_agent_text.assert_any_call("未生成修订补丁，当前补丁保持不变。")
+    with sqlite3.connect(cli.runtime.memory_manager.db_path) as connection:
+        state, assistant_text = connection.execute(
+            "SELECT state, assistant_text FROM turns WHERE intent = 'patch_revise'"
+        ).fetchone()
+    assert state == "completed"
+    assert assistant_text == "未生成修订补丁，当前补丁保持不变。"
+
+
+def test_handle_patch_revise_persists_binding_rejection_summary(
+    cli: AutoPatchCli,
+) -> None:
+    workspace = ReviewWorkspace(
+        mode=WorkspaceStatus.REVIEWING,
+        scope=CodeScope(
+            kind=CodeScopeKind.PROJECT,
+            source_roots=[],
+            focus_files=[],
+            is_locked=False,
+        ),
+        latest_scan_id="scan-1",
+        patch_items=[_item("item-1")],
+        current_patch_index=0,
+    )
+    cli.runtime.workspace_manager.save(workspace)
+    invalid_replacement = _patch_draft("invalid", finding_id="F2")
+
+    def revise_with_invalid_binding(*args, **kwargs):
+        cli.runtime.agent.session.set_revised_patch_draft(invalid_replacement)
+        return _agent_result("done")
+
+    cli.runtime.agent.perform_patch_revise = MagicMock(
+        side_effect=revise_with_invalid_binding
+    )
+
+    cli.input_router.handle_patch_revise("rewrite current")
+
+    current = cli.runtime.workspace_manager.load().current_patch()
+    assert current is not None
+    assert current.draft.new_string == "new"
+    expected = "修订补丁未应用：当前 finding binding 校验失败，原补丁保持不变。"
+    cli.renderer.print_error.assert_any_call(expected)
+    with sqlite3.connect(cli.runtime.memory_manager.db_path) as connection:
+        state, assistant_text = connection.execute(
+            "SELECT state, assistant_text FROM turns WHERE intent = 'patch_revise'"
+        ).fetchone()
+    assert state == "completed"
+    assert assistant_text == expected
 
 
 def test_process_single_finding_commits_staged_patch_after_success(cli: AutoPatchCli) -> None:
@@ -456,6 +521,56 @@ def test_code_audit_stops_at_batch_limit(cli: AutoPatchCli, monkeypatch: pytest.
     cli.renderer.print_agent_text.assert_any_call(
         "本轮已处理 2 个 finding，仍有 1 个待处理。请确认当前补丁后再次发起检查继续处理。"
     )
+
+
+def test_code_audit_scanner_failure_persists_failed_turn(cli: AutoPatchCli) -> None:
+    scope = CodeScope(
+        kind=CodeScopeKind.PROJECT,
+        source_roots=[],
+        focus_files=[],
+        is_locked=False,
+    )
+    cli.runtime.scope_service.resolve = MagicMock(return_value=scope)
+    cli.runtime.scanner_runner.run_scan_and_save = MagicMock(
+        side_effect=RuntimeError("scanner unavailable")
+    )
+
+    cli.input_router.code_audit_workflow.handle_code_audit("audit project")
+
+    payload = json.loads(
+        cli.runtime.memory_manager.export(cli.repo_root / "exports").path.read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["turns"][-1]["state"] == "failed"
+    assert payload["turns"][-1]["assistant_text"] == ""
+    cli.renderer.print_error.assert_called_once_with("scanner unavailable")
+
+
+def test_code_audit_displays_and_persists_stable_success_summary(
+    cli: AutoPatchCli,
+) -> None:
+    scope = CodeScope(
+        kind=CodeScopeKind.PROJECT,
+        source_roots=[],
+        focus_files=[],
+        is_locked=False,
+    )
+    workflow = cli.input_router.code_audit_workflow
+    cli.runtime.scope_service.resolve = MagicMock(return_value=scope)
+    workflow._prepare_audit_workspace = MagicMock(return_value=None)  # type: ignore[method-assign]
+
+    workflow.handle_code_audit("audit project")
+
+    expected = "代码审计完成：静态扫描未发现 finding，LLM 二次复核生成 0 个待审补丁。"
+    payload = json.loads(
+        cli.runtime.memory_manager.export(cli.repo_root / "exports").path.read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["turns"][-1]["state"] == "completed"
+    assert payload["turns"][-1]["assistant_text"] == expected
+    cli.renderer.print_agent_text.assert_any_call(expected)
 
 
 def test_finding_retry_commits_only_retry_patch(cli: AutoPatchCli) -> None:
@@ -630,6 +745,14 @@ def test_successful_apply_rebases_later_same_file_pending_patch(
         status="ok",
         message="ok",
     )
+    cli.runtime.agent.session.record_runtime_patch_constraint(
+        "item-1",
+        "当前补丁不要使用三元表达式",
+    )
+    cli.runtime.agent.session.record_runtime_patch_constraint(
+        "item-2",
+        "当前补丁必须保留日志",
+    )
 
     cli.input_router.handle_review_input("apply", workspace.patch_items[0])
 
@@ -649,6 +772,13 @@ def test_successful_apply_rebases_later_same_file_pending_patch(
     assert rebased_item.draft.source_scan_id == "scan-1"
     assert rebased_item.draft.associated_finding_id == "F2"
     assert "extra();" in rebased_item.draft.diff
+    assert (
+        cli.runtime.agent.session.build_runtime_patch_constraint_context("item-1")
+        == ""
+    )
+    assert "必须保留日志" in (
+        cli.runtime.agent.session.build_runtime_patch_constraint_context("item-2")
+    )
     cli.renderer.print_agent_text.assert_any_call(
         "已重定位 1 个同文件待审补丁；0 个补丁需重新扫描。"
     )
@@ -1277,6 +1407,43 @@ def test_new_flushes_old_thread_aborts_pending_patch_and_starts_thread(cli: Auto
     cli.runtime.agent.reset_history.assert_called_once_with()
     cli.renderer.print_agent_text.assert_any_call("已中止待确认补丁并清空 review workspace。")
     cli.renderer.print_success.assert_called_once_with("已创建新的普通对话 thread：thread-new")
+
+
+def test_new_reports_capacity_skip_as_terminal_not_background(
+    cli: AutoPatchCli,
+) -> None:
+    runtime = MagicMock()
+    runtime.flush_memory_watermark.return_value = FlushResult(
+        processed=1,
+        succeeded=1,
+        failed=0,
+        pending=0,
+        errors=("Memory extraction skipped: input capacity",),
+    )
+
+    cli.command_handlers._flush_memory_watermark(runtime, thread_id="thread-old")
+
+    message = cli.renderer.print_error.call_args.args[0]
+    assert "任务已进入终态" in message
+    assert "不会在后台重试" in message
+    assert "后台继续" not in message
+
+
+def test_new_keeps_background_message_for_unfinished_watermark(
+    cli: AutoPatchCli,
+) -> None:
+    runtime = MagicMock()
+    runtime.flush_memory_watermark.return_value = FlushResult(
+        failed=0,
+        pending=1,
+        errors=("watermark timed out",),
+    )
+
+    cli.command_handlers._flush_memory_watermark(runtime, thread_id="thread-old")
+
+    cli.renderer.print_error.assert_called_once_with(
+        "旧 thread Memory 尚未完全物化；任务已保留并在后台继续。"
+    )
 
 
 def test_memory_clear_requires_confirmation(cli: AutoPatchCli) -> None:

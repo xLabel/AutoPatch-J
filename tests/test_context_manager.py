@@ -7,11 +7,16 @@ from autopatch_j.agent.context_manager import (
     ContextUsage,
     RequestContextManager,
     RequestContextBudget,
+    clip_text_to_tokens,
     is_context_overflow_error,
     required_compaction_reclaim,
 )
 from autopatch_j.agent.message_adapter import AgentMessageAdapter
-from autopatch_j.llm.context_window import ModelContextProfile, resolve_context_profile
+from autopatch_j.llm.context_window import (
+    ModelContextProfile,
+    estimate_text_tokens,
+    resolve_context_profile,
+)
 
 
 def test_default_1m_budget_uses_large_history_and_bounded_recall() -> None:
@@ -62,8 +67,39 @@ def test_context_usage_separates_session_and_durable_memory() -> None:
 
 
 def test_compaction_reclaim_requires_absolute_or_relative_progress() -> None:
-    assert required_compaction_reclaim(100_000) == 32 * 1024
-    assert required_compaction_reclaim(900_000) == 90_000
+    assert required_compaction_reclaim(100_000, 950_848) == 32 * 1024
+    assert required_compaction_reclaim(900_000, 950_848) == 90_000
+    assert required_compaction_reclaim(26_706, 29_616) == 2_961
+
+
+def test_small_input_capacity_allows_compaction_that_fits_after_rebuild() -> None:
+    adapter = AgentMessageAdapter(MagicMock())
+    manager = RequestContextManager(
+        ModelContextProfile(
+            model="small-window",
+            context_window=50_000,
+            max_output_tokens=4_000,
+            provider_safety_tokens=16_384,
+        ),
+        adapter,
+    )
+    messages = [
+        {"role": "user", "content": "current request"},
+        {"role": "assistant", "content": "old context " * 7_000},
+        {"role": "assistant", "content": "recent tail"},
+    ]
+
+    prepared = manager.prepare(
+        messages=messages,
+        system_prompt="system",
+        tools=[],
+        initial_history_count=0,
+        checkpoint_builder=lambda *_: "## Goal\nkeep the current request",
+    )
+
+    assert manager.budget.input_capacity == 29_616
+    assert prepared.compacted is True
+    assert prepared.usage.total_tokens <= manager.budget.input_capacity
 
 
 def test_context_manager_prunes_replayable_tool_without_mutating_trace() -> None:
@@ -264,3 +300,15 @@ def test_context_overflow_detection_is_specific() -> None:
     assert is_context_overflow_error(RuntimeError("context_length_exceeded"))
     assert is_context_overflow_error(RuntimeError("maximum context length is 1000"))
     assert not is_context_overflow_error(RuntimeError("rate limit exceeded"))
+
+
+def test_checkpoint_clipping_counts_truncation_marker_in_budget() -> None:
+    text = "checkpoint content " * 200
+
+    tiny = clip_text_to_tokens(text, 1)
+    marked = clip_text_to_tokens(text, 32)
+
+    assert estimate_text_tokens(tiny) <= 1
+    assert "checkpoint 已按预算截断" not in tiny
+    assert estimate_text_tokens(marked) <= 32
+    assert marked.endswith("… [checkpoint 已按预算截断]")

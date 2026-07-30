@@ -20,10 +20,12 @@ from autopatch_j.core.memory.errors import (
 )
 from autopatch_j.core.memory.models import (
     CandidateSource,
+    ClaimedJobBatch,
     ConsolidationOperation,
     ConsolidationResult,
     ExtractionCandidateInput,
     ExtractionResult,
+    ExtractionSourceInput,
     RecallQuery,
 )
 from autopatch_j.core.memory.store import MemoryStore
@@ -38,6 +40,24 @@ class FakeClock:
 
     def advance(self, seconds: int) -> None:
         self.current += timedelta(seconds=seconds)
+
+
+def _complete_extraction(
+    store: MemoryStore,
+    batch: ClaimedJobBatch,
+    result: ExtractionResult,
+) -> tuple[str, ...]:
+    source_inputs = tuple(
+        ExtractionSourceInput(source.turn_id, source.role, source.quote)
+        for candidate in result.candidates
+        for source in candidate.sources
+    )
+    return MemoryStore.complete_extraction(
+        store,
+        batch,
+        result,
+        source_inputs=source_inputs,
+    )
 
 
 def _complete_turn(
@@ -67,7 +87,7 @@ def _seed_candidate(
     turn_id = _complete_turn(store, user_text, "收到", owner=f"turn-{owner}")
     batch = store.claim_extraction_batch(f"extract-{owner}", force=True)
     assert batch is not None
-    candidate_ids = store.complete_extraction(
+    candidate_ids = _complete_extraction(store,
         batch,
         ExtractionResult(
             thread_compaction=statement,
@@ -214,11 +234,11 @@ def test_extraction_batch_is_head_of_line_bounded_and_lease_fenced(
 
     clock.advance(JOB_LEASE_SECONDS + 1)
     with pytest.raises(MemoryLeaseError):
-        store.complete_extraction(stale, ExtractionResult("stale", ()))
+        _complete_extraction(store, stale, ExtractionResult("stale", ()))
     current = store.claim_extraction_batch("worker-b", force=True)
     assert current is not None
     assert [job.id for job in current.jobs] == [job.id for job in stale.jobs]
-    store.complete_extraction(current, ExtractionResult("fresh", ()))
+    _complete_extraction(store, current, ExtractionResult("fresh", ()))
     final_batch = store.claim_extraction_batch("worker-b", force=True)
     assert final_batch is not None
     assert len(final_batch.jobs) == 1
@@ -317,7 +337,7 @@ def test_clear_increments_generation_and_fences_stale_worker(tmp_path: Path) -> 
     assert store.status().turn_count == 0
     assert store.status().thread_count == 1
     with pytest.raises(MemoryLeaseError):
-        store.complete_extraction(stale, ExtractionResult("late", ()))
+        _complete_extraction(store, stale, ExtractionResult("late", ()))
 
 
 def test_unknown_unversioned_schema_is_not_mutated_and_clear_is_explicit(
@@ -378,6 +398,45 @@ def test_runtime_bootstrap_damage_fails_closed_until_explicit_clear(
 
     manager.clear()
     assert manager.status().healthy
+
+
+@pytest.mark.parametrize(
+    ("damage_sql", "error_fragment"),
+    (
+        ("PRAGMA user_version=2", "schema version"),
+        ("CREATE TABLE unexpected_runtime(value TEXT)", "未知 object"),
+        ("DROP TABLE memory_terms", "缺少 object"),
+    ),
+)
+def test_runtime_schema_damage_fails_closed_and_clear_rebuilds_catalog(
+    tmp_path: Path,
+    damage_sql: str,
+    error_fragment: str,
+) -> None:
+    db_path = tmp_path / "memory.db"
+    manager = MemoryManager(db_path=db_path)
+    assert manager.status().healthy
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(damage_sql)
+
+    status = manager.status()
+
+    assert status.degraded
+    assert error_fragment in status.last_error
+    with pytest.raises(MemorySchemaError):
+        manager.store.begin_turn("general_chat", "must fail closed", "owner")
+
+    manager.clear()
+
+    assert manager.status().healthy
+    with sqlite3.connect(db_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'unexpected_runtime'"
+        ).fetchone()[0] == 0
+        assert connection.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = 'memory_terms'"
+        ).fetchone()[0] == 1
 
 
 def test_foreign_key_check_detects_dangling_provenance(tmp_path: Path) -> None:

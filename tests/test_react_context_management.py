@@ -143,6 +143,61 @@ class RecordingCompactionLLM:
         return LLMResponse(content="## Goal\n" + "继续" * 200)
 
 
+class RetryingCompactionLLM(RecordingCompactionLLM):
+    def __init__(self) -> None:
+        super().__init__(context_window=20_000, max_output_tokens=1_000)
+        self.fragments: list[str] = []
+
+    def chat(
+        self,
+        *,
+        messages: list[dict[str, object]],
+        purpose: LLMCallPurpose,
+        **_kwargs: object,
+    ) -> LLMResponse:
+        marker = "Older discourse fragment (serialized JSON):\n"
+        fragment = str(messages[1]["content"]).split(marker, 1)[1]
+        self.fragments.append(fragment)
+        if len(self.fragments) == 1:
+            raise RuntimeError("context_length_exceeded")
+        return LLMResponse(content="## Goal\ncontinue")
+
+
+def test_compaction_overflow_retries_once_with_smaller_fragment() -> None:
+    llm = RetryingCompactionLLM()
+
+    checkpoint = _runner(llm)._build_runtime_checkpoint(
+        [{"role": "user", "content": "x" * 20_000}],
+        None,
+    )
+
+    assert checkpoint
+    assert len(llm.fragments) >= 2
+    assert len(llm.fragments[1]) < len(llm.fragments[0])
+
+
+def test_compaction_second_overflow_is_not_retried() -> None:
+    llm = RetryingCompactionLLM()
+
+    def always_overflow(**kwargs):
+        marker = "Older discourse fragment (serialized JSON):\n"
+        llm.fragments.append(
+            str(kwargs["messages"][1]["content"]).split(marker, 1)[1]
+        )
+        raise RuntimeError("context_length_exceeded")
+
+    llm.chat = always_overflow  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="context_length_exceeded"):
+        _runner(llm)._build_runtime_checkpoint(
+            [{"role": "user", "content": "x" * 20_000}],
+            None,
+        )
+
+    assert len(llm.fragments) == 2
+    assert len(llm.fragments[1]) < len(llm.fragments[0])
+
+
 def test_compaction_fragments_fit_small_input_capacity_without_loss() -> None:
     llm = RecordingCompactionLLM(context_window=20_000, max_output_tokens=1_000)
     older_messages = [{"role": "user", "content": "x" * 20_000}]

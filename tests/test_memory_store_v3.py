@@ -3,19 +3,55 @@ from __future__ import annotations
 import sqlite3
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from autopatch_j.core.memory import MemoryManager, RecallPolicy, RecallQuery
-from autopatch_j.core.memory.constants import MAX_SCOPE_PATHS
+from autopatch_j.core.memory.constants import MAX_RELATED_ITEMS, MAX_SCOPE_PATHS
 from autopatch_j.core.memory.errors import MemoryContractError, MemoryNotFoundError
+from autopatch_j.core.memory.pipeline import MemoryPipeline
+from autopatch_j.core.memory.prompts import MEMORY_EXTRACTION_SYSTEM_PROMPT
 from autopatch_j.core.memory.models import (
     CandidateSource,
+    ClaimedJobBatch,
     ConsolidationOperation,
     ConsolidationResult,
     ExtractionCandidateInput,
     ExtractionResult,
+    ExtractionSourceInput,
+    MemoryMap,
+    MemoryMapEntry,
+    MemoryRecallMatch,
+    MemorySearchHit,
+)
+from autopatch_j.core.memory.search_response import (
+    estimate_memory_search_response_tokens,
 )
 from autopatch_j.core.memory.store import MemoryStore
+from autopatch_j.llm.context_window import (
+    ModelContextProfile,
+    estimate_text_tokens,
+)
 import pytest
+
+
+def _complete_extraction(
+    store: MemoryStore,
+    batch: ClaimedJobBatch,
+    result: ExtractionResult,
+    *,
+    source_inputs: tuple[ExtractionSourceInput, ...] | None = None,
+) -> tuple[str, ...]:
+    projected = source_inputs or tuple(
+        ExtractionSourceInput(source.turn_id, source.role, source.quote)
+        for candidate in result.candidates
+        for source in candidate.sources
+    )
+    return MemoryStore.complete_extraction(
+        store,
+        batch,
+        result,
+        source_inputs=projected,
+    )
 
 
 def _extract(
@@ -51,7 +87,7 @@ def _extract(
         keywords=keywords,
         sources=(CandidateSource(turn.id, "user", user_text),),
     )
-    candidate_ids = store.complete_extraction(
+    candidate_ids = _complete_extraction(store,
         batch,
         ExtractionResult(thread_compaction=statement, candidates=(candidate,)),
     )
@@ -309,6 +345,191 @@ def test_store_owns_logical_id_and_cross_kind_revision_identity(tmp_path: Path) 
     assert [source.turn_id for source in store.show_item(first_id).sources] == [first_turn]
 
 
+def test_revise_rejects_existing_related_identity_and_rolls_back(
+    tmp_path: Path,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    _, first_candidates = _extract(
+        store,
+        user_text="以后默认使用相同主题规则",
+        kind="user_preference",
+        subject="same subject",
+        statement="默认使用相同主题规则",
+        owner="identity-first",
+    )
+    first_id = _apply(
+        store,
+        candidate_ids=first_candidates,
+        operation="create",
+        target_id=None,
+        kind="user_preference",
+        subject="same subject",
+        statement="默认使用相同主题规则",
+        owner="identity-first",
+    )
+    _, second_candidates = _extract(
+        store,
+        user_text="以后默认使用另一个主题规则",
+        kind="user_preference",
+        subject="other subject",
+        statement="默认使用另一个主题规则",
+        owner="identity-second",
+        aliases=("other subject", "same subject"),
+    )
+    second_id = _apply(
+        store,
+        candidate_ids=second_candidates,
+        operation="create",
+        target_id=None,
+        kind="user_preference",
+        subject="other subject",
+        statement="默认使用另一个主题规则",
+        owner="identity-second",
+    )
+
+    _, revise_candidates = _extract(
+        store,
+        user_text="以后改用相同主题规则",
+        kind="user_preference",
+        subject="other subject",
+        statement="默认改用相同主题规则",
+        owner="identity-revise",
+        aliases=("other subject", "same subject"),
+    )
+    batch = store.claim_consolidation_job("identity-revise", force=True)
+    assert batch is not None
+
+    with pytest.raises(MemoryContractError, match="重复 subject/applicability"):
+        store.apply_consolidation(
+            batch,
+            ConsolidationResult(
+                operations=(
+                    ConsolidationOperation(
+                        operation="revise",
+                        candidate_ids=revise_candidates,
+                        target_id=second_id,
+                        kind="user_preference",
+                        subject="same subject",
+                        statement="默认改用相同主题规则",
+                        content="默认改用相同主题规则",
+                        strength="hard",
+                        origin="explicit",
+                        recall_mode="always",
+                        applies_to_paths=(),
+                        aliases=("same subject",),
+                        keywords=("runtime",),
+                    ),
+                )
+            ),
+        )
+
+    assert {item.id for item in store.list_items()} == {first_id, second_id}
+    assert store.read(second_id).revision == 1
+    assert store.read(first_id).revision == 1
+
+
+def test_identity_validation_sees_active_item_beyond_related_target_limit(
+    tmp_path: Path,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    active_ids: list[str] = []
+    for index in range(MAX_RELATED_ITEMS + 1):
+        subject = f"shared registry rule {index}"
+        _, candidate_ids = _extract(
+            store,
+            user_text=f"以后默认采用 {subject}",
+            kind="user_preference",
+            subject=subject,
+            statement=f"默认采用 {subject}",
+            owner=f"registry-{index}",
+            aliases=("shared registry",),
+            keywords=("shared registry",),
+        )
+        active_ids.append(
+            _apply(
+                store,
+                candidate_ids=candidate_ids,
+                operation="create",
+                target_id=None,
+                kind="user_preference",
+                subject=subject,
+                statement=f"默认采用 {subject}",
+                owner=f"registry-{index}",
+                aliases=("shared registry",),
+                keywords=("shared registry",),
+            )
+        )
+
+    _, probe_candidates = _extract(
+        store,
+        user_text="以后默认采用新的 shared registry rule",
+        kind="user_preference",
+        subject="new shared registry rule",
+        statement="默认采用新的 shared registry rule",
+        owner="registry-probe",
+        aliases=("shared registry",),
+        keywords=("shared registry",),
+    )
+    batch = store.claim_consolidation_job("registry-probe", force=True)
+    assert batch is not None
+    payload = store.consolidation_payload(batch)
+    related_ids = {item["id"] for item in payload["active_items"]}
+    omitted_id = next(item_id for item_id in active_ids if item_id not in related_ids)
+    omitted_subject = store.read(omitted_id).subject
+
+    assert len(related_ids) == MAX_RELATED_ITEMS
+    with pytest.raises(MemoryContractError, match="相同 subject/applicability"):
+        store.apply_consolidation(
+            batch,
+            ConsolidationResult(
+                operations=(
+                    ConsolidationOperation(
+                        operation="create",
+                        candidate_ids=probe_candidates,
+                        target_id=None,
+                        kind="user_preference",
+                        subject=omitted_subject,
+                        statement=f"默认采用 {omitted_subject}",
+                        content=f"默认采用 {omitted_subject}",
+                        strength="hard",
+                        origin="explicit",
+                        recall_mode="always",
+                        applies_to_paths=(),
+                        aliases=("shared registry",),
+                        keywords=("shared registry",),
+                    ),
+                )
+            ),
+        )
+
+    visible_target_id = next(iter(related_ids))
+    with pytest.raises(MemoryContractError, match="重复 subject/applicability"):
+        store.apply_consolidation(
+            batch,
+            ConsolidationResult(
+                operations=(
+                    ConsolidationOperation(
+                        operation="revise",
+                        candidate_ids=probe_candidates,
+                        target_id=visible_target_id,
+                        kind="user_preference",
+                        subject=omitted_subject,
+                        statement=f"默认采用 {omitted_subject}",
+                        content=f"默认采用 {omitted_subject}",
+                        strength="hard",
+                        origin="explicit",
+                        recall_mode="always",
+                        applies_to_paths=(),
+                        aliases=("shared registry",),
+                        keywords=("shared registry",),
+                    ),
+                )
+            ),
+        )
+
+    assert {item.id for item in store.list_items()} == set(active_ids)
+
+
 def test_apply_is_not_a_memory_turn_and_temporary_rule_is_not_durable(
     tmp_path: Path,
 ) -> None:
@@ -335,7 +556,7 @@ def test_apply_is_not_a_memory_turn_and_temporary_rule_is_not_durable(
         sources=(CandidateSource(turn.id, "user", text),),
     )
 
-    assert store.complete_extraction(
+    assert _complete_extraction(store,
         batch,
         ExtractionResult("当前补丁限制", (candidate,)),
     ) == ()
@@ -374,7 +595,7 @@ def test_local_repair_clause_cannot_become_durable_memory(
         sources=(CandidateSource(turn.id, "user", "改为使用 StringBuilder"),),
     )
 
-    assert store.complete_extraction(
+    assert _complete_extraction(store,
         batch,
         ExtractionResult("当前补丁限制", (candidate,)),
     ) == ()
@@ -414,7 +635,7 @@ def test_discussion_rejects_code_fact_across_complete_semantics(
         sources=(CandidateSource(turn.id, "user", user_text),),
     )
 
-    assert store.complete_extraction(
+    assert _complete_extraction(store,
         batch,
         ExtractionResult("后续讨论背景", (candidate,)),
     ) == ()
@@ -429,7 +650,7 @@ def test_discussion_candidate_must_reference_current_extraction_batch(
     store.complete_turn(old_turn.id, "收到", "old")
     old_batch = store.claim_extraction_batch("extract-old", force=True)
     assert old_batch is not None
-    store.complete_extraction(old_batch, ExtractionResult("旧讨论", ()))
+    _complete_extraction(store, old_batch, ExtractionResult("旧讨论", ()))
 
     current_turn = store.begin_turn("general_chat", "继续刚才的话题", "current")
     store.complete_turn(current_turn.id, "请继续", "current")
@@ -449,7 +670,7 @@ def test_discussion_candidate_must_reference_current_extraction_batch(
         sources=(CandidateSource(old_turn.id, "user", old_text),),
     )
 
-    assert store.complete_extraction(
+    assert _complete_extraction(store,
         current_batch,
         ExtractionResult("继续讨论", (candidate,)),
     ) == ()
@@ -482,12 +703,248 @@ def test_short_confirmation_adopts_adjacent_assistant_decision(tmp_path: Path) -
         ),
     )
 
-    candidate_ids = store.complete_extraction(
+    candidate_ids = _complete_extraction(store,
         batch,
         ExtractionResult("已确定 Java runtime", (candidate,)),
     )
 
     assert len(candidate_ids) == 1
+
+
+def test_adjacent_proposal_is_selected_from_primary_batch_not_older_evidence(
+    tmp_path: Path,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    evidence = store.begin_turn("patch_revise", "旧 repair evidence", "evidence")
+    store.complete_turn(evidence.id, "已处理旧 finding", "evidence")
+    evidence_batch = store.claim_extraction_batch("extract-evidence", force=True)
+    assert evidence_batch is not None
+    _complete_extraction(store, evidence_batch, ExtractionResult("旧 evidence", ()))
+
+    proposal = store.begin_turn("general_chat", "讨论项目 runtime", "proposal")
+    assistant_decision = "建议项目决定采用 Java 21 runtime"
+    store.complete_turn(proposal.id, assistant_decision, "proposal")
+    proposal_batch = store.claim_extraction_batch("extract-proposal", force=True)
+    assert proposal_batch is not None
+    _complete_extraction(store, proposal_batch, ExtractionResult("runtime proposal", ()))
+
+    confirmation_text = "同意 就这么做"
+    confirmation = store.begin_turn("general_chat", confirmation_text, "confirmation")
+    store.complete_turn(confirmation.id, "收到", "confirmation")
+    batch = store.claim_extraction_batch("extract-confirmation", force=True)
+    assert batch is not None
+    candidate = ExtractionCandidateInput(
+        kind="project_decision",
+        subject="java runtime",
+        statement="项目采用 Java 21 runtime",
+        content="项目采用 Java 21 runtime",
+        strength="hard",
+        origin="adopted_proposal",
+        recall_mode="always",
+        applies_to_paths=(),
+        aliases=("jdk",),
+        keywords=("java21",),
+        sources=(
+            CandidateSource(proposal.id, "assistant", assistant_decision),
+            CandidateSource(confirmation.id, "user", confirmation_text),
+        ),
+    )
+
+    candidate_ids = _complete_extraction(store,
+        batch,
+        ExtractionResult("已确定 Java runtime", (candidate,)),
+    )
+
+    assert len(candidate_ids) == 1
+
+
+def test_extraction_provenance_rejects_quote_from_clipped_primary_middle(
+    tmp_path: Path,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    hidden_quote = "PROJECT_HIDDEN_RULE"
+    user_text = "以后默认偏好 " + "前" * 600 + hidden_quote + "后" * 600
+    turn = store.begin_turn("general_chat", user_text, "turn")
+    store.complete_turn(turn.id, "收到", "turn")
+    batch = store.claim_extraction_batch("extract", force=True)
+    assert batch is not None
+    payload = store.extraction_payload(batch)
+    full_tokens = MemoryPipeline._payload_tokens(
+        MEMORY_EXTRACTION_SYSTEM_PROMPT,
+        payload,
+    )
+    input_capacity = full_tokens - 200
+    pipeline = MemoryPipeline(
+        store,
+        SimpleNamespace(
+            context_profile=ModelContextProfile(
+                model="projection-test",
+                context_window=input_capacity + 2,
+                max_output_tokens=1,
+                provider_safety_tokens=1,
+            )
+        ),
+        "projection-worker",
+    )
+    projected = pipeline._fit_extraction_payload(payload)
+    projected_user = projected["turns"][0]["user"]
+
+    assert hidden_quote in user_text
+    assert hidden_quote not in projected_user
+    candidate = ExtractionCandidateInput(
+        kind="user_preference",
+        subject="project hidden rule",
+        statement="项目默认遵循 PROJECT_HIDDEN_RULE",
+        content="项目默认遵循 PROJECT_HIDDEN_RULE",
+        strength="hard",
+        origin="explicit",
+        recall_mode="always",
+        applies_to_paths=(),
+        aliases=(hidden_quote,),
+        keywords=("hidden rule",),
+        sources=(CandidateSource(turn.id, "user", hidden_quote),),
+    )
+
+    with pytest.raises(MemoryContractError, match="实际投影"):
+        MemoryStore.complete_extraction(
+            store,
+            batch,
+            ExtractionResult("隐藏规则", (candidate,)),
+            source_inputs=pipeline._extraction_source_inputs(projected),
+        )
+
+
+def test_extraction_provenance_rejects_unloaded_adjacent_turn(
+    tmp_path: Path,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    proposal = store.begin_turn("general_chat", "讨论项目 runtime", "proposal")
+    assistant_decision = "建议项目决定采用 Java 21 runtime"
+    store.complete_turn(proposal.id, assistant_decision, "proposal")
+    proposal_batch = store.claim_extraction_batch("extract-proposal", force=True)
+    assert proposal_batch is not None
+    _complete_extraction(
+        store,
+        proposal_batch,
+        ExtractionResult("runtime proposal", ()),
+    )
+
+    confirmation_text = "同意 就这么做"
+    confirmation = store.begin_turn("general_chat", confirmation_text, "confirmation")
+    store.complete_turn(confirmation.id, "收到", "confirmation")
+    batch = store.claim_extraction_batch("extract-confirmation", force=True)
+    assert batch is not None
+    payload = store.extraction_payload(batch)
+    assert payload["adjacent_previous_turn"]["turn_id"] == proposal.id
+    without_adjacent = {**payload, "adjacent_previous_turn": None}
+    input_capacity = MemoryPipeline._payload_tokens(
+        MEMORY_EXTRACTION_SYSTEM_PROMPT,
+        without_adjacent,
+    )
+    pipeline = MemoryPipeline(
+        store,
+        SimpleNamespace(
+            context_profile=ModelContextProfile(
+                model="projection-test",
+                context_window=input_capacity + 2,
+                max_output_tokens=1,
+                provider_safety_tokens=1,
+            )
+        ),
+        "projection-worker",
+    )
+    projected = pipeline._fit_extraction_payload(payload)
+    assert projected["adjacent_previous_turn"] is None
+    candidate = ExtractionCandidateInput(
+        kind="project_decision",
+        subject="java runtime",
+        statement="项目采用 Java 21 runtime",
+        content="项目采用 Java 21 runtime",
+        strength="hard",
+        origin="adopted_proposal",
+        recall_mode="always",
+        applies_to_paths=(),
+        aliases=("jdk",),
+        keywords=("java21",),
+        sources=(
+            CandidateSource(proposal.id, "assistant", assistant_decision),
+            CandidateSource(confirmation.id, "user", confirmation_text),
+        ),
+    )
+
+    with pytest.raises(MemoryContractError, match="不在合法输入中"):
+        MemoryStore.complete_extraction(
+            store,
+            batch,
+            ExtractionResult("已确定 Java runtime", (candidate,)),
+            source_inputs=pipeline._extraction_source_inputs(projected),
+        )
+
+
+def test_same_consolidation_batch_rejects_duplicate_logical_identity(
+    tmp_path: Path,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db")
+    turns = []
+    for index in (1, 2):
+        text = f"以后默认保持简洁回答 {index}"
+        turn = store.begin_turn("general_chat", text, f"turn-{index}")
+        store.complete_turn(turn.id, "收到", f"turn-{index}")
+        turns.append((turn, text))
+    batch = store.claim_extraction_batch("extract", force=True)
+    assert batch is not None
+    candidates = tuple(
+        ExtractionCandidateInput(
+            kind="user_preference",
+            subject="answer brevity",
+            statement="回答默认保持简洁",
+            content="用户明确偏好简洁回答",
+            strength="hard",
+            origin="explicit",
+            recall_mode="always",
+            applies_to_paths=(),
+            aliases=("concise answers",),
+            keywords=("response style",),
+            sources=(CandidateSource(turn.id, "user", text),),
+        )
+        for turn, text in turns
+    )
+    candidate_ids = _complete_extraction(store,
+        batch,
+        ExtractionResult("用户偏好简洁回答", candidates),
+    )
+    consolidation = store.claim_consolidation_job("consolidate", force=True)
+    assert consolidation is not None
+    operations = tuple(
+        ConsolidationOperation(
+            operation="create",
+            candidate_ids=(candidate_id,),
+            target_id=None,
+            kind="user_preference",
+            subject="answer brevity",
+            statement="回答默认保持简洁",
+            content="用户明确偏好简洁回答",
+            strength="hard",
+            origin="explicit",
+            recall_mode="always",
+            applies_to_paths=(),
+            aliases=("concise answers",),
+            keywords=("response style",),
+        )
+        for candidate_id in candidate_ids
+    )
+
+    with pytest.raises(MemoryContractError, match="相同 subject/applicability"):
+        store.apply_consolidation(
+            consolidation,
+            ConsolidationResult(operations=operations),
+        )
+
+    assert store.list_items() == []
+    with sqlite3.connect(tmp_path / "memory.db") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM memory_candidates WHERE status = 'pending'"
+        ).fetchone()[0] == 2
 
 
 def test_inferred_repetition_requires_three_turns_across_two_paths(tmp_path: Path) -> None:
@@ -520,7 +977,7 @@ def test_inferred_repetition_requires_three_turns_across_two_paths(tmp_path: Pat
         sources=tuple(sources),
     )
 
-    candidate_ids = store.complete_extraction(
+    candidate_ids = _complete_extraction(store,
         batch,
         ExtractionResult("重复修订偏好", (candidate,)),
     )
@@ -545,7 +1002,7 @@ def test_repetition_evidence_survives_prior_extraction_batches(tmp_path: Path) -
         batch = store.claim_extraction_batch(f"extract-{index}", force=True)
         assert batch is not None
         if index < 3:
-            store.complete_extraction(
+            _complete_extraction(store,
                 batch,
                 ExtractionResult(f"已处理修订 {index}", ()),
             )
@@ -555,7 +1012,7 @@ def test_repetition_evidence_survives_prior_extraction_batches(tmp_path: Path) -
         turn["turn_id"] for turn in payload["recent_repair_evidence"]
     )
     assert evidence_ids == tuple(turn_id for turn_id, _ in source_rows)
-    candidate_ids = store.complete_extraction(
+    candidate_ids = _complete_extraction(store,
         batch,
         ExtractionResult(
             "重复补丁纠正",
@@ -578,7 +1035,6 @@ def test_repetition_evidence_survives_prior_extraction_batches(tmp_path: Path) -
                 ),
             ),
         ),
-        evidence_turn_ids=evidence_ids,
     )
 
     assert len(candidate_ids) == 1
@@ -601,7 +1057,7 @@ def test_repeated_correction_on_same_finding_is_not_promoted(tmp_path: Path) -> 
     batch = store.claim_extraction_batch("extract", force=True)
     assert batch is not None
 
-    candidate_ids = store.complete_extraction(
+    candidate_ids = _complete_extraction(store,
         batch,
         ExtractionResult(
             "同一 finding 的反复修订",
@@ -651,7 +1107,7 @@ def test_repetition_keys_must_be_distinct_per_source_turn(tmp_path: Path) -> Non
     batch = store.claim_extraction_batch("extract", force=True)
     assert batch is not None
 
-    candidate_ids = store.complete_extraction(
+    candidate_ids = _complete_extraction(store,
         batch,
         ExtractionResult(
             "错误聚合的 finding evidence",
@@ -691,6 +1147,110 @@ def _recall_policy(thread_id: str, *, map_budget: int = 8_192) -> RecallPolicy:
         durable_token_budget=24_576,
         map_token_budget=map_budget,
     )
+
+
+def test_memory_map_budget_and_estimate_use_final_rendered_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = MemoryManager(db_path=tmp_path / "memory.db")
+    thread_id = manager.ensure_active_thread().id
+    query = RecallQuery(
+        intent="general_chat",
+        thread_id=thread_id,
+        user_text="java runtime",
+    )
+    entry = MemoryMapEntry(
+        id="memory-short",
+        lane="standing",
+        kind="project_decision",
+        subject="java runtime",
+        statement="项目统一使用 Java 21。",
+        strength="hard",
+        origin="explicit",
+        applies_to_paths=(),
+    )
+    match = MemoryRecallMatch(
+        entry=entry,
+        match_type="standing",
+        path_specificity=0,
+        subject_exact=True,
+        alias_or_keyword_exact=False,
+        content_term_coverage=0,
+        updated_at="2026-07-23T00:00:00+00:00",
+    )
+    monkeypatch.setattr(
+        manager.store,
+        "match_recall",
+        lambda *_args, **_kwargs: [match],
+    )
+    rendered = manager.render_memory_map(
+        MemoryMap(entries=(entry,), omitted_count=0, estimated_tokens=0)
+    )
+    rendered_tokens = estimate_text_tokens(rendered)
+
+    memory_map = manager.build_memory_map(
+        query,
+        _recall_policy(thread_id, map_budget=rendered_tokens),
+    )
+    too_tight = manager.build_memory_map(
+        query,
+        _recall_policy(thread_id, map_budget=rendered_tokens - 1),
+    )
+
+    assert memory_map.entries == (entry,)
+    assert memory_map.estimated_tokens == rendered_tokens
+    assert memory_map.estimated_tokens == estimate_text_tokens(
+        manager.render_memory_map(memory_map)
+    )
+    assert too_tight.entries == ()
+
+
+def test_memory_search_charges_complete_tool_response_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = MemoryManager(db_path=tmp_path / "memory.db")
+    thread_id = manager.ensure_active_thread().id
+    state = manager.open_memory_request(
+        RecallQuery(
+            intent="general_chat",
+            thread_id=thread_id,
+            user_text="runtime",
+        ),
+        _recall_policy(thread_id, map_budget=0),
+    )
+    first = MemorySearchHit(
+        id="memory-one",
+        kind="project_decision",
+        subject="java runtime",
+        statement="项目统一使用 Java 21。",
+        match_type="subject_exact",
+    )
+    second = MemorySearchHit(
+        id="memory-two",
+        kind="project_decision",
+        subject="build runtime",
+        statement="构建环境同样统一使用 Java 21。",
+        match_type="keyword",
+    )
+    monkeypatch.setattr(
+        manager,
+        "search_recall",
+        lambda *_args, **_kwargs: [first, second],
+    )
+    response_tokens = estimate_memory_search_response_tokens("runtime", (first,))
+    state.remaining_tokens = response_tokens
+
+    hits = manager.search_memory_request(state, "runtime")
+
+    flat_tokens = estimate_text_tokens(
+        f"{first.id} {first.kind} {first.subject} {first.statement} {first.match_type}"
+    )
+    assert hits == [first]
+    assert state.remaining_tokens == 0
+    assert state.readable_ids == {first.id}
+    assert response_tokens > flat_tokens
 
 
 def test_memory_map_has_standing_and_query_gated_relevant_lanes(tmp_path: Path) -> None:
@@ -993,6 +1553,54 @@ def test_request_policy_enforces_readable_ids_call_limits_and_shared_pool(
     with pytest.raises(MemoryContractError, match="额度"):
         manager.search_memory_request(state, "fifth")
     assert manager.search_memory_request(state, "one") == []
+
+
+def test_explicit_memory_search_terms_precede_long_finding_message(
+    tmp_path: Path,
+) -> None:
+    manager = MemoryManager(db_path=tmp_path / "memory.db")
+    store = manager.store
+    _, candidates = _extract(
+        store,
+        user_text="以后涉及验证时偏好 focused verification",
+        kind="user_preference",
+        subject="focused verification",
+        statement="相关验证优先采用 focused verification",
+        owner="explicit-search",
+        strength="soft",
+        recall_mode="on_match",
+        aliases=("focused verification",),
+        keywords=("targeted checks",),
+    )
+    item_id = _apply(
+        store,
+        candidate_ids=candidates,
+        operation="create",
+        target_id=None,
+        kind="user_preference",
+        subject="focused verification",
+        statement="相关验证优先采用 focused verification",
+        owner="explicit-search",
+        strength="soft",
+        recall_mode="on_match",
+        aliases=("focused verification",),
+        keywords=("targeted checks",),
+    )
+    thread_id = store.ensure_active_thread().id
+    policy = _recall_policy(thread_id)
+    state = manager.open_memory_request(
+        RecallQuery(
+            intent="general_chat",
+            thread_id=thread_id,
+            user_text="解释当前 finding",
+            finding_message=" ".join(f"findingterm{index}" for index in range(40)),
+        ),
+        policy,
+    )
+
+    hits = manager.search_memory_request(state, "focused verification")
+
+    assert [hit.id for hit in hits] == [item_id]
 
 
 def test_repair_policy_excludes_discussion_even_if_id_is_guessed(tmp_path: Path) -> None:

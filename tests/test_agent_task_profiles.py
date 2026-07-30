@@ -93,25 +93,25 @@ def _fetch_tool_names(mock_llm: MagicMock) -> list[str]:
     return [tool["function"]["name"] for tool in tools]
 
 
-def test_patch_runtime_constraint_is_path_bound_and_cleared_with_review(
+def test_patch_runtime_constraint_is_review_item_bound_for_same_file(
     tmp_path: Path,
 ) -> None:
     agent = _build_agent(tmp_path, MagicMock())
 
     agent.session.record_runtime_patch_constraint(
-        "src/main/java/demo/A.java",
+        "review-item-1",
         "这次不要使用三元表达式",
     )
 
     assert "不要使用三元表达式" in agent.session.build_runtime_patch_constraint_context(
-        "src/main/java/demo/A.java"
+        "review-item-1"
     )
     assert agent.session.build_runtime_patch_constraint_context(
-        "src/main/java/demo/B.java"
+        "review-item-2"
     ) == ""
-    agent.reset_history()
+    agent.session.clear_runtime_patch_constraints("review-item-1")
     assert agent.session.build_runtime_patch_constraint_context(
-        "src/main/java/demo/A.java"
+        "review-item-1"
     ) == ""
 
 

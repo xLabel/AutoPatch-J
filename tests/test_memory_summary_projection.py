@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
@@ -9,13 +10,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from autopatch_j.core.memory import MemoryManager
+from autopatch_j.core.memory import MemoryManager, MemorySchemaError
 from autopatch_j.core.memory.models import (
     CandidateSource,
+    ClaimedJobBatch,
     ConsolidationOperation,
     ConsolidationResult,
     ExtractionCandidateInput,
     ExtractionResult,
+    ExtractionSourceInput,
     MemoryDetail,
     MemorySource,
     MemorySummarySnapshot,
@@ -25,6 +28,24 @@ from autopatch_j.core.memory.summary_projection import (
     MEMORY_SUMMARY_HEADER,
     MemorySummaryProjector,
 )
+
+
+def _complete_extraction(
+    store: MemoryStore,
+    batch: ClaimedJobBatch,
+    result: ExtractionResult,
+) -> tuple[str, ...]:
+    source_inputs = tuple(
+        ExtractionSourceInput(source.turn_id, source.role, source.quote)
+        for candidate in result.candidates
+        for source in candidate.sources
+    )
+    return MemoryStore.complete_extraction(
+        store,
+        batch,
+        result,
+        source_inputs=source_inputs,
+    )
 
 
 class CapturingEmptyMemoryLLM:
@@ -72,7 +93,7 @@ def _create_active_item(
 
     extraction = store.claim_extraction_batch(f"extract-{owner}", force=True)
     assert extraction is not None
-    candidate_ids = store.complete_extraction(
+    candidate_ids = _complete_extraction(store,
         extraction,
         ExtractionResult(
             thread_compaction=f"checkpoint-{owner}",
@@ -290,6 +311,61 @@ def test_projection_failure_keeps_database_and_last_good_file(
     assert "MANUAL_SUMMARY_SENTINEL" not in manager.summary_path.read_text(
         encoding="utf-8"
     )
+
+
+@pytest.mark.parametrize(
+    ("damage_sql", "error_fragment"),
+    (
+        ("PRAGMA user_version=2", "schema version"),
+        ("CREATE TABLE unexpected_summary(value TEXT)", "未知 object"),
+    ),
+)
+def test_summary_projection_fails_closed_after_runtime_schema_damage(
+    tmp_path: Path,
+    damage_sql: str,
+    error_fragment: str,
+) -> None:
+    db_path = tmp_path / "memory.db"
+    manager = MemoryManager(db_path=db_path)
+    initial = manager.rebuild_summary()
+    assert initial.status.state == "current"
+    last_good = manager.summary_path.read_bytes()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(damage_sql)
+
+    result = manager.rebuild_summary()
+
+    assert result.status.state == "stale"
+    assert error_fragment in result.status.last_error
+    assert manager.summary_path.read_bytes() == last_good
+    assert manager.status().degraded
+
+
+def test_background_worker_marks_current_summary_stale_on_schema_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = MemoryManager(db_path=tmp_path / "memory.db")
+    assert manager.rebuild_summary().status.state == "current"
+
+    def fail_heartbeat(_owner: str) -> int:
+        raise MemorySchemaError("runtime catalog damaged")
+
+    monkeypatch.setattr(manager.store, "heartbeat_open_turns", fail_heartbeat)
+    manager.start()
+    try:
+        deadline = monotonic() + 3
+        while monotonic() < deadline:
+            status = manager.summary_status()
+            if status.state == "stale":
+                break
+            sleep(0.02)
+        else:
+            pytest.fail("worker schema error 未使 Memory summary 失效")
+
+        assert "runtime catalog damaged" in status.last_error
+    finally:
+        manager.close()
 
 
 def test_markdown_sentinel_never_enters_memory_llm_or_sqlite_recall(

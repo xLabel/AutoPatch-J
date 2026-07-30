@@ -200,6 +200,28 @@ def test_turn_failure_memory_error_does_not_hide_primary_error() -> None:
         )
 
 
+def test_turn_failure_contract_error_is_cause_of_original_error() -> None:
+    manager = MagicMock(spec=MemoryManager)
+    manager.begin_turn.return_value = SimpleNamespace(id="turn-1", thread_id="thread-1")
+    contract_error = MemoryContractError("invalid failed-turn contract")
+    manager.fail_turn.side_effect = contract_error
+
+    with pytest.raises(RuntimeError, match="provider unavailable") as raised:
+        run_durable_memory_turn(
+            manager=manager,
+            session=MagicMock(),
+            intent=IntentType.CODE_AUDIT,
+            user_text="审查 A.java",
+            scope_paths=["A.java"],
+            evidence_keys=[],
+            run=lambda: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
+            assistant_text=str,
+            on_degraded=lambda _: None,
+        )
+
+    assert raised.value.__cause__ is contract_error
+
+
 def test_memory_contract_error_during_completion_remains_explicit() -> None:
     manager = MagicMock(spec=MemoryManager)
     manager.begin_turn.return_value = SimpleNamespace(id="turn-1", thread_id="thread-1")
