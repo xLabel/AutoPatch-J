@@ -50,6 +50,22 @@
 - **WHEN** ordinary 或 repair Agent 产生 reasoning、tool call、observation、synthetic Memory context 或 system prompt
 - **THEN** 这些内容不得写入 Memory database 的 RAW turn
 
+#### Scenario: code audit 保存真实完成结果
+- **WHEN** `code_audit` 成功完成静态扫描、零 finding 二次复核或一批 finding 处理
+- **THEN** 系统向用户显示并保存同一份稳定 workflow summary
+- **AND** summary 包含适用的 finding、待审补丁、失败与剩余数量，不保存执行 trace 或 Rich markup
+
+#### Scenario: code audit 扫描失败
+- **WHEN** scanner 在创建 audit workspace 前失败
+- **THEN** 系统显示具体扫描错误并把 turn 标记 failed
+- **AND** 不得将该 turn 以空 assistant text 标记 completed
+
+#### Scenario: patch revise 保存真实完成结果
+- **WHEN** `patch_revise` Agent 调用结束并可能留下修订草案
+- **THEN** workflow 先完成草案读取、finding binding 校验与当前补丁替换，再向用户显示并保存同一份稳定 summary
+- **AND** 成功替换、未生成草案和 binding 拒绝分别保存对应 workflow 结果，不保存 LLM raw answer 或空 `display_answer`
+- **AND** 未生成草案与 binding 拒绝是已完成的 workflow 结果；Agent 或 workspace 抛出的异常仍使 turn 进入 failed
+
 ### Requirement: `/new` 建立干净工作边界
 `/new` SHALL 结束当前 review/runtime 状态、按旧 thread watermark 有界处理 Memory job，并创建新的 active thread，同时仅保留 repo 级 preference 与 decision 可见性。
 
@@ -63,6 +79,16 @@
 - **WHEN** timeout 到达仍有 watermark 内 job 未完成
 - **THEN** 系统显示明确警告并继续创建新 thread
 - **AND** 未完成 job 保留在 SQLite，由后台 worker 或重启恢复
+
+#### Scenario: watermark job 暂不可 claim
+- **WHEN** captured job 被其他 manager lease，或处于 deadline 前会到期的 retry wait
+- **THEN** flush 在 deadline 前有界等待并重新检查 captured job
+- **AND** 只有 captured job 及其派生 consolidation 计入 pending，不受其他 thread job 影响
+
+#### Scenario: manager 关闭 watermark 后台处理
+- **WHEN** watermark flush 超时后 daemon 仍在处理或等待 captured job，随后 manager 执行 close
+- **THEN** manager 停止后续 pipeline step并等待已登记 watermark thread 退出
+- **AND** close 返回后该 manager 不再写入 SQLite 或 summary 文件
 
 #### Scenario: 后台 watermark 期间存在新 turn
 - **WHEN** watermark flush 超时后仍持有处理锁，且新 thread 已开始一个尚未结束的 turn
@@ -98,6 +124,17 @@
 - **THEN** job 以 succeeded-no-output 完成
 - **AND** turn 不会被反复处理
 
+#### Scenario: extraction payload 超过模型容量
+- **WHEN** 完整 RAW turn 已持久化，但 extraction payload 超过当前 input capacity
+- **THEN** LLM payload 依次卸载旧 repair evidence、adjacent turn 与 previous compaction，并对 primary assistant/user 文本使用带标记的首尾投影
+- **AND** SQLite 中的 RAW user/assistant text 保持完整
+- **AND** 固定 contract 与必需 primary 内容仍无法装入时 job 带 capacity 原因以 succeeded-no-output 结束，不进入 retry loop
+
+#### Scenario: consolidation payload 超过模型容量
+- **WHEN** 完整 candidates 与 related active registry 无法同时装入当前 input capacity
+- **THEN** 系统不得删除仍参与提交 identity 校验的 active item，也不得调用 provider
+- **AND** consolidation job 与全部关联 pending candidates 在同一事务中分别转为 `succeeded_no_output` 与 `suppressed`，后续不得重复 claim
+
 #### Scenario: 单纯 apply 不产生记忆
 - **WHEN** LLM 提出补丁且用户只执行 `apply`
 - **THEN** extraction 不得据此创建 preference、decision 或 repair procedure
@@ -107,6 +144,11 @@
 - **WHEN** LLM、存储或输出校验失败
 - **THEN** job 保存 attempt、有界 RAW last error 与 retry time
 - **AND** lease 过期后其他 worker或下次启动可继续处理
+
+#### Scenario: runtime schema 损坏使摘要失效
+- **WHEN** 后台 heartbeat 或 startup recovery 发现 `user_version`、catalog 或 SQLite consistency 损坏
+- **THEN** worker 保持可重试，但立即将审阅摘要标记为 `stale`
+- **AND** `summary_status()` 不得继续返回 `current`
 
 #### Scenario: stale worker 回写
 - **WHEN** worker 的 lease owner 或 clear generation 已失效
@@ -143,6 +185,11 @@
 - **THEN** 至少一条 user source 必须来自当前 extraction batch 的 turn
 - **AND** `adjacent_previous_turn` 或 `recent_repair_evidence` 中的旧 user turn 不能单独支持 `discussion_context`、preference 或 decision
 
+#### Scenario: provenance 受实际 extraction 投影约束
+- **WHEN** extraction 因容量卸载 adjacent/evidence source 或裁剪 primary turn 中段
+- **THEN** candidate quote 必须同时存在于本次发送给 LLM 的对应 role 文本和 SQLite RAW role 文本
+- **AND** 已卸载 source、被省略中段与仅存在于截断标记中的文本不得成为 durable provenance
+
 #### Scenario: 非法长期内容
 - **WHEN** LLM 仅依据 assistant 主张、代码事实、tool result、apply 或推测生成 candidate
 - **THEN** 系统拒绝该 candidate
@@ -153,6 +200,22 @@
 - **THEN** create 的 logical ID 由 Store 生成，revision 只能选择程序提供的 related active item
 - **AND** 同 subject/applicability 的 project preference 与 decision 可以进入同一 revision chain
 - **AND** 整个 operation set 以单一事务应用，任一非法 ID 使事务回滚
+
+#### Scenario: 同批 create 重复 logical identity
+- **WHEN** 同一 consolidation result 的两个 create operation 产生相同 subject/applicability identity
+- **THEN** 第一个新 item 立即进入本批 identity registry
+- **AND** 第二个 create 被拒绝且整个事务回滚，不产生两个 active chain
+
+#### Scenario: revise 不得制造重复 active identity
+- **WHEN** related active registry 同时包含 subject 为 X 的 item A 与 subject 为 Y 的 item B，而 consolidation 返回 `revise(target_id=B, subject=X)`
+- **THEN** Store 在继承 B 的 logical ID 前，以规范化 subject/applicability 检查除当前 target 外的 active item
+- **AND** 发现 A 后抛出 `MemoryContractError`，不自动改选 A 或替换 A
+- **AND** 整个 consolidation transaction 回滚，active revision chain 不新增重复 identity
+
+#### Scenario: bounded related targets 不缩小 identity 校验
+- **WHEN** 同一 scope/path 下 active item 超过 related target 的展示上限，且最旧 item 未进入 consolidation payload
+- **THEN** Store 仍以完整 active identity 集合校验 create/revise/supersede
+- **AND** 发现被展示上限截掉的同 subject/applicability item 时拒绝操作并回滚事务
 
 ### Requirement: 无向量渐进检索
 系统 SHALL 使用 typed RecallQuery、双通道 Memory Map、规范化 subject/aliases/keywords/path/check-id 和确定性文本匹配进行渐进读取，且 SHALL NOT 依赖 embedding、向量数据库、FTS 或 LLM reranker。
@@ -175,6 +238,7 @@
 #### Scenario: 搜索 Memory
 - **WHEN** Agent 在已 admission 的请求中调用非空 `memory_search`
 - **THEN** manager 将 query 与 request base RecallQuery 合并并强制应用 RecallPolicy
+- **AND** 显式 search query 的规范化词项在 32 个 query terms 上限内优先于 base finding 与 user text，自动 Map 的既有词项顺序保持不变
 - **AND** 每次最多返回八条 active semantic summary
 - **AND** 同一请求最多接受四个不同 search query
 

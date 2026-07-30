@@ -36,20 +36,57 @@ Memory manager 内部 SHALL 使用 typed thread、turn、job、candidate、seman
 - **AND** 主业务本身失败时，Memory 收尾故障不得覆盖原异常
 - **AND** `MemoryContractError` 与非 Memory 编程错误继续显式失败
 
+#### Scenario: 失败收尾发生 contract error
+- **WHEN** 主业务已抛出异常且 `fail_turn()` 又抛出 `MemoryContractError`
+- **THEN** 顶层继续抛出原始业务异常并将 Memory contract error 保留为 cause
+- **AND** 不得用次生 Memory 错误替换扫描、provider 或补丁异常
+
 #### Scenario: 当前 revision provenance
 - **WHEN** `memory_read` 读取 active revision
 - **THEN** detail 优先返回促成本 revision 的 bounded sources
 - **AND** 旧 revision sources 保留审计关系但不得挤掉当前 revision evidence
+
+#### Scenario: memory read 错误分类
+- **WHEN** 已 admission 请求调用 `memory_read` 但读取失败
+- **THEN** `MemoryNotFoundError` 只映射为该 ID 不存在或当前不可读取，并且不返回 detail
+- **AND** `MemoryStorageError` 及其 schema/corruption 子类产生明确 degraded notice，同时主 ReAct 请求继续
+- **AND** `MemoryContractError` 明确报告调用额度或 durable recall token pool 约束，不伪装为未找到，也不标记为 storage degraded
+- **AND** 其他异常不得映射为“Memory 不存在”
+
+#### Scenario: memory search 错误分类
+- **WHEN** 已 admission 请求执行 `memory_search` 但存储、schema/corruption 或请求 contract 发生错误
+- **THEN** storage/schema/corruption 错误产生 `degraded_notice()`，contract 错误明确说明 policy/额度约束
+- **AND** unexpected exception 不得被改写成“policy 或额度拒绝”，也不得伪装为 Memory 缺失
 
 #### Scenario: 运行时发现 Memory bootstrap state 捛坏
 - **WHEN** manager 在 status 或 operational guard 中发现唯一 meta、唯一 active thread 或 schema catalog 不合法
 - **THEN** status 产生 degraded 状态，Memory admission/projection/search/read/事务写入/后台处理/`/new`/list/forget 通过 `MemorySchemaError` fail-closed
 - **AND**主扫描、源码读取和 patch review 可以在显示 Memory unavailable 警告后继续
 
+#### Scenario: 运行期间 schema catalog 被修改
+- **WHEN** 已初始化 Store 发现 `user_version` 不再为 3，或 SQLite schema cookie 已变化
+- **THEN** operational/status guard 校验完整 v3 catalog、quick check、foreign key 与 bootstrap state
+- **AND** 非法 catalog 立即 fail-closed，status 不得硬编码报告 healthy v3
+
+#### Scenario: summary projection 执行运行时校验
+- **WHEN** 已初始化 Store 在生成 summary snapshot 前发现 user version、catalog 或 bootstrap state 已变为非法
+- **THEN** snapshot 在同一 read transaction 中通过 runtime guard fail-closed
+- **AND** summary refresh 标记 stale，不得把不受支持的 database 继续投影为 `current`
+
+#### Scenario: worker operational guard 发现损坏
+- **WHEN** worker 的 heartbeat 或 startup recovery 抛出 `MemorySchemaError` 或 `MemoryCorruptError`
+- **THEN** manager 立即调用 summary stale 边界并保留 worker 重试能力
+- **AND** 瞬时锁竞争仍可等待下一轮，不创建新的后台线程或恢复路径
+
 #### Scenario: 诊断与恢复绕过 operational guard
 - **WHEN** bootstrap state 已损坏但用户执行 status、show、RAW export 或显式 clear
 - **THEN** 这些诊断与恢复路径不被 ordinary operational guard 阻断
 - **AND** 只有显式 clear 可以重建 v3 meta 与 active thread
+
+#### Scenario: clear 重建运行时损坏 catalog
+- **WHEN** 已初始化 Store 的 user_version、catalog 或 SQLite consistency 在运行期间变为非法，用户显式执行 clear
+- **THEN** manager 停止并等待自身后台线程，删除明确的 database/WAL/SHM 工件并创建干净 v3 catalog
+- **AND** 不迁移、不局部修补或保留损坏 schema object
 
 #### Scenario: request-local readable ID
 - **WHEN** Agent 调用 `memory_read`

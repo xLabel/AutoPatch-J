@@ -40,15 +40,23 @@
 3. pruning 后仍 `>85%`：将较老对话和 ReAct discourse 压缩为带固定标题的 structured checkpoint，保留最新最多 128K token 的完整 tail；当前 user message、task/system contract、finding 和 patch binding 留在 checkpoint 外按原文投影，LLM 只归纳被淘汰的旧 discourse。多次 compaction 只推进已压缩前缀，当前 user message 每次都单独重新投影。
 4. rebuild 后仍超 input capacity：on-demand Memory detail 随可重读 tool result 卸载，Memory Map target 减半并按 standing-first 顺序自然淘汰尾部 relevant item；当前用户输入、task/system contract、finding、patch binding 和最新 tail 最后保留。仍无法装入时返回明确 context capacity error。
 
-当前 user message 不仅保留在 checkpoint 外，也必须从交给 checkpoint builder 的旧消息切片中排除；即使 compaction 游标已经越过当前输入，checkpoint 也不能再次有损归纳它。compaction 必须至少回收 `max(32K, compact 前 token 的 10%)`，或者在上次 checkpoint 后出现了新的有效进展；否则停止重复 compaction。
+当前 user message 不仅保留在 checkpoint 外，也必须从交给 checkpoint builder 的旧消息切片中排除；即使 compaction 游标已经越过当前输入，checkpoint 也不能再次有损归纳它。compaction 必须至少回收 `max(min(32K, max(1, floor(input_capacity*10%))), floor(compact 前 token*10%))`，或者在上次 checkpoint 后出现了新的有效进展；否则停止重复 compaction。
 
 普通本地 preflight 因完整 Memory Map 或可重读 Memory result 超容时，在调用 provider 前执行一次 hard rebuild：启用 aggressive pruning 并把 Map target 减半；hard rebuild 仍无法装入才返回 `ContextCapacityError`。这次本地重建不消耗 provider overflow 的单次重试额度。provider 明确报告 context overflow 时仍只强制执行一次 hard rebuild 并重试一次，第二次失败原样返回。所有 purpose 的实际 `max_tokens` 还受 context profile 的 output reserve 上限约束，确保 preflight 预留与真实请求一致。
 
 compaction 自身也是受同一 input capacity 约束的 LLM 调用。每个 fragment 在发送前都从实际 capacity 中扣除 system、固定 prompt、消息 overhead 与当前 previous checkpoint；片段不设置 4K 下限，中间 checkpoint 按既有 checkpoint budget 截断后再进入下一次调用。包装内容已无可用片段空间时，在调用 provider 前返回 `ContextCapacityError`。
 
+`LLMClient` 在 transport 前执行所有 purpose 共享的最终 input preflight，防止 classifier、Memory pipeline 或未来直接调用绕过容量边界。Classifier 对超长 user message 使用带省略标记的首尾投影，并让 CLASSIFIER 与 REACT fallback 复用同一投影。Memory database 继续保存完整 RAW turn；只有 extraction LLM payload 在超容时依次卸载旧 repair evidence、adjacent turn、previous compaction，并对 primary assistant/user 文本做首尾投影。固定 contract 与必需 primary 内容仍无法装入时，job 以带 capacity 原因的 `succeeded_no_output` 结束，不进入确定性 retry loop。
+
+checkpoint 被截断时，截断标记本身计入 checkpoint budget；预算小到无法容纳标记时只保留预算内正文前缀，任何返回值都不得超过调用方账本。consolidation 不允许通过删除 related active registry 来适配容量，因为 LLM 可见 registry 必须与 Store 提交时的 identity 校验边界一致；完整 candidates 与 registry 无法装入时不调用 provider，job 以 `succeeded_no_output` 结束，并在同一事务中把关联 pending candidates 标记为 `suppressed`。
+
+Compaction provider overflow 与主 ReAct overflow 分别计数：单个 compaction fragment 首次 overflow 后将 fragment budget 减半并重建消息，最多重试一次；第二次 overflow 原样返回，不进入第三次调用。
+
 ### 3. Schema v3 保存可执行语义，而不是标题索引
 
 `memory_items`/candidate typed model 增加 `subject`、`statement`、`content`、`strength(hard|soft)`、`origin(explicit|adopted_proposal|inferred_repetition)`、`recall_mode(always|on_match)` 与 `applies_to_paths`。`user_preference`、`project_decision` 是项目范围且 `thread_id=NULL`；`discussion_context` 绑定 thread。runtime patch constraint 单独保存在当前 review/request 状态，不写成 durable item。
+
+Runtime patch constraint 以 `ReviewPatchItem.item_id` 为生命周期边界，而不是以 file path 为边界。同一 item 的 revise/explain 可以继续读取既有约束；apply/discard 成功推进后清除该 item，失败 apply 保留，其他同文件 item 不继承。
 
 `logical_id` 是 Store 生成的 opaque chain ID。LLM extraction 不生成 ID，只输出 typed semantics 与来源；consolidation 只能从程序给出的 related active registry 中选择 target item。create 由 Store 生成 logical ID，revision 继承 logical ID 并递增 revision。当前 revision 只关联促成本次 revision 的 candidates/sources，旧 revision provenance 不再挤占 `memory_read` 的当前证据。
 
@@ -62,6 +70,12 @@ identity resolver 在 `user_preference` 与 `project_decision` 之间共同查�
 
 extraction 继续允许合法 no-candidate；thread checkpoint 与 candidate admission 分开。RAW user turn 在主调用前写入，用户实际看到的 final assistant text 在完成边界保存，failed/interrupted turn 继续由 durable job处理。所有新 turn 的 `scope_paths` 在 Store 持久化边界按输入顺序保留最多 `MAX_SCOPE_PATHS=10` 条，避免大型 project scope 无界进入 SQLite 与 extraction payload；实际扫描、focus 和 patch 行为不受影响，既有记录不迁移或读取时回退截断。
 
+candidate provenance 同时受持久化 RAW turn 与本次 extraction 实际投影约束。pipeline 将裁剪后的 primary、仍保留的 adjacent turn 和未卸载 repair evidence 作为 typed source envelope 交给 Store；quote 必须同时是 envelope 可见文本和对应 RAW role 文本的精确子串。Store 仍使用完整 RAW clause 判断局部性、scope 与 evidence 语义，但不得重新扩张已卸载来源或 primary 被省略的中段作为本次可引用输入。
+
+`code_audit` 将稳定 workflow summary 作为用户可见 final assistant text 保存：零 finding 时记录二次复核与待审补丁结果，普通审计记录 finding、待审补丁、失败与剩余数量。Scanner 失败必须进入 failed turn；失败收尾中的 Memory contract error 只能作为 cause 保留，不能替换原始业务异常。
+
+`patch_revise` 同样由 workflow 而不是 presenter 生成 final assistant text。Agent 执行只负责产生候选草案；workflow 必须先取出修订草案、完成 finding binding 校验与当前补丁替换，再以“已更新”“未生成”或“binding 校验失败”的稳定 summary 完成 turn 并向用户显示。不得把 LLM raw answer，或 pending review 下为空的 `display_answer`，持久化为修订完成结果。
+
 ### 5. 双通道 RecallQuery 与渐进读取
 
 程序从 intent、当前用户原文、thread、focus paths，以及按 intent 可用的 finding `path/check_id/message`、patch file/bound finding 或 code scope 构造 `RecallQuery`；不把源码全文、snippet、diff、assistant rationale、旧回答或 tool output作为 query。
@@ -74,6 +88,10 @@ extraction 继续允许合法 no-candidate；thread checkpoint 与 candidate adm
 词项执行 NFKC、case-fold、repo path normalization，并拆分 camelCase、snake_case、包名和路径段；连续汉字段在保留完整 term 后追加去重的滑动双字词项，不生成噪声更高的单字 term。完整 term 和既有 Java/path term 优先进入上限，每次最多 32 个 query terms。排序为 path specificity、subject/check-id exactness、alias/keyword、distinct content coverage、origin/strength、updated_at、stable ID；相关性不足时 abstain，不以 recency 补位。检索仍使用 SQLite 确定性 term tables，不使用 LLM reranker。
 
 durable recall 总上限为 `clamp(input_capacity * 12%, 4K, 24K)`，Memory Map target 为实际 recall budget 的一半且最多 8K。Map 直接提供 bounded statement；search 最多四个不同 query、每次八个 hit，read 最多八个不同 ID，并共享剩余 recall token pool。
+
+显式 `memory_search(query=...)` 通过 typed `RecallQuery.search_text` 保留独立边界，并在 32 个 query terms 上限内先于 base finding/user terms 展开。没有显式 search 的自动 Map 保持既有 `check_id`、finding message、bound finding ID、当前 user text 顺序，避免修复 search 漏词时改变自动召回权重。
+
+`memory_read` 的工具错误按 typed exception 分类投影：`MemoryNotFoundError` 只表示该 ID 不存在或当前 policy 不可读取；`MemoryStorageError` 及其 schema/corruption 子类产生明确 degraded notice 并让主 ReAct 继续；`MemoryContractError` 明确报告请求额度或 token pool 约束，不伪装为缺失，也不标记为 storage degraded。其他异常保留为工具执行异常，不映射成“Memory 不存在”。
 
 ### 6. Request-local RecallPolicy 是安全边界
 
@@ -91,7 +109,13 @@ Memory Map 不再进入 system prompt，而作为 request-local advisory user co
 
 Memory bootstrap/schema/storage degraded 时，Memory 自身停止 admission、projection、search、read 和后台写入；status/show/export/clear 保持诊断恢复边界。主扫描、源码读取和 patch review 继续运行，并只提示本轮未应用项目 Memory，因为 Memory 不是 patch evidence。ordinary request 在 admission 已显示 degraded notice 后把 thread history 视为空投影，不能再次触发同一 storage failure 而中止主调用。若 Memory Map admission 成功但 active thread checkpoint 读取发生 storage error，本请求不得绑定半完成的 request state，并以空 checkpoint/Map 继续主 Agent。主业务完成后的 turn 收尾若遇到 storage、lease、not-found 或 thread-conflict 等 operational Memory error，同样只进入可见降级并保留主业务结果；`MemoryContractError` 与普通编程错误继续显式失败。
 
+已初始化 Store 在每次 operational/status 入口检查 `user_version`、SQLite schema cookie 与 bootstrap singleton；cookie 变化时执行完整 catalog、quick check 与 foreign-key check。显式 clear 若发现运行时 schema/corruption damage，先停止并等待 manager 管理的后台线程，再删除明确的 database/WAL/SHM 工件并创建干净 v3，不尝试迁移或局部修补损坏 catalog。
+
+summary snapshot 属于可信 projection，不是诊断恢复路径；它必须在同一个 read transaction 中执行 runtime guard。运行期间的 user version 或 catalog 损坏应使 summary refresh 标记 stale，不能继续把旧数据库投影为 `current`。
+
 watermark flush 与普通 worker 共享 `_process_lock`。当 `/new` 等待超时后 flush 仍在后台处理旧 thread job 时，由持锁的 flush 循环在每个 pipeline step 前续租同 manager owner 的 open turns；不新增 heartbeat thread，也不改变 5 秒等待或 120 秒 turn lease。
+
+Watermark 的 pending/result 只统计 captured job ID 及其派生 consolidation ID。若 job 被其他 manager lease 或处于尚未到期的 retry wait，flush 在 deadline 前有界等待并继续检查；到期后保留 job 给普通 worker。现有 watermark daemon thread 由 manager 登记，`close()` 必须停止等待并 join，不能在 close 返回后继续写 SQLite 或 summary。
 
 `access_count/last_accessed_at` 仅作诊断，不参与 ranking；不增加 citation popularity、自动 expiry 或 apply feedback loop。
 
@@ -122,3 +146,14 @@ watermark flush 与普通 worker 共享 `_process_lock`。当 `/new` 等待超�
 - 2026-07-19：根据 CR 将局部 repair、request-local binding、Memory operational error 与 compaction fragment 纳入程序侧完整边界校验，原因是 prompt 约束、全局 reset、窄异常捕获和固定片段下限都无法覆盖已支持的并发、lease 与小 context 场景。
 - 2026-07-19：根据第二轮 CR 补齐 degraded history、连续汉字召回、scan-scoped finding evidence、当前 batch provenance 与 watermark heartbeat，原因是既有单元测试没有覆盖这些真实运行组合。
 - 2026-07-19：根据第三轮 CR 将当前输入排除、local hard rebuild、checkpoint 降级、来源级 evidence admission 与 turn scope 上限落到程序边界，原因是全局并集、provider-only retry 和无界 scope 无法保证长上下文与 Memory 的正确性。
+- 2026-07-21：根据第四轮 CR 补齐所有 purpose 的最终 preflight、超长 RAW 有界投影、review item constraint、code-audit 完成语义、watermark subset/lifecycle 与 runtime schema clear，原因是局部入口防护、path key、全库计数和初始化时单次校验无法覆盖当前并发与恢复契约。
+- 2026-07-21：根据第五轮 CR 对齐 consolidation registry、capacity candidate 终态、实际 extraction provenance、checkpoint 标记预算、显式 search 词项和 summary runtime guard，原因是投影边界与提交边界分叉会产生确定性重试、孤立记录和不可信 Memory 结果。
+- 2026-07-23：根据第六轮 CR 将 `patch_revise` 的 turn 完成点移到草案校验与替换之后，并为 `memory_read` 区分 not-found、storage degraded 与 contract error；watermark 测试改为验证后台任务最终启动，不把异步调度扩张为 provider 必须在 timeout 返回前启动的同步契约。
+- 2026-07-23：根据第七轮 CR 将 watermark thread 的停止检查、登记和启动置于同一状态锁内，并在每个 pipeline step 前检查 `_stop`；这样 `close()` 要么能登记并等待已启动线程，要么能阻止尚未启动的线程。
+- 2026-07-23：根据第七轮 CR 将 consolidation 的 target allowlist 与可变 active identity registry 分离；revise/supersede 继承 logical ID 前排除当前 target 检查同 subject/applicability 冲突，冲突即事务回滚，不替换已有 identity。
+- 2026-07-23：根据第七轮 CR 将 classifier 固定 prompt 超容量视为路由诊断失败并直接使用既有 `REVIEW_CONTINUE` fallback；不调用 CLASSIFIER 或 REACT provider，也不扩大通用容量 fitter 的异常范围。
+- 2026-07-23：根据本轮 CR 将 compaction 回收门槛按实际 `input_capacity` 缩放；固定的 32K 下限对小窗口模型并不成立，采用 `min(32K, max(1, floor(input_capacity*10%)))` 与原请求 10% 取较大值，保留进度保护但不改变大窗口行为。
+- 2026-07-23：根据本轮 CR 将 consolidation 的 bounded target allowlist 与完整 active identity registry 分离；候选上下文仍限制为相关的最多 20 条，create/revise 的重复 identity 校验则直接查询同 scope/path 的全部 active item，并在 revise 时排除当前 target。
+- 2026-07-23：根据本轮 CR 让 runtime worker 发现 schema/corruption 后立即使审阅摘要失效；瞬时锁竞争仍由下一轮重试处理，不把损坏数据库继续显示为可信 `current`。
+- 2026-07-23：根据本轮 CR 让 Memory Map 和 `memory_search` 使用最终注入文本/完整 tool-message wire 的估算值；search 只接纳能放入完整响应的 hit，并对该响应一次性扣除共享 durable recall 预算，不新增 function-call 字段。
+- 2026-07-23：根据本轮 CR 将 watermark 的终态 capacity skip 与真正 pending/failed 分开提示；已完成且不会重试的 job 不再宣称“后台继续”。

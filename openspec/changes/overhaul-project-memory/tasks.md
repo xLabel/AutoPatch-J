@@ -66,3 +66,38 @@
 - [x] 11.2 实现五项聚焦修复，不增加 schema、依赖、迁移、配置项或新后台抽象。
 - [x] 11.3 增加对应回归测试，并同步 Memory 设计文档。
 - [x] 11.4 运行聚焦测试、完整 pytest、两份 OpenSpec strict validation 与 `git diff --check`。
+
+## 12. 第四轮 CR 修复
+
+- [x] 12.1 更新 design、delta specs 与任务账本，明确所有 purpose preflight、超长 RAW 投影、review item constraint、审计完成语义、watermark lifecycle 与运行时 schema recovery。
+- [x] 12.2 实现 LLM 容量、compaction retry、review constraint、turn 收尾与 code-audit 结果修复。
+- [x] 12.3 实现 watermark subset/等待/线程生命周期、extraction provenance、consolidation identity 与 runtime schema/clear 修复。
+- [x] 12.4 增加聚焦回归测试，运行完整 pytest、OpenSpec strict validation 与 `git diff --check`。
+
+## 13. 第五轮 CR 修复
+
+- [x] 13.1 更新 design、delta specs 与任务账本，明确 consolidation registry、capacity candidate 终态、实际 extraction provenance、checkpoint 标记预算、显式 search 词项和 summary runtime guard。
+- [x] 13.2 实现六项聚焦修复，不增加 schema、依赖、迁移、配置项或新后台抽象。
+- [x] 13.3 增加对应回归测试，并同步 Memory 设计文档。
+- [x] 13.4 运行聚焦测试、完整 pytest、OpenSpec strict validation 与 `git diff --check`。
+
+## 14. 第六轮 CR 修复
+
+- [x] 14.1 更新 design、delta specs 与任务账本，明确 patch revision 完成边界、`memory_read` 错误分类和 watermark 异步测试语义。
+- [x] 14.2 在 workflow 最终结果产生后完成 `patch_revise` turn，并显式区分 `memory_read` 的 not-found、storage degraded 与 contract error。
+- [x] 14.3 增加 patch revision 持久化、Memory 读取错误分类回归测试，并将 watermark 启动断言改为 bounded eventual wait。
+- [x] 14.4 运行聚焦测试、watermark 重复测试、完整 pytest、OpenSpec strict validation 与 `git diff --check`。
+
+## 15. 第七轮 CR 修复
+
+- [x] 15.1 更新 design、delta specs 与任务账本，明确 close 后 watermark 不得启动、revise identity 冲突拒绝和 classifier 容量 fallback。
+- [x] 15.2 修复 watermark thread 的停止检查、登记/启动竞态，以及 Memory revise 的 active identity 冲突校验。
+- [x] 15.3 将 classifier 固定 envelope 超容量转换为既有 `REVIEW_CONTINUE` fallback，并增加三项聚焦回归测试。
+- [x] 15.4 运行聚焦测试、完整 pytest、OpenSpec strict validation 与 `git diff --check`。
+
+## 16. 第八轮 CR 修复
+
+- [x] 16.1 更新 design、delta specs 与任务账本，明确 input-capacity 缩放的 compaction 门槛、完整 active identity、runtime schema stale、实际 Map/search 账本与 terminal skip 提示。
+- [x] 16.2 实现七项聚焦修复，不增加 schema、依赖、迁移、配置项或新后台线程。
+- [x] 16.3 增加小窗口、完整 identity、worker stale、Map/search wire 计费、search 错误分类与 terminal skip 回归测试，并同步 Memory 设计文档。
+- [x] 16.4 运行聚焦测试、完整 pytest、OpenSpec strict validation 与 `git diff --check`。
