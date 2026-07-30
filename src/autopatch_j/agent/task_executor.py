@@ -140,7 +140,7 @@ class AgentTaskExecutor:
     ) -> AgentRunResult:
         prompt = build_patch_explain_user_prompt(current_item, raw_user_text)
         runtime_constraints = self.session.build_runtime_patch_constraint_context(
-            current_item.file_path
+            current_item.item_id
         )
         if runtime_constraints:
             prompt = f"{prompt}\n\n{runtime_constraints}"
@@ -167,10 +167,10 @@ class AgentTaskExecutor:
         callbacks: AgentCallbacks,
     ) -> AgentRunResult:
         existing_constraints = self.session.build_runtime_patch_constraint_context(
-            current_item.file_path
+            current_item.item_id
         )
         self.session.record_runtime_patch_constraint(
-            current_item.file_path,
+            current_item.item_id,
             raw_user_text,
         )
         prompt = build_patch_revise_user_prompt(current_item, raw_user_text)

@@ -55,6 +55,7 @@ class PatchReviewWorkflow:
                 )
                 if not workspace.has_pending_patch():
                     self.services.renderer.print_agent_text("补丁队列已清空")
+            runtime.agent.session.clear_runtime_patch_constraints(current_item.item_id)
             if rebased_count or stale_count:
                 self.services.renderer.print_agent_text(
                     f"已重定位 {rebased_count} 个同文件待审补丁；"
@@ -68,6 +69,7 @@ class PatchReviewWorkflow:
                 workspace.mark_current_patch_discarded()
                 if not workspace.has_pending_patch():
                     self.services.renderer.print_agent_text("补丁队列已清空")
+            runtime.agent.session.clear_runtime_patch_constraints(current_item.item_id)
             return True
 
         if normalized == "abort":
@@ -123,6 +125,29 @@ class PatchReviewWorkflow:
         runtime.agent.session.set_focus_paths([current_item.file_path])
         runtime.agent.session.revised_patch_draft = None
 
+        def run_revision() -> str:
+            self.services.agent_runner.run(
+                prompt=text,
+                agent_call=lambda p, **kwargs: runtime.agent.perform_patch_revise(
+                    raw_user_text=text,
+                    current_item=current_item,
+                    **kwargs,
+                ),
+                suppress_answer_output=True,
+            )
+            revised_patch = runtime.agent.session.pop_revised_patch_draft()
+            if revised_patch is None:
+                summary = "未生成修订补丁，当前补丁保持不变。"
+                self.services.renderer.print_agent_text(summary)
+                return summary
+            if not runtime.workspace_manager.replace_current_patch(revised_patch):
+                summary = "修订补丁未应用：当前 finding binding 校验失败，原补丁保持不变。"
+                self.services.renderer.print_error(summary)
+                return summary
+            summary = "已更新当前补丁，后续补丁保持不变。"
+            self.services.renderer.print_agent_text(summary)
+            return summary
+
         run_durable_memory_turn(
             manager=runtime.memory_manager,
             session=runtime.agent.session,
@@ -130,27 +155,10 @@ class PatchReviewWorkflow:
             user_text=text,
             scope_paths=[current_item.file_path],
             evidence_keys=_finding_evidence_keys(current_item),
-            run=lambda: self.services.agent_runner.run(
-                prompt=text,
-                agent_call=lambda p, **kwargs: runtime.agent.perform_patch_revise(
-                    raw_user_text=text,
-                    current_item=current_item,
-                    **kwargs,
-                ),
-            ),
-            assistant_text=lambda result: result.display_answer,
+            run=run_revision,
+            assistant_text=str,
             on_degraded=self.services.renderer.print_agent_text,
         )
-        revised_patch = runtime.agent.session.pop_revised_patch_draft()
-        if revised_patch is None:
-            self.services.renderer.print_agent_text("未生成修订补丁，当前补丁保持不变。")
-            return
-        if not runtime.workspace_manager.replace_current_patch(revised_patch):
-            self.services.renderer.print_error(
-                "修订补丁未应用：当前 finding binding 校验失败，原补丁保持不变。"
-            )
-            return
-        self.services.renderer.print_agent_text("已更新当前补丁，后续补丁保持不变。")
 
     def _rebase_pending_same_file_patches(
         self,

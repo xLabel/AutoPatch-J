@@ -53,6 +53,7 @@ from .models import (
     ExportResult,
     ExtractionCandidateInput,
     ExtractionResult,
+    ExtractionSourceInput,
     ForgetResult,
     JobKind,
     JobStatus,
@@ -517,6 +518,7 @@ class MemoryStore:
         self.legacy_json_path = legacy_json_path or self.db_path.with_name("memory.json")
         self.clock = clock
         self.busy_timeout_ms = busy_timeout_ms
+        self._schema_cookie: int | None = None
         self._initialize()
 
     @classmethod
@@ -534,6 +536,7 @@ class MemoryStore:
         store.legacy_json_path = store.db_path.with_name("memory.json")
         store.clock = clock
         store.busy_timeout_ms = busy_timeout_ms
+        store._schema_cookie = None
         return store
 
     def _initialize(self) -> None:
@@ -558,8 +561,8 @@ class MemoryStore:
                 except Exception:
                     connection.rollback()
                     raise
-            with self._connect():
-                pass
+            with self._connect() as connection:
+                self._runtime_guard(connection, force_full=True)
         except MemoryStorageError:
             raise
         except sqlite3.DatabaseError as exc:
@@ -661,6 +664,12 @@ class MemoryStore:
                 self._enable_wal(connection)
             yield connection
         except sqlite3.DatabaseError as exc:
+            code = getattr(exc, "sqlite_errorcode", None)
+            base_code = (code & 0xFF) if isinstance(code, int) else None
+            if base_code in {sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB}:
+                raise MemoryCorruptError(
+                    f"Memory database 无法可靠读取: {exc}"
+                ) from exc
             raise MemoryStorageError(f"Memory database 操作失败: {exc}") from exc
         finally:
             if connection is not None:
@@ -669,8 +678,32 @@ class MemoryStore:
     @contextmanager
     def _operational_connection(self) -> Iterator[sqlite3.Connection]:
         with self._connect() as connection:
-            self._require_bootstrap_state(connection)
+            self._runtime_guard(connection)
             yield connection
+
+    def validate_runtime_database(self) -> None:
+        """对已初始化 database 执行显式完整运行时校验。"""
+
+        with self._connect() as connection:
+            self._runtime_guard(connection, force_full=True)
+
+    def _runtime_guard(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        force_full: bool = False,
+    ) -> None:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if version != MEMORY_SCHEMA_VERSION:
+            raise MemorySchemaError(f"不支持的 Memory schema version: {version}")
+        schema_cookie = int(
+            connection.execute("PRAGMA main.schema_version").fetchone()[0]
+        )
+        if force_full or self._schema_cookie != schema_cookie:
+            self._validate_v3_database(connection)
+            self._schema_cookie = schema_cookie
+            return
+        self._require_bootstrap_state(connection)
 
     def _enable_wal(self, connection: sqlite3.Connection) -> None:
         deadline = monotonic() + self.busy_timeout_ms / 1_000
@@ -710,7 +743,7 @@ class MemoryStore:
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         with self._recovery_transaction() as connection:
-            self._require_bootstrap_state(connection)
+            self._runtime_guard(connection)
             yield connection
 
     def _now(self) -> float:
@@ -1241,7 +1274,8 @@ class MemoryStore:
         self,
         batch: ClaimedJobBatch,
         result: ExtractionResult,
-        evidence_turn_ids: Sequence[str] = (),
+        *,
+        source_inputs: Sequence[ExtractionSourceInput] = (),
     ) -> tuple[str, ...]:
         self._assert_batch_shape(batch, JobKind.EXTRACTION.value)
         now = self._now()
@@ -1254,12 +1288,24 @@ class MemoryStore:
             valid_turns = self._turn_text_lookup(
                 connection,
                 batch,
-                evidence_turn_ids=evidence_turn_ids,
+                source_inputs=source_inputs,
             )
+            projected_sources: dict[tuple[str, str], list[str]] = {}
+            for source in source_inputs:
+                if source.role not in {"user", "assistant"}:
+                    raise MemoryContractError("extraction source role 非法")
+                if source.turn_id not in valid_turns:
+                    raise MemoryContractError(
+                        f"extraction source turn 不在合法输入中: {source.turn_id}"
+                    )
+                projected_sources.setdefault(
+                    (source.turn_id, source.role), []
+                ).append(source.text)
             eligible_candidates = self._validate_extraction_result(
                 result,
                 valid_turns,
                 primary_turn_ids,
+                projected_sources,
             )
             max_sequence = max(int(item["sequence"]) for item in valid_turns.values())
             connection.execute(
@@ -1366,12 +1412,16 @@ class MemoryStore:
         connection: sqlite3.Connection,
         batch: ClaimedJobBatch,
         *,
-        evidence_turn_ids: Sequence[str] = (),
+        source_inputs: Sequence[ExtractionSourceInput] = (),
     ) -> dict[str, sqlite3.Row]:
         primary_turn_ids = [
             str(job.payload.get("turn_id", "")) for job in batch.jobs
         ]
-        turn_ids = list(dict.fromkeys((*primary_turn_ids, *evidence_turn_ids)))
+        turn_ids = list(
+            dict.fromkeys(
+                (*primary_turn_ids, *(source.turn_id for source in source_inputs))
+            )
+        )
         placeholders = ",".join("?" for _ in turn_ids)
         rows = connection.execute(
             f"SELECT * FROM turns WHERE id IN ({placeholders})", tuple(turn_ids)
@@ -1379,17 +1429,6 @@ class MemoryStore:
         lookup = {str(row["id"]): row for row in rows}
         if len(lookup) != len(turn_ids):
             raise MemoryContractError("extraction source turn 不完整")
-        first = min(rows, key=lambda row: int(row["sequence"]))
-        adjacent = connection.execute(
-            """
-            SELECT * FROM turns
-            WHERE thread_id = ? AND sequence < ? AND state = 'completed'
-            ORDER BY sequence DESC LIMIT 1
-            """,
-            (first["thread_id"], first["sequence"]),
-        ).fetchone()
-        if adjacent is not None:
-            lookup[str(adjacent["id"])] = adjacent
         return lookup
 
     def _validate_extraction_result(
@@ -1397,6 +1436,7 @@ class MemoryStore:
         result: ExtractionResult,
         turns: dict[str, sqlite3.Row],
         primary_turn_ids: set[str],
+        projected_sources: dict[tuple[str, str], list[str]],
     ) -> tuple[ExtractionCandidateInput, ...]:
         # Validate the complete provenance envelope before filtering semantics. A
         # forged source invalidates the response; an unsupported interpretation
@@ -1415,6 +1455,13 @@ class MemoryStore:
                 raw = turn["user_text"] if source.role == "user" else turn["assistant_text"]
                 if not source.quote or source.quote not in raw:
                     raise MemoryContractError("candidate quote 不是对应 RAW turn 的精确子串")
+                visible_texts = projected_sources.get(
+                    (source.turn_id, source.role), ()
+                )
+                if not any(source.quote in text for text in visible_texts):
+                    raise MemoryContractError(
+                        "candidate quote 不在本次 extraction 实际投影中"
+                    )
         return tuple(
             candidate
             for candidate in result.candidates
@@ -1620,7 +1667,7 @@ class MemoryStore:
             }
             if set(candidates) != expected_ids:
                 raise MemoryContractError("consolidation candidates 已丢失")
-            related_target_ids = {
+            allowed_target_ids = {
                 str(row["id"])
                 for row in self._related_active_items(
                     connection, tuple(candidates.values())
@@ -1655,9 +1702,8 @@ class MemoryStore:
                 if operation.operation == "create":
                     if operation.target_id is not None:
                         raise MemoryContractError("create 不允许 target_id")
-                    if self._has_exact_related_identity(
+                    if self._has_exact_active_identity(
                         connection,
-                        related_target_ids,
                         operation.subject,
                         applies_to_paths,
                         scope_kind,
@@ -1676,7 +1722,7 @@ class MemoryStore:
                         )
                     if not operation.target_id:
                         raise MemoryContractError(f"{operation.operation} 需要 target_id")
-                    if operation.target_id not in related_target_ids:
+                    if operation.target_id not in allowed_target_ids:
                         raise MemoryContractError(
                             "target item 不在本次 consolidation payload 的 related active items 中"
                         )
@@ -1698,6 +1744,17 @@ class MemoryStore:
                         and dominant.origin == "inferred_repetition"
                     ):
                         raise MemoryContractError("inferred candidate 不得覆盖 explicit item")
+                    if self._has_exact_active_identity(
+                        connection,
+                        operation.subject,
+                        applies_to_paths,
+                        scope_kind,
+                        thread_id,
+                        exclude_id=operation.target_id,
+                    ):
+                        raise MemoryContractError(
+                            "revise/supersede 会产生重复 subject/applicability identity"
+                        )
                     logical_id = str(target["logical_id"])
                     revision = int(target["revision"]) + 1
                     old_id = str(target["id"])
@@ -1800,6 +1857,49 @@ class MemoryStore:
                 )
             self._refresh_meta_last_error(connection, now)
 
+    def complete_job_without_output(
+        self,
+        batch: ClaimedJobBatch,
+        reason: str,
+    ) -> None:
+        now = self._now()
+        persisted_reason = reason[:MAX_JOB_ERROR_CHARS]
+        with self._transaction() as connection:
+            self._validate_lease(connection, batch)
+            suppressed_candidate_ids: set[str] = set()
+            for job in batch.jobs:
+                if job.kind == JobKind.CONSOLIDATION.value:
+                    candidate_ids = {
+                        str(value)
+                        for value in job.payload.get("candidate_ids", ())
+                    }
+                    candidates = self._load_candidates(
+                        connection, tuple(candidate_ids)
+                    )
+                    if len(candidates) != len(candidate_ids):
+                        raise MemoryContractError(
+                            "capacity skip 的 consolidation candidates 已丢失"
+                        )
+                    suppressed_candidate_ids.update(candidate_ids)
+                connection.execute(
+                    """
+                    UPDATE memory_jobs
+                    SET status = 'succeeded_no_output', lease_owner = NULL,
+                        lease_expires_at = NULL, next_retry_at = NULL,
+                        last_error = ?, updated_at = ?, completed_at = ?
+                    WHERE id = ?
+                    """,
+                    (persisted_reason, now, now, job.id),
+                )
+            if suppressed_candidate_ids:
+                self._set_candidate_status(
+                    connection,
+                    suppressed_candidate_ids,
+                    "suppressed",
+                    now,
+                )
+            self._refresh_meta_last_error(connection, now)
+
     def pending_job_count(self) -> int:
         with self._operational_connection() as connection:
             return int(
@@ -1827,6 +1927,49 @@ class MemoryStore:
                 parameters,
             ).fetchall()
         return tuple(str(row["id"]) for row in rows)
+
+    def unfinished_watermark_job_ids(
+        self,
+        captured_job_ids: Collection[str],
+    ) -> tuple[str, ...]:
+        captured_ids = sorted(set(captured_job_ids))
+        if not captured_ids:
+            return ()
+        placeholders = ",".join("?" for _ in captured_ids)
+        with self._operational_connection() as connection:
+            candidate_rows = connection.execute(
+                f"""
+                SELECT id FROM memory_candidates
+                WHERE extraction_job_id IN ({placeholders})
+                """,
+                tuple(captured_ids),
+            ).fetchall()
+            derived_candidate_ids = {
+                str(row["id"]) for row in candidate_rows
+            }
+            rows = connection.execute(
+                """
+                SELECT id, kind, payload_json FROM memory_jobs
+                WHERE status IN ('pending', 'leased', 'retry_wait')
+                ORDER BY created_at ASC, id ASC
+                """
+            ).fetchall()
+        unfinished: list[str] = []
+        captured_set = set(captured_ids)
+        for row in rows:
+            job_id = str(row["id"])
+            if job_id in captured_set:
+                unfinished.append(job_id)
+                continue
+            if str(row["kind"]) != JobKind.CONSOLIDATION.value:
+                continue
+            candidate_ids = {
+                str(value)
+                for value in json.loads(row["payload_json"]).get("candidate_ids", ())
+            }
+            if candidate_ids & derived_candidate_ids:
+                unfinished.append(job_id)
+        return tuple(unfinished)
 
     def build_thread_history(
         self,
@@ -1955,7 +2098,7 @@ class MemoryStore:
         with self._connect() as connection:
             try:
                 connection.execute("BEGIN")
-                self._require_bootstrap_state(connection)
+                self._runtime_guard(connection)
                 active_thread = self._require_active_thread_in_transaction(connection)
                 active_thread_id = str(active_thread["id"])
                 item_rows = connection.execute(
@@ -2105,6 +2248,7 @@ class MemoryStore:
         query_terms = set(
             recall_terms(
                 (
+                    query.search_text or "",
                     query.check_id or "",
                     query.finding_message or "",
                     query.bound_finding_id or "",
@@ -2713,7 +2857,7 @@ class MemoryStore:
         )
 
     def status(self) -> MemoryStatus:
-        with self._connect() as connection:
+        with self._operational_connection() as connection:
             meta = self._require_meta_row(connection)
             active_thread = self._require_active_thread_in_transaction(connection)
             counts = {
@@ -2915,21 +3059,37 @@ class MemoryStore:
             ] is None
         return target["kind"] == "discussion_context" and target["thread_id"] == thread_id
 
-    def _has_exact_related_identity(
+    def _has_exact_active_identity(
         self,
         connection: sqlite3.Connection,
-        target_ids: set[str],
         subject: str,
         applies_to_paths: tuple[str, ...],
         scope_kind: str,
         thread_id: str | None,
+        *,
+        exclude_id: str | None = None,
     ) -> bool:
-        if not target_ids:
-            return False
-        placeholders = ",".join("?" for _ in target_ids)
+        clauses = [
+            "status = 'active'",
+            "applies_to_paths_json = ?",
+        ]
+        parameters: list[str] = [_paths_json(applies_to_paths)]
+        if scope_kind == "project":
+            clauses.extend(
+                [
+                    "kind IN ('user_preference', 'project_decision')",
+                    "thread_id IS NULL",
+                ]
+            )
+        else:
+            clauses.extend(["kind = 'discussion_context'", "thread_id = ?"])
+            parameters.append(thread_id or "")
+        if exclude_id is not None:
+            clauses.append("id <> ?")
+            parameters.append(exclude_id)
         rows = connection.execute(
-            f"SELECT * FROM memory_items WHERE id IN ({placeholders})",
-            tuple(sorted(target_ids)),
+            "SELECT * FROM memory_items WHERE " + " AND ".join(clauses),
+            tuple(parameters),
         ).fetchall()
         normalized_subject = normalize_text(subject)
         return any(

@@ -49,8 +49,8 @@ def run_durable_memory_turn(
                     turn.id,
                     error=f"{type(exc).__name__}: {exc}".strip(),
                 )
-            except MemoryContractError:
-                raise
+            except MemoryContractError as memory_exc:
+                raise exc from memory_exc
             except MemoryError as memory_exc:
                 notice = manager.degraded_notice(memory_exc)
                 if notice:

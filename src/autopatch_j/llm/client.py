@@ -3,7 +3,11 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from .diagnostics import MAX_RAW_LLM_ERROR_CHARS, format_raw_llm_exception
-from .context_window import ModelContextProfile
+from .context_window import (
+    ContextCapacityError,
+    ModelContextProfile,
+    estimate_request_tokens,
+)
 from .dialects import MessageDialect, StandardDialect, DeepSeekAliyunDialect
 from .models import LLMResponse
 from .options import LLMCallDiagnostic, LLMCallPurpose, resolve_request_options
@@ -69,6 +73,14 @@ class LLMClient:
     ) -> LLMResponse:
         options = resolve_request_options(purpose)
         try:
+            if (
+                self.context_profile is not None
+                and estimate_request_tokens(messages, tools)
+                > self.context_profile.input_capacity
+            ):
+                raise ContextCapacityError(
+                    "LLM 请求超过当前 context profile 的 input capacity。"
+                )
             kwargs = self.request_builder.build_request_kwargs(
                 messages=messages,
                 tools=tools,

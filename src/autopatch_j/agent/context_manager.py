@@ -6,6 +6,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from autopatch_j.llm.context_window import (
+    ContextCapacityError,
     ModelContextProfile,
     estimate_messages_tokens,
     estimate_text_tokens,
@@ -97,12 +98,9 @@ class ContextUsage:
         return self.checkpoint_tokens + self.recent_history_tokens
 
 
-def required_compaction_reclaim(previous_tokens: int) -> int:
-    return max(32 * KIBI, int(previous_tokens * 0.10))
-
-
-class ContextCapacityError(RuntimeError):
-    """请求中的必需组件无法在当前模型容量内安全装配。"""
+def required_compaction_reclaim(previous_tokens: int, input_capacity: int) -> int:
+    capacity_floor = min(32 * KIBI, max(1, int(input_capacity * 0.10)))
+    return max(capacity_floor, int(previous_tokens * 0.10))
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +243,11 @@ class RequestContextManager:
         rebuilt_tokens = self._request_tokens(rebuilt, tools)
         reclaimed = pruned_tokens - rebuilt_tokens
         has_new_progress = self._checkpoint is not None and tail_start > start
-        if reclaimed < required_compaction_reclaim(pruned_tokens) and not has_new_progress:
+        if (
+            reclaimed
+            < required_compaction_reclaim(pruned_tokens, self.budget.input_capacity)
+            and not has_new_progress
+        ):
             raise ContextCapacityError(
                 "runtime context compaction 未回收足够容量，已停止重复压缩。"
             )
@@ -477,17 +479,23 @@ def _message_units(
 
 
 def clip_text_to_tokens(text: str, max_tokens: int) -> str:
+    if max_tokens <= 0:
+        return ""
     if estimate_text_tokens(text) <= max_tokens:
         return text
+    marker = "\n… [checkpoint 已按预算截断]"
+    marker_tokens = estimate_text_tokens(marker)
+    append_marker = max_tokens > marker_tokens
+    content_tokens = max_tokens - marker_tokens if append_marker else max_tokens
     encoded = text.encode("utf-8")
-    clipped = encoded[: max_tokens * 3]
+    clipped = encoded[: content_tokens * 3]
     while clipped:
         try:
             result = clipped.decode("utf-8").rstrip()
-            return f"{result}\n… [checkpoint 已按预算截断]"
+            return f"{result}{marker if append_marker else ''}"
         except UnicodeDecodeError:
             clipped = clipped[:-1]
-    return ""
+    return marker if append_marker else ""
 
 
 def is_context_overflow_error(exc: BaseException) -> bool:

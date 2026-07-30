@@ -8,6 +8,10 @@ from autopatch_j.config import GlobalConfig
 from autopatch_j.core.domain import AuditAttemptOutcome, CodeScope, FindingTask, IntentType
 
 
+class _AuditScanError(RuntimeError):
+    pass
+
+
 class CodeAuditWorkflow:
     """
     代码审计工作流。
@@ -25,22 +29,35 @@ class CodeAuditWorkflow:
         if scope is None:
             self.services.renderer.print_error("未解析到可检查范围")
             return
-        run_durable_memory_turn(
-            manager=runtime.memory_manager,
-            session=runtime.agent.session,
-            intent=IntentType.CODE_AUDIT,
-            user_text=text,
-            scope_paths=scope.focus_files,
-            evidence_keys=[],
-            run=lambda: self._run_code_audit(text, scope),
-            assistant_text=lambda _: "",
-            on_degraded=self.services.renderer.print_agent_text,
-        )
+        try:
+            summary = run_durable_memory_turn(
+                manager=runtime.memory_manager,
+                session=runtime.agent.session,
+                intent=IntentType.CODE_AUDIT,
+                user_text=text,
+                scope_paths=scope.focus_files,
+                evidence_keys=[],
+                run=lambda: self._run_code_audit(text, scope),
+                assistant_text=str,
+                on_degraded=self.services.renderer.print_agent_text,
+            )
+        except _AuditScanError as exc:
+            self.services.renderer.print_error(str(exc))
+            return
+        self.services.renderer.print_agent_text(summary)
 
-    def _run_code_audit(self, text: str, scope: CodeScope) -> None:
+    def _run_code_audit(self, text: str, scope: CodeScope) -> str:
         backlog = self._prepare_audit_workspace(text, scope)
         if backlog is None:
-            return
+            patch_count = sum(
+                1
+                for item in self.services.runtime.workspace_manager.load().patch_items
+                if item.is_pending()
+            )
+            return (
+                "代码审计完成：静态扫描未发现 finding，LLM 二次复核"
+                f"生成 {patch_count} 个待审补丁。"
+            )
 
         runtime = self.services.runtime
         processed_count = 0
@@ -53,6 +70,14 @@ class CodeAuditWorkflow:
 
         if not runtime.workspace_manager.load().has_pending_patch():
             runtime.workspace_manager.clear()
+        patch_count = sum(1 for finding in backlog if finding.status.value == "patch_ready")
+        failed_count = sum(1 for finding in backlog if finding.status.value == "failed")
+        remaining_count = sum(1 for finding in backlog if finding.is_pending())
+        return (
+            f"代码审计完成：扫描发现 {len(backlog)} 个 finding，"
+            f"生成 {patch_count} 个待审补丁，{failed_count} 个处理失败，"
+            f"{remaining_count} 个留待后续处理。"
+        )
 
     def _render_batch_limit_hint(self, backlog: list[FindingTask]) -> None:
         remaining = sum(1 for finding in backlog if finding.is_pending())
@@ -74,8 +99,7 @@ class CodeAuditWorkflow:
             self.services.renderer.print_tool_start("scan_project", caller="AGENT")
             scan_id, scan_result = runtime.scanner_runner.run_scan_and_save(scope)
         except RuntimeError as exc:
-            self.services.renderer.print_error(str(exc))
-            return None
+            raise _AuditScanError(str(exc)) from exc
 
         runtime.workspace_manager.initialize_review(scope=scope, latest_scan_id=scan_id, patch_items=[])
         backlog = runtime.backlog_manager.build_from_scan_result(scan_result)

@@ -8,6 +8,7 @@ from autopatch_j.core.user_input.diagnostics import IntentClassificationResult
 from autopatch_j.core.user_input.intent_parser import parse_intent_label
 from autopatch_j.core.user_input.prompts import INTENT_CLASSIFIER_PROMPT, build_intent_classifier_user_prompt
 from autopatch_j.llm.diagnostics import format_raw_llm_exception
+from autopatch_j.llm.context_window import ModelContextProfile, fit_last_user_message
 from autopatch_j.llm.options import LLMCallPurpose
 
 
@@ -23,6 +24,12 @@ def build_llm_user_intent_classifier(llm: Any | None) -> Callable[[str, bool], I
             {"role": "system", "content": INTENT_CLASSIFIER_PROMPT},
             {"role": "user", "content": build_intent_classifier_user_prompt(user_text, has_pending_review)},
         ]
+        profile = getattr(llm, "context_profile", None)
+        if isinstance(profile, ModelContextProfile):
+            messages = fit_last_user_message(
+                messages,
+                input_capacity=profile.input_capacity,
+            )
         intent = _classify_intent_with_purpose(llm, messages, LLMCallPurpose.CLASSIFIER)
         if intent is not None:
             return intent
@@ -42,6 +49,12 @@ def build_llm_user_intent_classifier_with_diagnostics(
             {"role": "system", "content": INTENT_CLASSIFIER_PROMPT},
             {"role": "user", "content": build_intent_classifier_user_prompt(user_text, has_pending_review)},
         ]
+        profile = getattr(llm, "context_profile", None)
+        if isinstance(profile, ModelContextProfile):
+            messages = fit_last_user_message(
+                messages,
+                input_capacity=profile.input_capacity,
+            )
         intent, error = _classify_intent_with_purpose_diagnostics(llm, messages, LLMCallPurpose.CLASSIFIER)
         if intent is not None:
             return intent, ""

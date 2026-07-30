@@ -246,6 +246,7 @@ class RecallQuery:
     finding_message: str | None = None
     patch_path: str | None = None
     bound_finding_id: str | None = None
+    search_text: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

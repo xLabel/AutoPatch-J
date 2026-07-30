@@ -241,9 +241,15 @@ class CommandHandlers:
                 f"Memory 本次处理失败，任务已保留：{exc}"
             )
             return
-        if result.failed or result.pending or result.errors:
+        if result.failed or result.pending:
             self.host.renderer.print_error(
                 "旧 thread Memory 尚未完全物化；任务已保留并在后台继续。"
+            )
+        elif result.errors:
+            self.host.renderer.print_error(
+                "旧 thread Memory 处理已结束，但本次未生成可用 Memory；"
+                "任务已进入终态，不会在后台重试。原因："
+                + "；".join(result.errors)
             )
 
     def _render_memory_usage(self) -> None:

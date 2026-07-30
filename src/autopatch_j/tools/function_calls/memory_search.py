@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
 from typing import Annotated
 
+from autopatch_j.core.memory.errors import MemoryContractError, MemoryStorageError
 from autopatch_j.core.memory.models import MemoryRequestState
+from autopatch_j.core.memory.search_response import build_memory_search_response
 from autopatch_j.tools.contract import FunctionTool, ToolArg, ToolExecutionResult, function_tool
 from autopatch_j.tools.names import FunctionToolName
 
@@ -47,35 +48,36 @@ class MemorySearchTool(FunctionTool):
 
         try:
             hits = manager.search_memory_request(request_state, normalized_query)
+        except MemoryStorageError as exc:
+            notice = manager.degraded_notice(exc)
+            return ToolExecutionResult(
+                status="error",
+                message=notice or f"Memory degraded：搜索失败。原因：{exc}",
+                summary=notice or "Memory degraded：搜索失败",
+            )
+        except MemoryContractError as exc:
+            return ToolExecutionResult(
+                status="error",
+                message=f"Memory 搜索被请求约束拒绝：{exc}",
+                summary="Memory 搜索失败: 请求约束拒绝",
+            )
         except Exception as exc:
             return ToolExecutionResult(
                 status="error",
-                message=f"Memory 搜索失败：{exc}",
-                summary="Memory 搜索失败: policy 或额度拒绝",
+                message=f"Memory 搜索执行异常：{type(exc).__name__}: {exc}",
+                summary="Memory 搜索失败: 执行异常",
             )
-        payload = {
-            "query": normalized_query,
-            "hits": [
-                {
-                    "id": hit.id,
-                    "kind": hit.kind,
-                    "subject": hit.subject,
-                    "statement": hit.statement,
-                    "match_type": hit.match_type,
-                }
-                for hit in hits[:8]
-            ],
-        }
+        payload, message = build_memory_search_response(normalized_query, hits[:8])
         if not payload["hits"]:
             return ToolExecutionResult(
                 status="ok",
-                message="未找到与查询相关的可用 Memory。",
+                message=message,
                 summary="Memory 搜索无命中",
                 payload=payload,
             )
         return ToolExecutionResult(
             status="ok",
-            message="Memory 搜索结果：\n" + json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+            message=message,
             summary=f"Memory 搜索命中 {len(payload['hits'])} 条",
             payload=payload,
         )

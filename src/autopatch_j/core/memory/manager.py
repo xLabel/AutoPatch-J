@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
@@ -13,7 +14,13 @@ from autopatch_j.llm.options import LLMCallDiagnostic
 from autopatch_j.llm.context_window import estimate_text_tokens
 
 from .constants import REPAIR_MEMORY_INTENTS, WORKER_POLL_SECONDS
-from .errors import MemoryContractError, MemoryNotFoundError, MemoryStorageError
+from .errors import (
+    MemoryContractError,
+    MemoryCorruptError,
+    MemoryNotFoundError,
+    MemorySchemaError,
+    MemoryStorageError,
+)
 from .models import (
     ClearResult,
     ExportResult,
@@ -36,12 +43,25 @@ from .models import (
     TurnRecord,
 )
 from .pipeline import MemoryLLM, MemoryPipeline, PipelineStepResult
+from .search_response import estimate_memory_search_response_tokens
 from .store import MemoryStore
 from .summary_projection import MemorySummaryProjector
 from .text_utils import compact_text, normalize_text, utc_now
 
 
 _SUMMARY_RETRY_SECONDS = (1.0, 5.0, 30.0, 60.0)
+
+
+def _is_transient_sqlite_lock(error: MemoryStorageError) -> bool:
+    cause = error.__cause__
+    code = getattr(cause, "sqlite_errorcode", None)
+    if isinstance(code, int) and (code & 0xFF) in {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+    }:
+        return True
+    detail = str(cause or error).casefold()
+    return "database is locked" in detail or "database table is locked" in detail
 
 
 def _clip_text_tokens(text: str, token_budget: int) -> str:
@@ -88,6 +108,7 @@ class MemoryManager:
         self._summary_lock = Lock()
         self._reported_degraded_errors: set[str] = set()
         self._thread: Thread | None = None
+        self._watermark_threads: set[Thread] = set()
         self.summary_path = self.db_path.with_name("memory_summary.md")
         self._summary_projector = MemorySummaryProjector(
             self.summary_path,
@@ -199,22 +220,26 @@ class MemoryManager:
             *(match for match in matches if match.entry.lane == "relevant"),
         ]
         selected: list[MemoryMapEntry] = []
-        used_tokens = 0
         for match in ordered:
             entry = match.entry
-            rendered = (
-                f"{entry.id} {entry.lane} {entry.kind} {entry.subject} "
-                f"{entry.statement} {' '.join(entry.applies_to_paths)}"
+            trial_entries = (*selected, entry)
+            trial_map = MemoryMap(
+                entries=trial_entries,
+                omitted_count=len(ordered) - len(trial_entries),
+                estimated_tokens=0,
             )
-            entry_tokens = estimate_text_tokens(rendered)
-            if used_tokens + entry_tokens > policy.map_token_budget:
+            trial_tokens = estimate_text_tokens(self.render_memory_map(trial_map))
+            if trial_tokens > policy.map_token_budget:
                 continue
             selected.append(entry)
-            used_tokens += entry_tokens
-        return MemoryMap(
+        result = MemoryMap(
             entries=tuple(selected),
             omitted_count=len(ordered) - len(selected),
-            estimated_tokens=used_tokens,
+            estimated_tokens=0,
+        )
+        return replace(
+            result,
+            estimated_tokens=estimate_text_tokens(self.render_memory_map(result)),
         )
 
     def search_recall(
@@ -363,30 +388,51 @@ class MemoryManager:
         state: MemoryRequestState,
         query_text: str,
     ) -> list[MemorySearchHit]:
-        normalized = normalize_text(query_text)
+        response_query = query_text.strip()
+        normalized = normalize_text(response_query)
         if not normalized:
             return []
         cached = state.search_cache.get(normalized)
         if cached is not None:
+            response_tokens = estimate_memory_search_response_tokens(
+                response_query,
+                cached,
+            )
+            if response_tokens > state.remaining_tokens:
+                raise MemoryContractError(
+                    "durable recall token pool 不足以返回 memory_search 响应"
+                )
+            state.remaining_tokens -= response_tokens
             return list(cached)
         if len(state.search_queries) >= state.policy.max_search_calls:
             raise MemoryContractError("本请求的 memory_search 调用额度已用尽")
         state.search_queries.add(normalized)
         combined = replace(
             state.query,
-            user_text=f"{query_text}\n{state.query.user_text}".strip(),
+            user_text=f"{response_query}\n{state.query.user_text}".strip(),
+            search_text=response_query,
         )
         hits = self.search_recall(combined, state.policy)
         selected: list[MemorySearchHit] = []
         for hit in hits:
-            tokens = estimate_text_tokens(
-                f"{hit.id} {hit.kind} {hit.subject} {hit.statement} {hit.match_type}"
+            trial = (*selected, hit)
+            response_tokens = estimate_memory_search_response_tokens(
+                response_query,
+                trial,
             )
-            if tokens > state.remaining_tokens:
+            if response_tokens > state.remaining_tokens:
                 continue
             selected.append(hit)
-            state.remaining_tokens -= tokens
-            state.readable_ids.add(hit.id)
+        response_tokens = estimate_memory_search_response_tokens(
+            response_query,
+            selected,
+        )
+        if response_tokens > state.remaining_tokens:
+            raise MemoryContractError(
+                "durable recall token pool 不足以返回 memory_search 响应"
+            )
+        state.remaining_tokens -= response_tokens
+        state.readable_ids.update(hit.id for hit in selected)
         state.search_cache[normalized] = tuple(selected)
         return selected
 
@@ -521,29 +567,42 @@ class MemoryManager:
 
     def clear(self) -> ClearResult:
         if self._store is None:
-            for path in (
-                self.db_path,
-                Path(str(self.db_path) + "-wal"),
-                Path(str(self.db_path) + "-shm"),
-            ):
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError as exc:
-                    raise MemoryStorageError(
-                        f"无法删除损坏的 Memory database 工件 {path}: {exc}"
-                    ) from exc
-            self._store = MemoryStore(self.db_path, clock=self._clock)
-            self._initialization_error = ""
-            if self._llm is not None:
-                self._pipeline = MemoryPipeline(
-                    self._store, self._llm, self._worker_id
-                )
-            result = self.store.clear()
-            self._refresh_summary_after_commit()
-            self.start()
-            return result
+            return self._rebuild_damaged_store()
+        try:
+            self._store.validate_runtime_database()
+        except (MemorySchemaError, MemoryCorruptError):
+            return self._rebuild_damaged_store()
         result = self.store.clear()
         self._refresh_summary_after_commit()
+        return result
+
+    def _rebuild_damaged_store(self) -> ClearResult:
+        self.close()
+        self._store = None
+        self._pipeline = None
+        for path in (
+            self.db_path,
+            Path(str(self.db_path) + "-wal"),
+            Path(str(self.db_path) + "-shm"),
+        ):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise MemoryStorageError(
+                    f"无法删除损坏的 Memory database 工件 {path}: {exc}"
+                ) from exc
+        try:
+            self._store = MemoryStore(self.db_path, clock=self._clock)
+        except MemoryStorageError as exc:
+            self._initialization_error = str(exc)
+            raise
+        self._initialization_error = ""
+        self._reported_degraded_errors.clear()
+        if self._llm is not None:
+            self._pipeline = MemoryPipeline(self._store, self._llm, self._worker_id)
+        result = self.store.clear()
+        self._refresh_summary_after_commit()
+        self.start()
         return result
 
     def export(self, export_dir: Path | None = None) -> ExportResult:
@@ -562,9 +621,11 @@ class MemoryManager:
             return
         try:
             self._store.recover_startup()
-        except MemoryStorageError:
-            # 周期 worker 会继续重试；瞬时锁竞争不应阻止 CLI 启动。
-            pass
+        except (MemorySchemaError, MemoryCorruptError) as exc:
+            self._mark_summary_stale_for_runtime_error(exc)
+        except MemoryStorageError as exc:
+            if not _is_transient_sqlite_lock(exc):
+                self._mark_summary_stale_for_runtime_error(exc)
         self._mark_summary_dirty(reset_retry=True)
         self._refresh_summary(force=True)
         with self._state_lock:
@@ -591,12 +652,12 @@ class MemoryManager:
         del reason
         if self._store is None:
             return FlushResult(failed=1, errors=(self._initialization_error,))
+        allowed_job_ids = set(self._store.pending_job_ids(thread_id))
         if self._pipeline is None:
             return FlushResult(
                 pending=self._store.pending_job_count(),
                 errors=("Memory LLM 未配置，pending job 已保留",),
             )
-        allowed_job_ids = set(self._store.pending_job_ids(thread_id))
         return self._flush_job_ids(thread_id, allowed_job_ids)
 
     def flush_thread_watermark(
@@ -611,40 +672,64 @@ class MemoryManager:
             raise ValueError("Memory watermark wait_seconds 必须大于 0")
         if self._store is None:
             return FlushResult(failed=1, errors=(self._initialization_error,))
+        allowed_job_ids = set(self._store.pending_job_ids(thread_id))
         if self._pipeline is None:
             return FlushResult(
-                pending=self._store.pending_job_count(),
+                pending=len(allowed_job_ids),
                 errors=("Memory LLM 未配置，pending job 已保留",),
             )
-        allowed_job_ids = set(self._store.pending_job_ids(thread_id))
         if not allowed_job_ids:
-            return FlushResult(pending=self._store.pending_job_count())
+            return FlushResult(pending=0)
+        deadline = monotonic() + wait_seconds
         completed = Event()
         results: list[FlushResult] = []
 
         def process_watermark() -> None:
             try:
-                results.append(self._flush_job_ids(thread_id, allowed_job_ids))
+                results.append(
+                    self._flush_job_ids(
+                        thread_id,
+                        allowed_job_ids,
+                        deadline=deadline,
+                        subset_pending=True,
+                    )
+                )
             except Exception as exc:
                 results.append(
                     FlushResult(
                         failed=1,
-                        pending=self.store.pending_job_count(),
+                        pending=len(allowed_job_ids),
                         errors=(self._safe_worker_error("watermark flush", exc),),
                     )
                 )
             finally:
+                with self._state_lock:
+                    self._watermark_threads.discard(current_thread())
                 completed.set()
 
-        Thread(
+        watermark_thread = Thread(
             target=process_watermark,
             name="memory-watermark-flush",
             daemon=True,
-        ).start()
+        )
+        with self._state_lock:
+            if self._stop.is_set():
+                return FlushResult(
+                    pending=len(allowed_job_ids),
+                    errors=("Memory manager 已关闭，watermark flush 未启动",),
+                )
+            self._watermark_threads.add(watermark_thread)
+            try:
+                watermark_thread.start()
+            except Exception:
+                self._watermark_threads.discard(watermark_thread)
+                raise
         if completed.wait(timeout=wait_seconds):
             return results[0]
         return FlushResult(
-            pending=self._store.pending_job_count(),
+            pending=len(
+                self._store.unfinished_watermark_job_ids(allowed_job_ids)
+            ),
             errors=(
                 f"旧 thread Memory watermark 在 {wait_seconds:g}s 内未完成；"
                 "任务已保留并在后台继续",
@@ -655,6 +740,9 @@ class MemoryManager:
         self,
         thread_id: str | None,
         allowed_job_ids: set[str],
+        *,
+        deadline: float | None = None,
+        subset_pending: bool = False,
     ) -> FlushResult:
         assert self._store is not None
         assert self._pipeline is not None
@@ -662,9 +750,22 @@ class MemoryManager:
         errors: list[str] = []
         with self._process_lock:
             processed_job_ids: set[str] = set()
-            while remaining_job_ids := allowed_job_ids - processed_job_ids:
+            spawned_job_ids: set[str] = set()
+            while True:
+                if self._stop.is_set():
+                    break
+                remaining_job_ids = (
+                    set(self.store.unfinished_watermark_job_ids(allowed_job_ids))
+                    | spawned_job_ids
+                ) - processed_job_ids
+                if not remaining_job_ids:
+                    break
                 try:
+                    if self._stop.is_set():
+                        break
                     self.store.heartbeat_open_turns(self._worker_id)
+                    if self._stop.is_set():
+                        break
                     step = self._pipeline.process_one(
                         force=True,
                         thread_id=thread_id,
@@ -675,7 +776,14 @@ class MemoryManager:
                     errors.append(self._safe_worker_error("flush", exc))
                     break
                 if step is None:
-                    break
+                    if deadline is None:
+                        break
+                    remaining_seconds = deadline - monotonic()
+                    if remaining_seconds <= 0 or self._stop.wait(
+                        min(0.05, remaining_seconds)
+                    ):
+                        break
+                    continue
                 if not step.processed_job_ids:
                     errors.append("Memory flush 无法确认已处理的 job，已停止本轮处理")
                     break
@@ -685,32 +793,41 @@ class MemoryManager:
                     and step.succeeded > 0
                 ):
                     allowed_job_ids.update(step.spawned_job_ids)
+                    spawned_job_ids.update(step.spawned_job_ids)
                 processed += step.processed
                 succeeded += step.succeeded
                 failed += step.failed
                 if step.error:
                     errors.append(compact_text(step.error, 300))
-                self._refresh_summary_for_step(step)
+                if not self._stop.is_set():
+                    self._refresh_summary_for_step(step)
         return FlushResult(
             processed=processed,
             succeeded=succeeded,
             failed=failed,
-            pending=self._store.pending_job_count(),
+            pending=(
+                len(self._store.unfinished_watermark_job_ids(allowed_job_ids))
+                if subset_pending
+                else self._store.pending_job_count()
+            ),
             errors=tuple(errors),
         )
 
     def close(self) -> None:
         with self._state_lock:
             thread = self._thread
-            if thread is None:
-                return
+            watermark_threads = tuple(self._watermark_threads)
             self._stop.set()
             self._wake.set()
-        if thread is not current_thread():
+        if thread is not None and thread is not current_thread():
             thread.join()
+        for watermark_thread in watermark_threads:
+            if watermark_thread is not current_thread():
+                watermark_thread.join()
         with self._state_lock:
             if self._thread is thread:
                 self._thread = None
+            self._watermark_threads.difference_update(watermark_threads)
 
     def _worker_loop(self) -> None:
         while not self._stop.is_set():
@@ -721,8 +838,15 @@ class MemoryManager:
             try:
                 self.store.heartbeat_open_turns(self._worker_id)
                 self.store.recover_startup()
+            except (MemorySchemaError, MemoryCorruptError) as exc:
+                self._mark_summary_stale_for_runtime_error(exc)
+                continue
+            except MemoryStorageError as exc:
+                if not _is_transient_sqlite_lock(exc):
+                    self._mark_summary_stale_for_runtime_error(exc)
+                continue
             except Exception:
-                # SQLite 的瞬时锁竞争或短暂 I/O 错误不能杀死 daemon。
+                # 非 Memory 编程错误不能杀死 daemon，由下一次 poll 重试。
                 continue
             self._retry_summary_if_due()
             if self._pipeline is None:
@@ -732,6 +856,13 @@ class MemoryManager:
                     try:
                         self.store.heartbeat_open_turns(self._worker_id)
                         step = self._pipeline.process_one(force=False)
+                    except (MemorySchemaError, MemoryCorruptError) as exc:
+                        self._mark_summary_stale_for_runtime_error(exc)
+                        break
+                    except MemoryStorageError as exc:
+                        if not _is_transient_sqlite_lock(exc):
+                            self._mark_summary_stale_for_runtime_error(exc)
+                        break
                     except Exception:
                         # 下一次 poll 重新 claim；lease/retry 是持久恢复边界。
                         break
@@ -754,6 +885,17 @@ class MemoryManager:
             if reset_retry:
                 self._summary_retry_attempt = 0
         self._wake.set()
+
+    def _mark_summary_stale_for_runtime_error(
+        self,
+        error: MemoryStorageError,
+    ) -> None:
+        with self._summary_lock:
+            self._summary_projector.mark_stale(
+                f"Memory runtime guard failed: {type(error).__name__}: {error}"
+            )
+            self._summary_dirty = True
+            self._summary_retry_at = 0.0
 
     def _refresh_summary(self, *, force: bool) -> MemorySummaryRefreshResult:
         with self._summary_lock:

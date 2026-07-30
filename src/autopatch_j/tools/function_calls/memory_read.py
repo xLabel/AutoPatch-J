@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 from typing import Annotated
 
+from autopatch_j.core.memory.errors import (
+    MemoryContractError,
+    MemoryNotFoundError,
+    MemoryStorageError,
+)
 from autopatch_j.core.memory.models import MemoryRequestState
 from autopatch_j.tools.contract import FunctionTool, ToolArg, ToolExecutionResult, function_tool
 from autopatch_j.tools.names import FunctionToolName
@@ -51,11 +56,24 @@ class MemoryReadTool(FunctionTool):
 
         try:
             detail = manager.read_memory_request(request_state, normalized_id)
-        except Exception:
+        except MemoryNotFoundError:
             return ToolExecutionResult(
                 status="error",
-                message=f"Memory 不存在或当前不可用：{normalized_id}",
-                summary=f"Memory 读取失败: {normalized_id}",
+                message=f"Memory 不存在或当前不可读取：{normalized_id}",
+                summary=f"Memory 不可读取: {normalized_id}",
+            )
+        except MemoryStorageError as exc:
+            notice = manager.degraded_notice(exc)
+            return ToolExecutionResult(
+                status="error",
+                message=notice or f"Memory degraded：读取失败。原因：{exc}",
+                summary=notice or "Memory degraded：读取失败",
+            )
+        except MemoryContractError as exc:
+            return ToolExecutionResult(
+                status="error",
+                message=f"Memory 读取被请求约束拒绝：{exc}",
+                summary="Memory 读取失败: 请求约束拒绝",
             )
 
         payload = {

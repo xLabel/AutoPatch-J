@@ -139,22 +139,21 @@ class AgentSession:
         self.revised_patch_draft = None
         return draft
 
-    def record_runtime_patch_constraint(self, file_path: str, user_text: str) -> None:
+    def record_runtime_patch_constraint(self, review_item_id: str, user_text: str) -> None:
         text = " ".join(user_text.split())[:MAX_RUNTIME_PATCH_CONSTRAINT_CHARS]
         if not text or not _PATCH_CONSTRAINT_RE.search(text):
             return
-        path = self.normalize_repo_path(file_path)
-        constraints = self.runtime_patch_constraints.setdefault(path, [])
+        constraints = self.runtime_patch_constraints.setdefault(review_item_id, [])
         if text not in constraints:
             constraints.append(text)
 
-    def build_runtime_patch_constraint_context(self, file_path: str) -> str:
+    def clear_runtime_patch_constraints(self, review_item_id: str) -> None:
+        self.runtime_patch_constraints.pop(review_item_id, None)
+
+    def build_runtime_patch_constraint_context(self, review_item_id: str) -> str:
         if not self.runtime_patch_constraints:
             return ""
-        constraints = self.runtime_patch_constraints.get(
-            self.normalize_repo_path(file_path),
-            (),
-        )
+        constraints = self.runtime_patch_constraints.get(review_item_id, ())
         if not constraints:
             return ""
         lines = [

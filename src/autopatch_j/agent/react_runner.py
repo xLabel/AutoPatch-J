@@ -238,17 +238,24 @@ class ReActRunner:
                 raise ContextCapacityError(
                     "runtime compaction 包装内容超过 LLM input capacity。"
                 )
-            fragment = _split_compaction_text(remaining, fragment_budget)[0]
-            compaction_messages = _compaction_messages(fragment, checkpoint)
-            if estimate_messages_tokens(compaction_messages) > profile.input_capacity:
-                raise ContextCapacityError(
-                    "runtime compaction fragment 超过 LLM input capacity。"
-                )
-            response = self.llm.chat(
-                messages=compaction_messages,
-                tools=None,
-                purpose=LLMCallPurpose.CONTEXT_COMPACTION,
-            )
+            for attempt in range(2):
+                fragment = _split_compaction_text(remaining, fragment_budget)[0]
+                compaction_messages = _compaction_messages(fragment, checkpoint)
+                if estimate_messages_tokens(compaction_messages) > profile.input_capacity:
+                    raise ContextCapacityError(
+                        "runtime compaction fragment 超过 LLM input capacity。"
+                    )
+                try:
+                    response = self.llm.chat(
+                        messages=compaction_messages,
+                        tools=None,
+                        purpose=LLMCallPurpose.CONTEXT_COMPACTION,
+                    )
+                    break
+                except Exception as exc:
+                    if attempt > 0 or not is_context_overflow_error(exc):
+                        raise
+                    fragment_budget = max(1, fragment_budget // 2)
             checkpoint = clip_text_to_tokens(
                 response.content.strip(),
                 checkpoint_budget,

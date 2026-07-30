@@ -8,6 +8,11 @@ from autopatch_j.core.domain.scope import CodeScope
 from autopatch_j.core.user_input.diagnostics import RouteClassificationResult
 from autopatch_j.core.user_input.prompts import REVIEW_ROUTE_CLASSIFIER_PROMPT, build_review_route_user_prompt
 from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.context_window import (
+    ContextCapacityError,
+    ModelContextProfile,
+    fit_last_user_message,
+)
 from autopatch_j.llm.diagnostics import format_raw_llm_exception
 from autopatch_j.llm.options import LLMCallPurpose
 
@@ -89,6 +94,15 @@ class ReviewRouteClassifier:
             {"role": "system", "content": REVIEW_ROUTE_CLASSIFIER_PROMPT},
             {"role": "user", "content": build_review_route_user_prompt(user_text, current_patch_file, scope_summary)},
         ]
+        profile = getattr(self.llm, "context_profile", None)
+        if isinstance(profile, ModelContextProfile):
+            try:
+                messages = fit_last_user_message(
+                    messages,
+                    input_capacity=profile.input_capacity,
+                )
+            except ContextCapacityError as exc:
+                return None, f"route classifier capacity: {exc}"
         route, error = self._fetch_route_with_purpose(messages, LLMCallPurpose.CLASSIFIER)
         if route is not None:
             return route, ""
