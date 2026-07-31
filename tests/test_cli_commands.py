@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -14,7 +15,12 @@ from autopatch_j.cli.agent_stream_presenter import PresentedAgentResult
 from autopatch_j.cli.commands import CLI_COMMANDS
 from autopatch_j.agent.react_runner import AgentRunResult
 from autopatch_j.config import GlobalConfig
-from autopatch_j.core.memory import MemoryManager, MemorySchemaError, MemoryStatus
+from autopatch_j.core.memory import (
+    MemoryFailureDiagnostic,
+    MemoryManager,
+    MemorySchemaError,
+    MemoryStatus,
+)
 from autopatch_j.core.memory.models import FlushResult, RecallQuery
 from autopatch_j.core.patching import (
     PatchApplicationResult,
@@ -1613,6 +1619,48 @@ def test_memory_status_shows_raw_error_in_debug_mode(
     assert "已记录（启用 AUTOPATCH_DEBUG=true 查看 RAW 错误）" not in cells
 
 
+@pytest.mark.parametrize("debug_mode", [False, True])
+def test_memory_status_always_renders_safe_typed_job_failure(
+    cli: AutoPatchCli,
+    monkeypatch: pytest.MonkeyPatch,
+    debug_mode: bool,
+) -> None:
+    monkeypatch.setattr(GlobalConfig, "debug_mode", debug_mode)
+    status = _memory_status_with_error(
+        cli.runtime.memory_manager.db_path,
+        "RAW_MEMORY_RESPONSE_SENTINEL",
+    )
+    status = replace(
+        status,
+        degraded=True,
+        retry_wait_jobs=0,
+        failed_jobs=1,
+        last_failure=MemoryFailureDiagnostic(
+            category="output_contract",
+            phase="extraction",
+            stage="repair",
+            attempt_count=1,
+            llm_call_count=2,
+            path="thread_compaction",
+            rule="non_empty_string",
+            observed_type="null",
+        ),
+    )
+    cli.runtime.memory_manager.status = MagicMock(return_value=status)
+
+    cli.command_handlers.handle_memory(["status"])
+
+    table = cli.renderer.print_panel.call_args.args[0]
+    cells = [str(cell) for column in table.columns for cell in column._cells]
+    rendered = "\n".join(cells)
+    assert "RAW_MEMORY_RESPONSE_SENTINEL" not in rendered
+    assert "Failed jobs" in cells
+    assert "1" in cells
+    assert "category=output_contract" in rendered
+    assert "stage=repair" in rendered
+    assert "llm_call_count=2" in rendered
+
+
 def test_runtime_error_hides_raw_provider_failure_outside_debug_mode(
     cli: AutoPatchCli,
     monkeypatch: pytest.MonkeyPatch,
@@ -1667,6 +1715,29 @@ def test_cli_exit_warns_but_still_closes_when_flush_fails(cli: AutoPatchCli) -> 
     cli._finalize_cli_exit()
 
     assert "下次启动恢复" in cli.renderer.print_error.call_args.args[0]
+    close.assert_called_once_with()
+
+
+def test_cli_exit_reports_terminal_memory_failure_without_promising_retry(
+    cli: AutoPatchCli,
+) -> None:
+    cli.runtime.memory_manager.flush_once = MagicMock(
+        return_value=SimpleNamespace(
+            processed=1,
+            succeeded=0,
+            failed=1,
+            pending=0,
+        )
+    )
+    close = MagicMock()
+    cli.runtime.memory_manager.close = close
+
+    cli._finalize_cli_exit()
+
+    message = cli.renderer.print_error.call_args.args[0]
+    assert "终态" in message
+    assert "不会在下次启动重试" in message
+    assert "任务已保留" not in message
     close.assert_called_once_with()
 
 

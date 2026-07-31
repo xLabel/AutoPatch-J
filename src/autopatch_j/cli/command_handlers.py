@@ -218,10 +218,19 @@ class CommandHandlers:
         except Exception as exc:
             self.host.renderer.print_error(f"Memory 本次处理失败，任务已保留：{exc}")
             return
-        if result.failed or result.pending:
+        if result.failed:
+            pending_suffix = (
+                f"；另有 pending={result.pending} 将继续处理"
+                if result.pending
+                else ""
+            )
             self.host.renderer.print_error(
-                f"Memory 本次处理未完全成功（failed={result.failed}, pending={result.pending}），"
-                "剩余任务已保留。"
+                f"Memory 本次处理产生 terminal failed={result.failed}，"
+                f"不会自动重试{pending_suffix}。"
+            )
+        elif result.pending:
+            self.host.renderer.print_error(
+                f"Memory 本次处理仍有 pending={result.pending}，任务已保留。"
             )
 
     def _flush_memory_watermark(
@@ -241,7 +250,17 @@ class CommandHandlers:
                 f"Memory 本次处理失败，任务已保留：{exc}"
             )
             return
-        if result.failed or result.pending:
+        if result.failed:
+            pending_suffix = (
+                "；其他 pending 任务仍会在后台继续"
+                if result.pending
+                else ""
+            )
+            self.host.renderer.print_error(
+                "旧 thread Memory 存在 terminal failed，"
+                f"不会自动重试{pending_suffix}。"
+            )
+        elif result.pending:
             self.host.renderer.print_error(
                 "旧 thread Memory 尚未完全物化；任务已保留并在后台继续。"
             )

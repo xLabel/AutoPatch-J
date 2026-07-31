@@ -91,9 +91,18 @@ class AutoPatchCli:
                 result = runtime.flush_memory_once(reason="exit")
                 failed = result.failed
                 pending = result.pending
-                if failed or pending:
+                if failed:
+                    pending_suffix = (
+                        "；pending 任务仍会恢复" if pending else ""
+                    )
                     self.renderer.print_error(
                         f"Memory 退出处理未完全成功（failed={failed}, pending={pending}），"
+                        "failed 任务已进入终态，不会在下次启动重试"
+                        f"{pending_suffix}。"
+                    )
+                elif pending:
+                    self.renderer.print_error(
+                        f"Memory 退出处理仍有 pending={pending}，"
                         "任务已保留，将在下次启动恢复。"
                     )
             except Exception as exc:

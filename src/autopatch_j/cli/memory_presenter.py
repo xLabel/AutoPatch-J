@@ -31,7 +31,9 @@ class MemoryPresenter:
         table.add_column("Value", style=BODY_STYLE)
         state = "degraded" if status.degraded else "healthy"
         last_error = "无"
-        if status.last_error:
+        if status.last_failure is not None:
+            last_error = self._render_failure(status.last_failure.to_dict())
+        elif status.last_error:
             last_error = (
                 status.last_error
                 if self.show_raw_errors
@@ -49,6 +51,7 @@ class MemoryPresenter:
             ("Pending jobs", status.pending_jobs),
             ("Leased jobs", status.leased_jobs),
             ("Retry jobs", status.retry_wait_jobs),
+            ("Failed jobs", status.failed_jobs),
             ("Last success", status.last_succeeded_at or "无"),
             ("Last error", last_error),
         ]
@@ -72,6 +75,32 @@ class MemoryPresenter:
         for label, value in rows:
             table.add_row(label, Text(str(value), style=BODY_STYLE))
         self.renderer.print_panel(table, title="Memory 状态", style=SYSTEM_STYLE)
+
+    @staticmethod
+    def _render_failure(failure: dict[str, object]) -> str:
+        ordered_keys = (
+            "category",
+            "phase",
+            "stage",
+            "attempt_count",
+            "llm_call_count",
+            "path",
+            "rule",
+            "observed_type",
+            "observed_length",
+            "recognized_keys",
+            "missing_keys",
+            "unknown_key_count",
+            "response_id",
+            "finish_reason",
+            "exception_type",
+            "status_code",
+        )
+        return "; ".join(
+            f"{key}={failure[key]}"
+            for key in ordered_keys
+            if key in failure
+        )
 
     def render_list(self, items: Sequence[MemoryItemSummary]) -> None:
         if not items:
