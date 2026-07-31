@@ -7,27 +7,26 @@ TBD - 定义统一的模型上下文容量、压缩、预检、召回预算与 p
 ## Requirements
 
 ### Requirement: DeepSeek 1M context profile
-系统 SHALL 以 DeepSeek 1,000,000 token context window 作为默认请求容量，并 SHALL 在每次 LLM 调用前预留 configured output tokens 与 provider safety margin。
+系统 SHALL 分别表示 provider 模型能力与 AutoPatch-J 运行预算；DeepSeek V4 的 provider context window 为 1,000,000 tokens、provider 最大输出为 384,000 tokens，AutoPatch-J 输入上限为 840,000 tokens、推理型操作输出上限为 128,000 tokens。
 
 #### Scenario: 使用默认 DeepSeek profile
-- **WHEN** 模型为默认 `deepseek-v4-flash` 且用户未覆盖 context 配置
-- **THEN** context window 为 1,000,000 tokens
-- **AND** output reserve 为 32,768 tokens
-- **AND** provider safety margin 不小于 16,384 tokens 或 window 的 1%
+- **WHEN** 模型为 `deepseek-v4-flash` 或 `deepseek-v4-pro` 且用户未覆盖 context 配置
+- **THEN** provider context window 为 1,000,000 tokens，provider 最大输出为 384,000 tokens
+- **AND** AutoPatch-J input capacity 为 840,000 tokens，推理型操作 output cap 为 128,000 tokens
+- **AND** 其余约 32,000 tokens 作为 provider safety margin，不代表输入上限或 provider 最大输出
 
-#### Scenario: 显式覆盖模型容量
-- **WHEN** 用户提供合法正整数 `AUTOPATCH_LLM_CONTEXT_WINDOW` 或 `AUTOPATCH_LLM_MAX_OUTPUT_TOKENS`
-- **THEN** 请求预算使用显式值覆盖内置 profile
-- **AND** 所有 REACT、Memory 与 compaction 请求通过同一 profile resolver 获取容量
-- **AND** 任一 purpose 的实际 `max_tokens` 不得超过该 profile 的 output reserve
+#### Scenario: 显式覆盖未知模型容量
+- **WHEN** 未知模型用户提供合法正整数 `AUTOPATCH_LLM_CONTEXT_WINDOW` 和 `AUTOPATCH_LLM_MAX_OUTPUT_TOKENS`
+- **THEN** 所有 REACT、Memory 与 compaction 请求通过同一 profile resolver 获取容量
+- **AND** 任一 purpose 的实际输出上限不得超过 configured operational output cap
 
 #### Scenario: 未知模型缺少容量
-- **WHEN** 模型没有内置 profile 且用户未配置 context window
+- **WHEN** 模型没有内置 profile 且用户未完整配置 context window 与 operational output cap
 - **THEN** CLI 返回明确配置错误
-- **AND** 系统不得猜测 128K 或在 provider overflow 后才学习窗口大小
+- **AND** 系统不得猜测窗口大小或在 provider overflow 后才学习容量
 
 ### Requirement: 每次 LLM 调用执行 token preflight
-系统 SHALL 使用统一的保守 token estimator 估算 messages 与 tool schemas，并 SHALL 在输入超过当前 profile 容量前重建 context。
+系统 SHALL 使用统一的保守 token estimator 估算 messages 与 tool schemas，并 SHALL 在输入超过当前 profile 的应用 input capacity 前重建 context。
 
 #### Scenario: 请求低于压力阈值
 - **WHEN** 完整请求不超过 input capacity 的 80%
@@ -37,7 +36,7 @@ TBD - 定义统一的模型上下文容量、压缩、预检、召回预算与 p
 #### Scenario: 本地普通投影超容但可 hard rebuild
 - **WHEN** 完整 Memory Map 或可重读 Memory result 使普通 preflight 超过 input capacity，但 aggressive pruning 与减半 Map 可以装入
 - **THEN** 系统在调用 provider 前执行一次 hard rebuild 并继续相同业务请求
-- **AND** 这次本地 rebuild 不消耗 provider overflow 的单次重试额度
+- **AND** 这次本地 rebuild 不消耗 provider overflow 的单次 changed-input retry
 
 #### Scenario: 单个必需输入无法装入
 - **WHEN** system/task contract、当前用户输入、finding 或 patch binding 等不可丢组件本身超过 input capacity
@@ -57,14 +56,14 @@ TBD - 定义统一的模型上下文容量、压缩、预检、召回预算与 p
 
 #### Scenario: classifier 超长输入投影
 - **WHEN** classifier 的完整 user message 超过 input capacity
-- **THEN** CLASSIFIER 与 REACT fallback 使用同一带省略标记的首尾投影
+- **THEN** CLASSIFIER 使用带省略标记的首尾投影后尝试一次分类调用
 - **AND** 正常容量内的用户输入保持原文
 
 #### Scenario: classifier 固定 envelope 超过容量时走路由 fallback
 - **WHEN** pending review 的 `ModelContextProfile.input_capacity` 小于 route classifier 固定 system prompt 与消息 envelope
 - **THEN** `ContextCapacityError` 在 provider 调用前被转换为 route classifier diagnostic
 - **AND** `classify_route_with_diagnostics()` 返回既有 `REVIEW_CONTINUE` fallback
-- **AND** 不调用 CLASSIFIER 或 REACT provider
+- **AND** 不调用 provider
 
 ### Requirement: 可重读 tool result 优先卸载
 当请求超过 80% input capacity 时，系统 SHALL 优先压缩旧的可重读 tool observation，并 MUST 保留 assistant tool call 与对应 tool result 的协议配对。
@@ -154,16 +153,16 @@ pruning 后 context 仍超过 input capacity 的 85% 时，系统 SHALL 把较�
 - **AND** 只把能放入该完整响应的 hit admission，并对最终响应一次性扣账
 
 ### Requirement: Memory provider 调用具有持久化硬上限
-系统 SHALL 对每个 Memory extraction 或 consolidation job 持久化 provider 调用计数，并 SHALL 将 primary、job retry 与 output repair 的总调用数限制为最多三次。
+系统 SHALL 对每个 Memory extraction 或 consolidation job 持久化顶层逻辑调用计数，并 SHALL 将 primary、durable primary retry 与 output repair 限制为最多三次逻辑操作；每次逻辑操作内部可由 SDK 最多执行两次 HTTP retry。
 
-#### Scenario: primary 首次发生瞬时失败
-- **WHEN** Memory primary 遇到 timeout、connection、HTTP 408/429/5xx 或 SQLite busy/locked
+#### Scenario: primary SDK 重试耗尽
+- **WHEN** Memory primary 在同一逻辑操作内经 SDK retries 后仍遇到 timeout、connection、HTTP 408/409/429/5xx 或 SQLite busy/locked
 - **THEN** job 最多进入一次 `retry_wait`
-- **AND** SDK 不得在单次业务调用内部执行隐藏重试
+- **AND** durable retry 使用新的顶层逻辑调用额度
 
 #### Scenario: 第二次 primary 输出仍违反合同
 - **WHEN** job 已因瞬时失败执行第二次 primary，且返回可解析但违反输出合同的响应
-- **THEN** 系统最多执行一次 repair，作为该 job 的第三次且最后一次 provider 调用
+- **THEN** 系统最多执行一次 repair，作为该 job 的第三次且最后一次逻辑调用
 - **AND** repair 失败后不得再次 claim 或调用 provider
 
 #### Scenario: repair 前 lease 续期
@@ -175,3 +174,8 @@ pruning 后 context 仍超过 input capacity 的 85% 时，系统 SHALL 把较�
 - **WHEN** primary 已返回非法输出，但完整 repair contract 与同一业务 payload 无法装入 input capacity
 - **THEN** job 直接进入 terminal `failed`
 - **AND** 系统不得删除 consolidation active registry、再次缩短不可丢 primary 内容或发起 repair
+
+#### Scenario: HTTP attempts 不增加逻辑调用计数
+- **WHEN** 一个 Memory `LLMClient.chat()` 内部发生 SDK retry
+- **THEN** `llm_call_count` 只增加一次
+- **AND** 单个 job 最多三次逻辑调用对应理论最多九次 HTTP attempts
