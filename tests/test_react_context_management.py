@@ -82,6 +82,8 @@ class LocalCapacityLLM:
         self.context_profile = ModelContextProfile(
             model="test",
             context_window=20_000,
+            provider_max_output_tokens=1_000,
+            input_capacity=18_000,
             max_output_tokens=1_000,
             provider_safety_tokens=1_000,
         )
@@ -110,6 +112,30 @@ def test_react_hard_rebuilds_local_capacity_error_before_provider() -> None:
     assert result.final_answer == "done"
     assert llm.react_calls == 1
     assert map_requests == [False, True]
+
+
+def test_react_trace_preserves_empty_content_and_present_empty_reasoning() -> None:
+    class EmptyResponseLLM:
+        context_profile = resolve_context_profile(model="deepseek-v4-flash")
+
+        def chat(self, **_kwargs) -> LLMResponse:
+            return LLMResponse(
+                content="",
+                reasoning_content="",
+                reasoning_content_present=True,
+            )
+
+    result = _runner(EmptyResponseLLM()).run(  # type: ignore[arg-type]
+        user_text="inspect",
+        system_prompt="system",
+        allowed_tool_names=(),
+        callbacks=AgentCallbacks(),
+    )
+
+    assistant = result.trace_messages[-1]
+    assert result.final_answer == ""
+    assert assistant["content"] == ""
+    assert assistant["reasoning_content"] == ""
 
 
 def test_compaction_input_splits_oversized_unicode_without_loss() -> None:

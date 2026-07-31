@@ -209,7 +209,9 @@ class AgentSession:
             detail = (
                 f"Memory LLM diagnostic: purpose={purpose}, stream={stream}, "
                 f"reasoning={reasoning}, status={diagnostic.status}, "
-                f"timeout={diagnostic.timeout_seconds}s"
+                f"timeout={diagnostic.timeout_seconds}s, "
+                f"sdk_retries={diagnostic.sdk_retries_taken}/"
+                f"{diagnostic.sdk_max_retries}"
             )
             if diagnostic.error:
                 detail += f", error={diagnostic.error}"

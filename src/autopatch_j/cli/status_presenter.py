@@ -8,6 +8,7 @@ from rich.text import Text
 from autopatch_j.cli.render import BODY_STYLE, DECISION_STYLE, MUTED_STYLE, SYSTEM_STYLE, CliRenderer
 from autopatch_j.cli.runtime import CliRuntime
 from autopatch_j.config import GlobalConfig
+from autopatch_j.llm.providers import resolve_provider_profile
 from autopatch_j.scanners import DEFAULT_SCANNER_CATALOG
 from autopatch_j.scanners.models import ScannerMeta
 
@@ -28,9 +29,23 @@ class StatusPresenter:
         table.add_row(self._label("LLM API Key"), self._value("已配置" if GlobalConfig.llm_api_key else "缺失"))
         table.add_row(self._label("LLM Base URL"), self._value(GlobalConfig.llm_base_url or "缺失"))
         table.add_row(self._label("LLM 模型"), self._value(GlobalConfig.llm_model or "缺失"))
-        table.add_row(self._label("Stream Dialect"), self._value(GlobalConfig.llm_stream_dialect))
-        table.add_row(self._label("Reasoning"), self._value(GlobalConfig.llm_reasoning_effort or "未设置"))
-        table.add_row(self._label("Extra Body"), self._value(GlobalConfig.llm_extra_body_error or "ok"))
+        table.add_row(
+            self._label("Provider Profile"),
+            self._value(resolve_provider_profile(GlobalConfig.llm_model).name),
+        )
+        try:
+            profile = GlobalConfig.resolve_llm_context_profile()
+        except ValueError as exc:
+            table.add_row(self._label("LLM 容量"), self._value(str(exc)))
+        else:
+            table.add_row(
+                self._label("LLM Input Cap"),
+                self._value(f"{profile.input_capacity:,} tokens"),
+            )
+            table.add_row(
+                self._label("LLM Output Cap"),
+                self._value(f"{profile.max_output_tokens:,} tokens"),
+            )
         table.add_row(self._label("调试模式"), self._value("开启" if GlobalConfig.debug_mode else "关闭"))
         table.add_row(self._label("Semgrep"), self._scanner_status(repo_root))
         table.add_row(self._label("Tree-sitter"), self._value(self._tree_sitter_status()))

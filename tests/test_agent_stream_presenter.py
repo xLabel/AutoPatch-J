@@ -48,7 +48,7 @@ class _LlmWithDiagnostics:
         LLMCallDiagnostic(
             purpose=LLMCallPurpose.REACT,
             stream=True,
-            reasoning=LLMReasoningMode.INHERIT,
+            reasoning=LLMReasoningMode.ENABLED,
             max_tokens=None,
             temperature=None,
             status="ok",
@@ -61,7 +61,7 @@ class _LlmWithFailureDiagnostic:
         LLMCallDiagnostic(
             purpose=LLMCallPurpose.REACT,
             stream=True,
-            reasoning=LLMReasoningMode.INHERIT,
+            reasoning=LLMReasoningMode.ENABLED,
             max_tokens=None,
             temperature=None,
             status="error",
@@ -249,7 +249,8 @@ def test_agent_stream_presenter_shows_llm_diagnostics_only_in_debug_mode() -> No
     stream.run(prompt="check", agent_call=agent_call)
 
     stream.renderer.print_agent_text.assert_called_once_with(
-        "LLM 调用诊断：purpose=react, stream=on, reasoning=inherit, status=ok"
+        "LLM 调用诊断：purpose=react, stream=on, reasoning=enabled, status=ok, "
+        "max_tokens=None, timeout=none, sdk_retries=None/2"
     )
     stream.renderer.print.assert_not_called()
 
@@ -267,6 +268,7 @@ def test_agent_stream_presenter_shows_failed_llm_diagnostic_before_reraising() -
         stream.run(prompt="check", agent_call=agent_call)
 
     stream.renderer.print_agent_text.assert_called_once_with(
-        "LLM 调用诊断：purpose=react, stream=on, reasoning=inherit, status=error, "
+        "LLM 调用诊断：purpose=react, stream=on, reasoning=enabled, status=error, "
+        "max_tokens=None, timeout=none, sdk_retries=None/2, "
         "error=RuntimeError: RAW_PROVIDER_SENTINEL"
     )

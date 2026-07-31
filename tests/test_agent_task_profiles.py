@@ -13,7 +13,7 @@ from autopatch_j.agent.task_profile import (
     fetch_task_profile,
 )
 from autopatch_j.llm.client import LLMClient
-from autopatch_j.llm.dialects import ToolCall
+from autopatch_j.llm.models import ToolCall
 from autopatch_j.llm.models import LLMResponse
 from autopatch_j.llm.options import (
     LLMCallDiagnostic,
@@ -779,9 +779,9 @@ def test_memory_debug_summary_exposes_safe_background_diagnostic(tmp_path: Path)
     memory_manager.latest_diagnostic.return_value = LLMCallDiagnostic(
         purpose=LLMCallPurpose.MEMORY_EXTRACTION,
         stream=False,
-        reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=1800,
-        temperature=0,
+        reasoning=LLMReasoningMode.ENABLED,
+        max_tokens=128_000,
+        temperature=None,
         status="error",
         timeout_seconds=60,
         error="APITimeoutError",
@@ -792,7 +792,8 @@ def test_memory_debug_summary_exposes_safe_background_diagnostic(tmp_path: Path)
 
     assert summary == (
         "Memory LLM diagnostic: purpose=memory_extraction, stream=off, "
-        "reasoning=disabled, status=error, timeout=60s, error=APITimeoutError"
+        "reasoning=enabled, status=error, timeout=60s, "
+        "sdk_retries=None/2, error=APITimeoutError"
     )
 
 

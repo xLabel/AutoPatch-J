@@ -142,13 +142,14 @@ class ReActRunner:
 
             messages.append(
                 AgentMessage.assistant(
-                    content=response.content or "...",
+                    content=response.content,
                     tool_calls=(
                         self.message_adapter.serialize_tool_calls(response.tool_calls)
                         if response.tool_calls
                         else None
                     ),
                     reasoning_content=response.reasoning_content,
+                    reasoning_content_present=response.reasoning_content_present,
                 ).to_record()
             )
 

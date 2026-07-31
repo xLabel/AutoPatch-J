@@ -4,8 +4,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from autopatch_j.agent.messages import AgentMessage
-from autopatch_j.llm.dialects import ToolCall
-from autopatch_j.config import GlobalConfig
+from autopatch_j.llm.models import ToolCall
 from autopatch_j.tools.catalog import FunctionToolCatalog
 from autopatch_j.tools.names import ToolNameLike
 
@@ -27,7 +26,7 @@ class AgentMessageAdapter:
 
     职责边界：
     1. 把本地保存的 assistant/tool 消息清洗成 OpenAI 兼容消息结构。
-    2. 压缩旧工具观察并保留 DeepSeek reasoning_content 兼容字段。
+    2. 压缩旧工具观察，并原样保留 DeepSeek reasoning_content 字段及其存在性。
     3. 生成 tool schema 和序列化 Tool Call；不执行工具，也不改变 AgentSession 状态。
     """
 
@@ -101,11 +100,8 @@ class AgentMessageAdapter:
             if agent_message.tool_calls is not None:
                 llm_message["tool_calls"] = agent_message.tool_calls
 
-            reasoning = agent_message.reasoning_content
-            if reasoning is not None:
-                llm_message["reasoning_content"] = reasoning
-            elif GlobalConfig.llm_reasoning_effort or "thinking" in GlobalConfig.llm_extra_body:
-                llm_message["reasoning_content"] = ""
+            if agent_message.reasoning_content_present:
+                llm_message["reasoning_content"] = agent_message.reasoning_content or ""
             return llm_message
 
         if agent_message.role == "tool":

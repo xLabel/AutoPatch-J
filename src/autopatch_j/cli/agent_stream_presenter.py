@@ -268,15 +268,19 @@ class AgentStreamPresenter:
         purpose = getattr(diagnostic.purpose, "name", str(diagnostic.purpose)).lower()
         reasoning = getattr(diagnostic.reasoning, "name", str(diagnostic.reasoning)).lower()
         stream = "on" if diagnostic.stream else "off"
+        timeout = (
+            f"{diagnostic.timeout_seconds}s"
+            if diagnostic.timeout_seconds is not None
+            else "none"
+        )
         detail = (
             f"LLM 调用诊断：purpose={purpose}, stream={stream}, "
-            f"reasoning={reasoning}, status={diagnostic.status}"
+            f"reasoning={reasoning}, status={diagnostic.status}, "
+            f"max_tokens={getattr(diagnostic, 'max_tokens', None)}, "
+            f"timeout={timeout}, "
+            f"sdk_retries={getattr(diagnostic, 'sdk_retries_taken', None)}/"
+            f"{getattr(diagnostic, 'sdk_max_retries', 2)}"
         )
-        if purpose in {"memory_extraction", "memory_consolidation"}:
-            detail += (
-                f", max_tokens={getattr(diagnostic, 'max_tokens', None)}, "
-                f"timeout={getattr(diagnostic, 'timeout_seconds', None)}s"
-            )
         if diagnostic.error:
             detail += f", error={diagnostic.error}"
         self.renderer.print_agent_text(detail)

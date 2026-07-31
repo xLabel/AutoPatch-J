@@ -19,6 +19,7 @@ class AgentMessage:
     tool_call_id: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
     reasoning_content: str | None = None
+    reasoning_content_present: bool = False
     tool_status: str | None = None
     tool_summary: str | None = None
     tool_payload: Any | None = None
@@ -32,6 +33,7 @@ class AgentMessage:
             tool_call_id=record.get("tool_call_id"),
             tool_calls=record.get("tool_calls"),
             reasoning_content=record.get("reasoning_content"),
+            reasoning_content_present="reasoning_content" in record,
             tool_status=record.get("tool_status"),
             tool_summary=record.get("tool_summary"),
             tool_payload=record.get("tool_payload"),
@@ -47,12 +49,16 @@ class AgentMessage:
         content: str,
         tool_calls: list[dict[str, Any]] | None,
         reasoning_content: str | None,
+        reasoning_content_present: bool = False,
     ) -> AgentMessage:
         return cls(
             role="assistant",
             content=content,
             tool_calls=tool_calls,
             reasoning_content=reasoning_content,
+            reasoning_content_present=(
+                reasoning_content_present or reasoning_content is not None
+            ),
         )
 
     @classmethod
@@ -83,8 +89,8 @@ class AgentMessage:
         }
         if self.tool_calls is not None:
             record["tool_calls"] = self.tool_calls
-        if self.reasoning_content is not None:
-            record["reasoning_content"] = self.reasoning_content
+        if self.reasoning_content_present:
+            record["reasoning_content"] = self.reasoning_content or ""
         if self.tool_call_id is not None:
             record["tool_call_id"] = self.tool_call_id
         if self.name is not None:
