@@ -66,11 +66,17 @@ identity resolver 在 `user_preference` 与 `project_decision` 之间共同查�
 
 单纯“LLM 提出补丁，用户 apply”不生成长期 candidate。明确用户陈述可以产生 hard item；用户用短确认采纳上一轮 LLM 决策时必须同时绑定 assistant 决策与 user confirmation。当前/本次局部纠正只形成 runtime constraint；明确项目长期规则才能写 durable `always`。局部性按来源 quote 对应的完整 RAW user clause 判断，repair intent 中的“这里”“当前补丁”等限制不能通过截短 quote 或改变 candidate kind 绕过。`discussion_context` 的代码事实过滤覆盖 `subject`、`statement` 和 `content` 的完整可注入语义。
 
+当当前 user turn 明确提出尚未决定、需要后续延续的项目方案取舍时，extraction 必须以该 user exact quote 生成 non-factual `discussion_context`。同一 turn 中 assistant 单方面宣称已决定不能生成 preference/decision，也不能进入 discussion 的可注入语义；这与没有用户支持的 assistant-only candidate 拒绝边界分开处理。
+
 重复纠正可以形成 soft `inferred_repetition`，但至少需要三次语义一致、跨两个文件且绑定三个不同 finding `evidence_key` 的信号；三个不同 user source turn 必须能一对一绑定互不相同的 key，且这些支持来源自身覆盖至少两个 path，不能用单个来源携带的 key 并集替代来源独立性。repair review turn 使用 `<source_scan_id>:<finding_id>` 作为 evidence identity，避免不同 scan 都从 `F1` 开始时发生碰撞。它永远是 `on_match`，不能覆盖 explicit item。extraction 额外读取同 thread 最近最多 20 个、合计最多 32K tokens 的 repair evidence，使已经处理过的早期纠正仍可参与后续归纳；所有非 inferred candidate 都必须先引用当前 extraction batch 的 user turn，不能因 `discussion_context` 的分支提前返回而绕过。最新同 subject/scope explicit revision 替代旧 explicit，explicit 高于 inferred，反向重复信号只能撤回 inferred。
 
 extraction 继续允许合法 no-candidate；thread checkpoint 与 candidate admission 分开。RAW user turn 在主调用前写入，用户实际看到的 final assistant text 在完成边界保存，failed/interrupted turn 继续由 durable job处理。所有新 turn 的 `scope_paths` 在 Store 持久化边界按输入顺序保留最多 `MAX_SCOPE_PATHS=10` 条，避免大型 project scope 无界进入 SQLite 与 extraction payload；实际扫描、focus 和 patch 行为不受影响，既有记录不迁移或读取时回退截断。
 
 candidate provenance 同时受持久化 RAW turn 与本次 extraction 实际投影约束。pipeline 将裁剪后的 primary、仍保留的 adjacent turn 和未卸载 repair evidence 作为 typed source envelope 交给 Store；quote 必须同时是 envelope 可见文本和对应 RAW role 文本的精确子串。Store 仍使用完整 RAW clause 判断局部性、scope 与 evidence 语义，但不得重新扩张已卸载来源或 primary 被省略的中段作为本次可引用输入。
+
+中文 `project_decision` 的 extraction 还必须生成稳定的英文语义 alias：alias 既要覆盖决定对象，也要覆盖动作、约束或取舍，不能把原文中的 `memory schema` 等技术名词直接复制为英文后就视为完成跨语言召回。例如“旧 memory schema 不兼容，直接删除”至少应生成 `backward compatibility`，并可补充 `delete legacy schema`；keywords 继续保存原子术语，不能替代这种多词语义 alias。consolidation 对 create/revise/supersede 必须保留仍适用的 candidate/active recall metadata，并补足缺失的稳定跨语言表达；`discussion_context` 不承担该硬要求。
+
+这一语义质量由既有 extraction/consolidation prompt、确定性 corpus 与显式授权的真实 LLM 集成测试共同作为阻断门槛，不新增生产二次 LLM 校验、翻译词典、embedding 或 reranker。任意模型输出仍可能违反语义契约，因此真实集成失败时保持 change 未完成并修复 prompt，而不是放宽查询断言或改变确定性检索门槛。
 
 `code_audit` 将稳定 workflow summary 作为用户可见 final assistant text 保存：零 finding 时记录二次复核与待审补丁结果，普通审计记录 finding、待审补丁、失败与剩余数量。Scanner 失败必须进入 failed turn；失败收尾中的 Memory contract error 只能作为 cause 保留，不能替换原始业务异常。
 
@@ -117,6 +123,8 @@ watermark flush 与普通 worker 共享 `_process_lock`。当 `/new` 等待超�
 
 Watermark 的 pending/result 只统计 captured job ID 及其派生 consolidation ID。若 job 被其他 manager lease 或处于尚未到期的 retry wait，flush 在 deadline 前有界等待并继续检查；到期后保留 job 给普通 worker。现有 watermark daemon thread 由 manager 登记，`close()` 必须停止等待并 join，不能在 close 返回后继续写 SQLite 或 summary。
 
+同一进程中的 RAW export 使用一个模块级互斥锁串行化文件发布阶段：时间戳 suffix 选择、exclusive lock-file 预留、唯一临时文件写入、原子发布与清理在同一临界区内完成；SQLite snapshot 读取和 JSON 序列化保留在临界区之外。现有 `.lock` 继续承担跨进程文件名预留，不改变顺序文件名或公共 API。Windows 若在预留阶段返回 `PermissionError`，只有对应 lock 或最终 snapshot 确实存在时才按并发占用尝试下一 suffix；两者均不存在时仍作为真实文件系统错误返回，不增加后台重试、per-directory lock registry 或新配置。
+
 `access_count/last_accessed_at` 仅作诊断，不参与 ranking；不增加 citation popularity、自动 expiry 或 apply feedback loop。
 
 ## Risks / Trade-offs
@@ -125,7 +133,7 @@ Watermark 的 pending/result 只统计 captured job ID 及其派生 consolidatio
 - **[LLM compaction 遗漏 discourse 细节]** → 当前 user/task/finding/patch binding 不交给 checkpoint 替代，保留 recent tail，并在每次 rebuild 重注入 standing Memory。
 - **[standing 过多仍可能超过 bounded Map]** → 路径具体性优先、显示 truncation/omitted count，并允许 policy-filtered search/read；不建立第三套 summary service。
 - **[repair Memory 影响补丁判断]** → kind/path policy 在 repository 层执行，prompt 标记 advisory，patch-safety 仍要求当前源码/finding/function tools 证据。
-- **[无 embedding 导致同义词召回受限]** → 写入阶段保存 aliases/keywords，拆分 identifier/path，并用检索质量 corpus 覆盖中英文和 Java 术语。
+- **[无 embedding 导致同义词召回受限]** → 写入阶段为中文项目决定保存覆盖关键动作/约束的稳定英文 aliases/keywords，拆分 identifier/path，并用确定性与真实 LLM 检索质量 corpus 阻断回归。
 - **[schema v3 丢弃本地 v2 Memory]** → 项目未发布且用户明确选择干净实现；旧数据库只进入 degraded，显式 clear 创建 v3，不做隐式迁移或删除。
 
 ## Migration Plan
@@ -157,3 +165,9 @@ Watermark 的 pending/result 只统计 captured job ID 及其派生 consolidatio
 - 2026-07-23：根据本轮 CR 让 runtime worker 发现 schema/corruption 后立即使审阅摘要失效；瞬时锁竞争仍由下一轮重试处理，不把损坏数据库继续显示为可信 `current`。
 - 2026-07-23：根据本轮 CR 让 Memory Map 和 `memory_search` 使用最终注入文本/完整 tool-message wire 的估算值；search 只接纳能放入完整响应的 hit，并对该响应一次性扣除共享 durable recall 预算，不新增 function-call 字段。
 - 2026-07-23：根据本轮 CR 将 watermark 的终态 capacity skip 与真正 pending/failed 分开提示；已完成且不会重试的 job 不再宣称“后台继续”。
+- 2026-07-31：真实 LLM 集成测试发现中文项目决定只生成了 `memory schema` 等技术词，没有覆盖“不兼容、直接删除”的英文语义 alias；因此将 `backward compatibility` 类跨语言召回提升为 prompt 契约与阻断性质量门槛，不增加生产二次调用或新检索组件。
+- 2026-07-31：真实 LLM 集成测试的确定性先行阶段在 Windows 暴露 RAW export 文件名预留竞态；因此用单一模块级锁保护同进程文件发布，并保留 `.lock` 的跨进程预留语义，避免改变文件名、SQLite snapshot 并发和公共接口。
+- 2026-07-31：修复 Windows export 后的真实 LLM 集成测试发现 extraction 将“assistant 单方主张不得形成长期决定”扩大为不生成任何 candidate；因此明确保留由当前 user 原文支持的未决项目讨论，同时继续拒绝 assistant-only preference/decision。
+- 2026-07-31：澄清 prompt 后同一 live case 仍以 `succeeded_no_output` 完成；审核发现 fixture 的 user 只提出一次性意见询问，并未满足“暂时不决定、后续继续评估”的 discussion 前置条件。将 fixture 改为显式持续讨论，保留 `discussion_context` 正向期望并同时禁止 preference/decision，不再通过强化生产 prompt 适配含糊测试输入。
+- 2026-07-31：20.4 授权运行的前七个 live case 通过，第八个 `discussion-does-not-cross-new-thread` 因 user 只说“先讨论”而没有满足现行“暂时不决定、后续延续”契约，真实模型合理返回 no-candidate。完整审核 16-case corpus 后，只校准该 fixture 并增加独立 contract 断言，不修改生产 prompt、Store、线程边界或其他 corpus。
+- 2026-07-31：校准 fixture 后的授权运行中，第 1 个 live case 通过，第 2 个 `implicit-style-is-not-preference` 因 provider 结果未满足 parser 对非空 `thread_compaction` 的契约而失败，后续 14 个 case 按首错 gate 跳过。该结果表明 prompt、parser、pipeline、Store、诊断和重试边界需要系统性重审；本 change 不通过放宽 parser 或继续强化局部 fixture 收口，问题转交后续独立 change。

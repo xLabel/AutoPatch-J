@@ -8,6 +8,7 @@ AutoPatch-J 已有持久 Memory，但当前实现只按更新时间注入普通�
 - **BREAKING**：以干净 schema v3 重建项目级 Memory，不迁移 schema v2 或旧 `memory.json`；删除旧 JSON 清理兼容逻辑。
 - 将 durable Memory 改为可执行的 semantic records：显式保存 subject、statement、strength、origin、recall mode、路径适用范围、Store-owned logical identity、revision 与当前 revision provenance。
 - 将写入信号收窄为明确用户偏好、明确/采纳的项目决定及保守的重复纠正；单纯 apply 补丁不产生长期记忆，也不学习未经可靠验证的修复套路。
+- 将中文项目决定的稳定英文语义短语写入 aliases/keywords，使“不兼容旧 schema、直接删除”等关键动作与约束可由 `backward compatibility` 等常用英文查询确定性召回。
 - 将读取改为 query-aware 双通道 Memory Map 与受限 `memory_search`/`memory_read`：standing constraint 优先，其他条目按当前 intent、用户输入、路径、finding 与补丁绑定确定性召回。
 - **BREAKING**：`code_audit`、zero-finding review、`patch_explain` 与 `patch_revise` 可以读取项目内 `user_preference`/`project_decision`，但不得读取 discussion 或任意 RAW history；Memory 始终是非权威约束，当前源码和 finding 仍是唯一代码事实证据。
 - 将 `/new` 改为按旧 thread watermark 有界 flush；超时后创建新 thread并明确警告，未完成 job 继续持久化重试。
@@ -30,4 +31,5 @@ AutoPatch-J 已有持久 Memory，但当前实现只按更新时间注入普通�
 - 主要影响 `core/memory/`、Agent request/message/context 管理、Memory function tools、task profiles、LLM config/request handling、CLI thread lifecycle 与对应测试。
 - `memory.db` schema 变为 v3，现有 v2 数据不会迁移；项目尚未发布，本 change 不承担旧数据兼容。
 - 不增加 embedding、向量数据库、FTS、远端 Memory service、新 CLI 命令或第三方运行依赖。
+- 跨语言召回通过既有 extraction/consolidation 调用的输出契约和阻断性质量测试保证，不增加生产二次 LLM 校验、翻译组件或配置项。
 - patch binding、源码读取、review queue、apply 与 verification 公共行为保持不变；Memory 不能绕过现有 patch-safety guardrail。

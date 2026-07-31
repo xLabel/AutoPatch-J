@@ -162,6 +162,13 @@
 - **THEN** 它至少包含一条来自输入 user turn 的精确 quote
 - **AND** 可以使用 `strength=hard`；只有明确持续适用时可以使用 `recall_mode=always`
 
+#### Scenario: 中文项目决定生成稳定英文召回短语
+- **WHEN** 明确或采纳的 `project_decision` 主要以中文表达，且关键决定语义存在稳定的常用英文检索短语
+- **THEN** extraction 的 aliases SHALL 同时覆盖决定对象以及动作、约束或取舍，不得只复制原文中的英文技术名词
+- **AND** “旧 memory schema 不兼容，直接删除” SHALL 包含 `backward compatibility`，并 MAY 包含 `delete legacy schema`
+- **AND** consolidation SHALL 在 create/revise/supersede 时保留仍适用的 recall metadata，并补足缺失的稳定跨语言表达
+- **AND** 确定性 `memory_search("backward compatibility")` SHALL 召回该 active decision
+
 #### Scenario: 用户确认上一轮决策
 - **WHEN** 用户用短表达采纳上一轮 assistant 提出的决策
 - **THEN** candidate 使用 `origin=adopted_proposal` 并同时引用 assistant 决策与当前 user confirmation
@@ -190,8 +197,14 @@
 - **THEN** candidate quote 必须同时存在于本次发送给 LLM 的对应 role 文本和 SQLite RAW role 文本
 - **AND** 已卸载 source、被省略中段与仅存在于截断标记中的文本不得成为 durable provenance
 
+#### Scenario: 用户提出未决项目方案讨论
+- **WHEN** 当前 extraction batch 的 user turn 明确提出尚未形成用户决定、需要后续延续的项目方案取舍
+- **THEN** extraction SHALL 创建由当前 user exact quote 支持的 non-factual `discussion_context`
+- **AND** assistant 单方面宣称已决定不得生成 `project_decision` 或 `user_preference`
+- **AND** assistant 单方结论不得进入该 discussion 的 `subject`、`statement` 或 `content`
+
 #### Scenario: 非法长期内容
-- **WHEN** LLM 仅依据 assistant 主张、代码事实、tool result、apply 或推测生成 candidate
+- **WHEN** LLM 仅依据 assistant 主张、代码事实、tool result、apply 或推测生成 `user_preference` 或 `project_decision`
 - **THEN** 系统拒绝该 candidate
 - **AND** `discussion_context` 的代码事实过滤覆盖 `subject`、`statement` 与 `content` 的完整可注入语义
 
