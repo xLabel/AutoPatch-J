@@ -18,15 +18,20 @@ class OpenAIChatTransport:
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
 
     def create_completion(self, kwargs: dict[str, Any], options: LLMRequestOptions) -> Any:
+        client = (
+            self.client.with_options(max_retries=options.sdk_max_retries)
+            if options.sdk_max_retries is not None
+            else self.client
+        )
         try:
-            return self.client.chat.completions.create(**kwargs)
+            return client.chat.completions.create(**kwargs)
         except Exception as exc:
             if not self.should_retry_without_disabled_reasoning(exc, kwargs, options):
                 raise
             retry_kwargs = dict(kwargs)
             retry_kwargs["extra_body"] = None
             retry_kwargs.pop("stream_options", None)
-            return self.client.chat.completions.create(**retry_kwargs)
+            return client.chat.completions.create(**retry_kwargs)
 
     def should_retry_without_disabled_reasoning(
         self,
@@ -34,6 +39,8 @@ class OpenAIChatTransport:
         kwargs: dict[str, Any],
         options: LLMRequestOptions,
     ) -> bool:
+        if options.standard_only:
+            return False
         if options.reasoning is not LLMReasoningMode.DISABLED:
             return False
         if not kwargs.get("extra_body"):

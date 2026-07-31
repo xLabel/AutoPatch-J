@@ -10,7 +10,9 @@ class LLMCallPurpose(Enum):
     REACT = auto()
     CLASSIFIER = auto()
     MEMORY_EXTRACTION = auto()
+    MEMORY_EXTRACTION_REPAIR = auto()
     MEMORY_CONSOLIDATION = auto()
+    MEMORY_CONSOLIDATION_REPAIR = auto()
     CONTEXT_COMPACTION = auto()
 
 
@@ -30,6 +32,9 @@ class LLMRequestOptions:
     max_tokens: int | None = None
     temperature: float | None = None
     timeout_seconds: float | None = None
+    response_format: dict[str, str] | None = None
+    standard_only: bool = False
+    sdk_max_retries: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +52,8 @@ class LLMCallDiagnostic:
     status: str
     timeout_seconds: float | None = None
     error: str = ""
+    response_id: str | None = None
+    finish_reason: str | None = None
 
 
 _PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
@@ -63,16 +70,42 @@ _PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
     LLMCallPurpose.MEMORY_EXTRACTION: LLMRequestOptions(
         stream=False,
         reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=1800,
+        max_tokens=4096,
         temperature=0,
         timeout_seconds=60,
+        response_format={"type": "json_object"},
+        standard_only=True,
+        sdk_max_retries=0,
+    ),
+    LLMCallPurpose.MEMORY_EXTRACTION_REPAIR: LLMRequestOptions(
+        stream=False,
+        reasoning=LLMReasoningMode.DISABLED,
+        max_tokens=4096,
+        temperature=0,
+        timeout_seconds=60,
+        response_format={"type": "json_object"},
+        standard_only=True,
+        sdk_max_retries=0,
     ),
     LLMCallPurpose.MEMORY_CONSOLIDATION: LLMRequestOptions(
         stream=False,
         reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=2200,
+        max_tokens=4096,
         temperature=0,
         timeout_seconds=60,
+        response_format={"type": "json_object"},
+        standard_only=True,
+        sdk_max_retries=0,
+    ),
+    LLMCallPurpose.MEMORY_CONSOLIDATION_REPAIR: LLMRequestOptions(
+        stream=False,
+        reasoning=LLMReasoningMode.DISABLED,
+        max_tokens=4096,
+        temperature=0,
+        timeout_seconds=60,
+        response_format={"type": "json_object"},
+        standard_only=True,
+        sdk_max_retries=0,
     ),
     LLMCallPurpose.CONTEXT_COMPACTION: LLMRequestOptions(
         stream=False,

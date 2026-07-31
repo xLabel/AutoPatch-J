@@ -91,10 +91,12 @@ class LLMResponseParser:
         response: Any,
         on_content_delta: TokenCallback | None = None,
     ) -> LLMResponse:
+        response_id = _bounded_protocol_text(getattr(response, "id", None))
         if not response.choices:
-            return LLMResponse(content="")
+            return LLMResponse(content="", response_id=response_id)
 
-        message = response.choices[0].message
+        choice = response.choices[0]
+        message = choice.message
         content = message.content or ""
         dialect = self.dialect_factory()
         visible_content = dialect.strip_markup(content)
@@ -129,6 +131,10 @@ class LLMResponseParser:
             content=visible_content,
             tool_calls=final_tool_calls if final_tool_calls else None,
             reasoning_content=reasoning if reasoning else None,
+            response_id=response_id,
+            finish_reason=_bounded_protocol_text(
+                getattr(choice, "finish_reason", None)
+            ),
         )
 
     def _parse_stream_tool_calls(self, tool_calls_map: dict[int, dict[str, Any]]) -> list[ToolCall]:
@@ -147,3 +153,10 @@ class LLMResponseParser:
             except json.JSONDecodeError:
                 continue
         return final_tool_calls
+
+
+def _bounded_protocol_text(value: Any, max_chars: int = 128) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized[:max_chars] or None

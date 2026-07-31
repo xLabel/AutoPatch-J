@@ -29,17 +29,22 @@ class LLMRequestBuilder:
         tools: list[dict[str, Any]] | None,
         options: LLMRequestOptions,
     ) -> dict[str, Any]:
-        extra_body = self._build_extra_body(options)
         kwargs = {
             "model": self.model,
             "messages": messages,
             "tools": tools,
             "stream": options.stream,
-            "extra_body": extra_body,
         }
+        extra_body = self._build_extra_body(options)
+        if extra_body is not None:
+            kwargs["extra_body"] = extra_body
         if options.stream and extra_body and (extra_body.get("enable_thinking") or "thinking" in extra_body):
             kwargs["stream_options"] = {"include_usage": True}
-        if options.reasoning is LLMReasoningMode.INHERIT and self.reasoning_effort:
+        if (
+            not options.standard_only
+            and options.reasoning is LLMReasoningMode.INHERIT
+            and self.reasoning_effort
+        ):
             kwargs["reasoning_effort"] = self.reasoning_effort
         if options.max_tokens is not None:
             kwargs["max_tokens"] = (
@@ -60,9 +65,13 @@ class LLMRequestBuilder:
             kwargs["temperature"] = options.temperature
         if options.timeout_seconds is not None:
             kwargs["timeout"] = options.timeout_seconds
+        if options.response_format is not None:
+            kwargs["response_format"] = dict(options.response_format)
         return kwargs
 
     def _build_extra_body(self, options: LLMRequestOptions) -> dict[str, Any] | None:
+        if options.standard_only:
+            return None
         if options.reasoning is LLMReasoningMode.DISABLED:
             return {
                 "thinking": {"type": "disabled"},

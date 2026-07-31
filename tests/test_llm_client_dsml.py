@@ -189,7 +189,7 @@ def test_all_llm_purposes_preflight_capacity_before_transport(
     assert client.diagnostics[-1].status == "error"
 
 
-def test_llm_diagnostic_preserves_raw_provider_failure() -> None:
+def test_memory_llm_diagnostic_redacts_raw_provider_failure() -> None:
     class ProviderError(RuntimeError):
         status_code = 429
         code = "rate_limit"
@@ -202,6 +202,7 @@ def test_llm_diagnostic_preserves_raw_provider_failure() -> None:
         model="test-model",
     )
     client.client = MagicMock()
+    client.client.with_options.return_value = client.client
     client.client.chat.completions.create.side_effect = ProviderError(
         "provider echoed RAW failure"
     )
@@ -214,11 +215,8 @@ def test_llm_diagnostic_preserves_raw_provider_failure() -> None:
 
     diagnostic = client.diagnostics[-1]
     assert diagnostic.status == "error"
-    assert "ProviderError: provider echoed RAW failure" in diagnostic.error
-    assert "status_code: 429" in diagnostic.error
-    assert "code: rate_limit" in diagnostic.error
-    assert 'body: {"detail": "RAW provider body"}' in diagnostic.error
-    assert "response.text: RAW response body" in diagnostic.error
+    assert diagnostic.error == "ProviderError"
+    assert "RAW" not in diagnostic.error
 
 
 def test_llm_diagnostic_records_non_stream_parser_failure() -> None:
@@ -228,6 +226,7 @@ def test_llm_diagnostic_records_non_stream_parser_failure() -> None:
         model="test-model",
     )
     client.client = MagicMock()
+    client.client.with_options.return_value = client.client
     client.client.chat.completions.create.return_value = _non_stream_response("ignored")
     client.response_parser.parse_non_stream_response = MagicMock(
         side_effect=RuntimeError("RAW parser failure")
@@ -393,8 +392,8 @@ def test_classifier_purpose_uses_non_stream_response_without_reasoning_effort() 
 @pytest.mark.parametrize(
     ("purpose", "max_tokens", "timeout"),
     [
-        (LLMCallPurpose.MEMORY_EXTRACTION, 1800, 60),
-        (LLMCallPurpose.MEMORY_CONSOLIDATION, 2200, 60),
+        (LLMCallPurpose.MEMORY_EXTRACTION, 4096, 60),
+        (LLMCallPurpose.MEMORY_CONSOLIDATION, 4096, 60),
         (LLMCallPurpose.CONTEXT_COMPACTION, 16_384, 120),
     ],
 )
@@ -410,6 +409,7 @@ def test_memory_purposes_use_bounded_non_stream_response(
         reasoning_effort="high",
     )
     client.client = MagicMock()
+    client.client.with_options.return_value = client.client
     client.client.chat.completions.create.return_value = _non_stream_response(
         content='{"episode_summaries": []}',
     )
@@ -426,10 +426,19 @@ def test_memory_purposes_use_bounded_non_stream_response(
     assert kwargs["temperature"] == 0
     assert kwargs["timeout"] == timeout
     assert "reasoning_effort" not in kwargs
-    assert kwargs["extra_body"] == {
-        "thinking": {"type": "disabled"},
-        "enable_thinking": False,
-    }
+    if purpose in {
+        LLMCallPurpose.MEMORY_EXTRACTION,
+        LLMCallPurpose.MEMORY_CONSOLIDATION,
+    }:
+        assert "extra_body" not in kwargs
+        assert kwargs["response_format"] == {"type": "json_object"}
+        client.client.with_options.assert_called_once_with(max_retries=0)
+    else:
+        assert kwargs["extra_body"] == {
+            "thinking": {"type": "disabled"},
+            "enable_thinking": False,
+        }
+        assert "response_format" not in kwargs
     assert response.content == '{"episode_summaries": []}'
 
 

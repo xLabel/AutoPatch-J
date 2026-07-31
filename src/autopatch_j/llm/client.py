@@ -48,6 +48,7 @@ class LLMClient:
             ),
         )
         self.response_parser = LLMResponseParser(self._create_dialect)
+        self.standard_response_parser = LLMResponseParser(StandardDialect)
         self.diagnostics: list[LLMCallDiagnostic] = []
 
     @property
@@ -87,13 +88,18 @@ class LLMClient:
                 options=options,
             )
             response = self.transport.create_completion(kwargs=kwargs, options=options)
+            response_parser = (
+                self.standard_response_parser
+                if options.standard_only
+                else self.response_parser
+            )
             if not options.stream:
-                parsed = self.response_parser.parse_non_stream_response(
+                parsed = response_parser.parse_non_stream_response(
                     response,
                     on_content_delta=on_content_delta,
                 )
             else:
-                parsed = self.response_parser.parse_stream_response(
+                parsed = response_parser.parse_stream_response(
                     response,
                     on_content_delta=on_content_delta,
                     on_reasoning_delta=on_reasoning_delta,
@@ -102,13 +108,30 @@ class LLMClient:
             self._record_diagnostic(
                 purpose,
                 "error",
-                format_raw_llm_exception(exc),
+                (
+                    type(exc).__name__
+                    if options.standard_only
+                    else format_raw_llm_exception(exc)
+                ),
             )
             raise
-        self._record_diagnostic(purpose, "ok")
+        self._record_diagnostic(
+            purpose,
+            "ok",
+            response_id=parsed.response_id,
+            finish_reason=parsed.finish_reason,
+        )
         return parsed
 
-    def _record_diagnostic(self, purpose: LLMCallPurpose, status: str, error: str = "") -> None:
+    def _record_diagnostic(
+        self,
+        purpose: LLMCallPurpose,
+        status: str,
+        error: str = "",
+        *,
+        response_id: str | None = None,
+        finish_reason: str | None = None,
+    ) -> None:
         options = resolve_request_options(purpose)
         self.diagnostics.append(
             LLMCallDiagnostic(
@@ -120,6 +143,8 @@ class LLMClient:
                 timeout_seconds=options.timeout_seconds,
                 status=status,
                 error=error[:MAX_RAW_LLM_ERROR_CHARS],
+                response_id=response_id,
+                finish_reason=finish_reason,
             )
         )
         self.diagnostics = self.diagnostics[-20:]
