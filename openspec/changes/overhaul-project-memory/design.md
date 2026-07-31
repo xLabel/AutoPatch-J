@@ -171,3 +171,4 @@ Watermark 的 pending/result 只统计 captured job ID 及其派生 consolidatio
 - 2026-07-31：澄清 prompt 后同一 live case 仍以 `succeeded_no_output` 完成；审核发现 fixture 的 user 只提出一次性意见询问，并未满足“暂时不决定、后续继续评估”的 discussion 前置条件。将 fixture 改为显式持续讨论，保留 `discussion_context` 正向期望并同时禁止 preference/decision，不再通过强化生产 prompt 适配含糊测试输入。
 - 2026-07-31：20.4 授权运行的前七个 live case 通过，第八个 `discussion-does-not-cross-new-thread` 因 user 只说“先讨论”而没有满足现行“暂时不决定、后续延续”契约，真实模型合理返回 no-candidate。完整审核 16-case corpus 后，只校准该 fixture 并增加独立 contract 断言，不修改生产 prompt、Store、线程边界或其他 corpus。
 - 2026-07-31：校准 fixture 后的授权运行中，第 1 个 live case 通过，第 2 个 `implicit-style-is-not-preference` 因 provider 结果未满足 parser 对非空 `thread_compaction` 的契约而失败，后续 14 个 case 按首错 gate 跳过。该结果表明 prompt、parser、pipeline、Store、诊断和重试边界需要系统性重审；本 change 不通过放宽 parser 或继续强化局部 fixture 收口，问题转交后续独立 change。
+- 2026-08-01：最终审计复现 watermark deadline 临界竞态：worker 可在截止点返回 `pending>0` 并先置位 completed，使主线程绕过超时分支且遗漏“后台继续”提示。返回点统一按 pending 状态补充同一安全提示；不改变 5 秒上限、job 状态、重试或线程生命周期。

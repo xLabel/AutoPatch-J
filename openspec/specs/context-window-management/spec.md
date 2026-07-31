@@ -1,0 +1,177 @@
+# context-window-management Specification
+
+## Purpose
+
+TBD - 定义统一的模型上下文容量、压缩、预检、召回预算与 provider overflow 处理契约。
+
+## Requirements
+
+### Requirement: DeepSeek 1M context profile
+系统 SHALL 以 DeepSeek 1,000,000 token context window 作为默认请求容量，并 SHALL 在每次 LLM 调用前预留 configured output tokens 与 provider safety margin。
+
+#### Scenario: 使用默认 DeepSeek profile
+- **WHEN** 模型为默认 `deepseek-v4-flash` 且用户未覆盖 context 配置
+- **THEN** context window 为 1,000,000 tokens
+- **AND** output reserve 为 32,768 tokens
+- **AND** provider safety margin 不小于 16,384 tokens 或 window 的 1%
+
+#### Scenario: 显式覆盖模型容量
+- **WHEN** 用户提供合法正整数 `AUTOPATCH_LLM_CONTEXT_WINDOW` 或 `AUTOPATCH_LLM_MAX_OUTPUT_TOKENS`
+- **THEN** 请求预算使用显式值覆盖内置 profile
+- **AND** 所有 REACT、Memory 与 compaction 请求通过同一 profile resolver 获取容量
+- **AND** 任一 purpose 的实际 `max_tokens` 不得超过该 profile 的 output reserve
+
+#### Scenario: 未知模型缺少容量
+- **WHEN** 模型没有内置 profile 且用户未配置 context window
+- **THEN** CLI 返回明确配置错误
+- **AND** 系统不得猜测 128K 或在 provider overflow 后才学习窗口大小
+
+### Requirement: 每次 LLM 调用执行 token preflight
+系统 SHALL 使用统一的保守 token estimator 估算 messages 与 tool schemas，并 SHALL 在输入超过当前 profile 容量前重建 context。
+
+#### Scenario: 请求低于压力阈值
+- **WHEN** 完整请求不超过 input capacity 的 80%
+- **THEN** 系统保持 recent history、Memory Map 和当前 ReAct 轨迹的完整投影
+- **AND** 不为制造固定长度而提前 compaction
+
+#### Scenario: 本地普通投影超容但可 hard rebuild
+- **WHEN** 完整 Memory Map 或可重读 Memory result 使普通 preflight 超过 input capacity，但 aggressive pruning 与减半 Map 可以装入
+- **THEN** 系统在调用 provider 前执行一次 hard rebuild 并继续相同业务请求
+- **AND** 这次本地 rebuild 不消耗 provider overflow 的单次重试额度
+
+#### Scenario: 单个必需输入无法装入
+- **WHEN** system/task contract、当前用户输入、finding 或 patch binding 等不可丢组件本身超过 input capacity
+- **THEN** 系统返回明确 context capacity error
+- **AND** 不通过静默截断当前用户指令或 patch binding 继续调用 LLM
+
+#### Scenario: compaction 调用受实际容量约束
+- **WHEN** 系统把旧 discourse 拆分为一个或多个 compaction fragment
+- **THEN** 每次调用都从实际 input capacity 中扣除 system、固定 prompt、消息 overhead 与当前 previous checkpoint
+- **AND** 完整 compaction messages 不得超过 input capacity
+- **AND** 没有可用 fragment 空间时在调用 provider 前返回明确 context capacity error
+
+#### Scenario: 非 ReAct purpose 不得绕过 preflight
+- **WHEN** classifier、Memory extraction/consolidation 或 compaction 直接调用共享 LLM client
+- **THEN** client 在 transport 前使用同一 estimator 校验 messages 与 tool schema
+- **AND** 超容请求不得发送给 provider
+
+#### Scenario: classifier 超长输入投影
+- **WHEN** classifier 的完整 user message 超过 input capacity
+- **THEN** CLASSIFIER 与 REACT fallback 使用同一带省略标记的首尾投影
+- **AND** 正常容量内的用户输入保持原文
+
+#### Scenario: classifier 固定 envelope 超过容量时走路由 fallback
+- **WHEN** pending review 的 `ModelContextProfile.input_capacity` 小于 route classifier 固定 system prompt 与消息 envelope
+- **THEN** `ContextCapacityError` 在 provider 调用前被转换为 route classifier diagnostic
+- **AND** `classify_route_with_diagnostics()` 返回既有 `REVIEW_CONTINUE` fallback
+- **AND** 不调用 CLASSIFIER 或 REACT provider
+
+### Requirement: 可重读 tool result 优先卸载
+当请求超过 80% input capacity 时，系统 SHALL 优先压缩旧的可重读 tool observation，并 MUST 保留 assistant tool call 与对应 tool result 的协议配对。
+
+#### Scenario: 旧源码读取结果可重放
+- **WHEN** 较旧 tool result 来自带完整参数的源码读取或 Memory 读取工具
+- **THEN** wire message 将正文替换为 bounded summary 与可重读提示
+- **AND** 本地请求轨迹保留原 tool name、arguments、status、summary 和必要 artifact identity
+
+#### Scenario: 最近或不可重建证据
+- **WHEN** tool result 是最近观察、当前 finding、patch binding 或无法从既有 domain tool 重建的证据
+- **THEN** pruning 不得优先移除该结果
+- **AND** 系统不得为了通用 offload 引入无证据需求的持久 artifact reader
+
+### Requirement: 结构化 checkpoint 与 recent tail
+pruning 后 context 仍超过 input capacity 的 85% 时，系统 SHALL 把较老 discourse 压缩为 structured checkpoint，并 SHALL 保留最新最多 128K tokens 的完整消息 tail。
+
+#### Scenario: 生成 checkpoint
+- **WHEN** 长 history 或 ReAct discourse 触发 compaction
+- **THEN** checkpoint 使用 goal、user constraints、finding/patch state、verified facts、decisions、open questions、next actions 与 artifact references 的固定结构
+- **AND** LLM 只总结被淘汰的旧 discourse，不得替代 checkpoint 外保留的当前 user、task contract、finding 或 patch binding
+- **AND** 当前 user message 不得进入 checkpoint builder 的旧消息输入
+
+#### Scenario: 连续多次 compaction
+- **WHEN** 同一 ReAct request 在第一次 checkpoint 后再次超过压力阈值
+- **THEN** 系统从上次压缩游标继续归纳新增旧 discourse
+- **AND** 当前 user message 仍以原文恰好投影一次，不得因压缩游标越过该消息而丢失
+
+#### Scenario: compaction 后重建稳定上下文
+- **WHEN** structured checkpoint 已生成
+- **THEN** 系统从 system/task contract、checkpoint、recent tail、当前用户输入、finding/patch binding 和新的 Memory Map 重建请求
+- **AND** Memory Map 与工具策略不得只依赖 compaction summary 保留
+
+#### Scenario: compaction 无有效回收
+- **WHEN** 一次 compaction 没有回收至少 `max(min(32K, max(1, floor(input_capacity*10%))), floor(compact_before_tokens*10%))` tokens，且 checkpoint 后没有新增有效进展
+- **THEN** 系统停止重复 compaction
+- **AND** 返回明确的无可回收 context error，而不是进入 summary loop
+
+#### Scenario: 小窗口 compaction 使用缩放后的回收门槛
+- **WHEN** 当前 profile 的 `input_capacity` 小于 32K，且 checkpoint 已将请求装入容量内
+- **THEN** compaction 的最小回收门槛按上述 `input_capacity` 的 10% 下限计算，不因固定 32K 而拒绝已可装入的重建请求
+
+#### Scenario: checkpoint 截断标记计入预算
+- **WHEN** runtime 或 thread checkpoint 超过其 token budget
+- **THEN** 系统先扣除截断标记所需 tokens，再裁剪正文前缀
+- **AND** 预算不足以容纳标记时只返回预算内正文，最终 checkpoint 估算不得超过该 budget
+
+### Requirement: Provider overflow 只强制重试一次
+系统 SHALL 识别 provider context overflow，执行一次 hard rebuild，并 SHALL 对同一 LLM 调用最多重试一次。
+
+#### Scenario: 首次 provider overflow
+- **WHEN** provider 明确返回 context length/maximum token overflow
+- **THEN** 系统执行 tool pruning、structured checkpoint，并将 Memory Map target 减半以优先淘汰尾部 relevant item
+- **AND** 使用相同业务请求重试一次
+
+#### Scenario: 重试仍 overflow
+- **WHEN** hard rebuild 后的唯一重试仍返回 overflow
+- **THEN** 系统保留第二次 provider error 并终止该请求
+- **AND** 不执行第三次调用或无限降低上下文
+
+#### Scenario: compaction fragment 首次 overflow
+- **WHEN** provider 对已通过本地 preflight 的 compaction fragment 返回 context overflow
+- **THEN** 系统将该 fragment budget 减半、重建 messages 并重试一次
+- **AND** 第二次 overflow 原样终止 compaction，不由主 ReAct retry 额外重试
+
+### Requirement: Durable recall 使用可借用 token pool
+系统 SHALL 将 Memory Map 与 `memory_search/read` 结果计入同一 durable recall pool；recent history 与 thread checkpoint SHALL 单独计入 session continuity，但最终都受全局 preflight 限制。
+
+#### Scenario: 1M profile 分配 recall
+- **WHEN** 使用默认 1M profile
+- **THEN** durable recall 上限为 input capacity 的 12%，且限制在 4K 到 24K tokens
+- **AND** 首次 Memory Map target 为实际 recall budget 的一半且不超过 8K tokens
+
+#### Scenario: Memory 不相关
+- **WHEN** 当前请求没有相关 standing 或 relevant item
+- **THEN** 未使用的 recall pool 不生成填充内容
+- **AND** token 可由 recent history、源码或当前 ReAct 轨迹使用
+
+#### Scenario: Memory Map 按最终渲染文本计费
+- **WHEN** manager 选择 Memory Map entries
+- **THEN** 每次 admission 以 `render_memory_map()` 生成的完整标题、说明、lane、Markdown、strength/origin 与 omitted 提示估算 tokens
+- **AND** `MemoryMap.estimated_tokens` 等于最终注入 Map 文本的估算值，不以未注入的扁平字段字符串代替
+
+#### Scenario: memory_search 按完整 tool wire 计费
+- **WHEN** `memory_search` 产生响应
+- **THEN** durable recall 预算按包含 query、JSON 字段名/格式、结果正文、tool message envelope 与固定 32 字符 call-id 占位的完整响应估算
+- **AND** 只把能放入该完整响应的 hit admission，并对最终响应一次性扣账
+
+### Requirement: Memory provider 调用具有持久化硬上限
+系统 SHALL 对每个 Memory extraction 或 consolidation job 持久化 provider 调用计数，并 SHALL 将 primary、job retry 与 output repair 的总调用数限制为最多三次。
+
+#### Scenario: primary 首次发生瞬时失败
+- **WHEN** Memory primary 遇到 timeout、connection、HTTP 408/429/5xx 或 SQLite busy/locked
+- **THEN** job 最多进入一次 `retry_wait`
+- **AND** SDK 不得在单次业务调用内部执行隐藏重试
+
+#### Scenario: 第二次 primary 输出仍违反合同
+- **WHEN** job 已因瞬时失败执行第二次 primary，且返回可解析但违反输出合同的响应
+- **THEN** 系统最多执行一次 repair，作为该 job 的第三次且最后一次 provider 调用
+- **AND** repair 失败后不得再次 claim 或调用 provider
+
+#### Scenario: repair 前 lease 续期
+- **WHEN** primary 输出违反合同且 job 仍持有有效 lease
+- **THEN** 系统在 repair 前把 lease 续至完整 120 秒
+- **AND** lease 或 generation 已失效时不得调用 repair 或写回 stale 结果
+
+#### Scenario: repair envelope 超过容量
+- **WHEN** primary 已返回非法输出，但完整 repair contract 与同一业务 payload 无法装入 input capacity
+- **THEN** job 直接进入 terminal `failed`
+- **AND** 系统不得删除 consolidation active registry、再次缩短不可丢 primary 内容或发起 repair

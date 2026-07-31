@@ -107,38 +107,48 @@
 - [x] 17.1 重对齐 proposal、design、delta spec 与任务账本，明确中文项目决定的稳定英文语义 alias 和阻断性质量门槛。
 - [x] 17.2 强化 extraction/consolidation prompt，并同步 Memory 设计文档；不增加生产二次 LLM 调用或新检索组件。（文档同步后续由 22.3 替代：提交评审决定恢复已有 Memory 设计文档。）
 - [x] 17.3 增加 prompt contract 回归测试，保留 `backward compatibility` corpus 硬断言，并运行默认完整回归。
-- [ ] 17.4 在默认回归通过后取得明确同意，运行完整真实 LLM 集成测试并完成两份 change 的严格校验。（先行确定性回归发现 Windows 并发 export 竞态，最终由 18.4 替代完成；18.4 通过后同时关闭。）
+- [x] 17.4 在默认回归通过后取得明确同意，运行完整真实 LLM 集成测试并完成两份 change 的严格校验。（先行确定性回归发现 Windows 并发 export 竞态，最终由 18.4 替代完成；18.4 通过后同时关闭。）
 
 ## 18. 真实 LLM 验证先行回归发现后的 Windows export 修复
 
 - [x] 18.1 记录 Windows 同时间戳并发 RAW export 的文件发布竞态与最小互斥方案；既有行为规格保持不变。
 - [x] 18.2 修复同进程多 manager/thread 的文件发布竞态，并增加 `PermissionError` 冲突、真实权限错误和失败清理回归测试。
 - [x] 18.3 运行聚焦测试、30 次并发压力测试、默认完整回归、`git diff --check` 与两份 change 的严格校验。
-- [ ] 18.4 确定性层全部通过后重新取得明确同意，运行完整真实 LLM 集成测试；通过后同时关闭 17.4 与分层测试 5.3。（第二次 live run 的确定性层和前五个 live case 通过，第六个 discussion case 失败；最终由 19.4 替代完成。）
+- [x] 18.4 确定性层全部通过后重新取得明确同意，运行完整真实 LLM 集成测试；通过后同时关闭 17.4 与分层测试 5.3。（第二次 live run 的确定性层和前五个 live case 通过，第六个 discussion case 失败；最终由 19.4 替代完成。）
 
 ## 19. 真实 LLM 验证发现后的 user-backed discussion 修复
 
 - [x] 19.1 重对齐 delta spec、design 与任务账本，区分 user 支持的未决项目讨论和 assistant-only preference/decision。
 - [x] 19.2 澄清 extraction prompt 并增加 prompt contract 回归测试；不修改 corpus、parser、Store 或生产调用次数。
 - [x] 19.3 运行 Memory quality 聚焦测试、默认完整回归、`git diff --check` 与两份 change 的严格校验。
-- [ ] 19.4 确定性层全部通过后重新取得明确同意，运行完整真实 LLM 集成测试；通过后同时关闭 17.4、18.4 与分层测试 5.3。（第三次 live run 仍在同一含糊 discussion fixture 失败；最终由 20.4 替代完成。）
+- [x] 19.4 确定性层全部通过后重新取得明确同意，运行完整真实 LLM 集成测试；通过后同时关闭 17.4、18.4 与分层测试 5.3。（第三次 live run 仍在同一含糊 discussion fixture 失败；最终由 20.4 替代完成。）
 
 ## 20. 真实 LLM 重复失败后的 test-contract 校准
 
 - [x] 20.1 审核业务规格、真实模型结果与中英文 corpus，确认含糊的一次性意见询问不应强制产生跨 turn discussion。
 - [x] 20.2 将 assistant-only case 改为显式“暂时不决定、后续继续评估”，保留 discussion 正向期望并同时禁止 preference/decision。
 - [x] 20.3 运行 Memory quality 聚焦测试、默认完整回归、`git diff --check` 与两份 change 的严格校验。
-- [ ] 20.4 确定性层全部通过后重新取得明确同意，运行完整真实 LLM 集成测试；通过后同时关闭 17.4、18.4、19.4 与分层测试 5.3。（20.4 授权运行的前七个 live case 通过，第八个 thread discussion fixture 因缺少明确延续信号失败；最终由 21.4 替代完成。）
+- [x] 20.4 确定性层全部通过后重新取得明确同意，运行完整真实 LLM 集成测试；通过后同时关闭 17.4、18.4、19.4 与分层测试 5.3。（20.4 授权运行的前七个 live case 通过，第八个 thread discussion fixture 因缺少明确延续信号失败；最终由 21.4 替代完成。）
 
 ## 21. 真实 LLM 验证发现后的 thread discussion fixture 校准
 
 - [x] 21.1 审核完整 16-case corpus、业务规格、确定性 fake 与 20.4 真实结果，记录只有第八个 fixture 不满足现行 discussion 前置条件；不修改 proposal、delta spec 或生产行为。
 - [x] 21.2 将 thread discussion fixture 改为 user 明确“暂时不决定、后续继续评估”且由 user 提供 `retry backoff` 语义，并增加独立 fixture-contract 回归测试。
 - [x] 21.3 运行 Memory quality 聚焦测试、默认完整回归、`git diff --check` 与两份 change 的严格校验。
-- [ ] 21.4 确定性层全部通过后重新取得明确同意，运行完整真实 LLM 集成测试；通过后同时关闭 17.4、18.4、19.4、20.4。（已授权运行中第 1 个 live case 通过，第 2 个 case 因 `thread_compaction` 未满足非空字符串契约而失败，后续 14 个 case 按首错 gate 跳过；系统性修复转交 22.2。）
+- [x] 21.4 确定性层全部通过后重新取得明确同意，运行完整真实 LLM 集成测试；通过后同时关闭 17.4、18.4、19.4、20.4。（已授权运行中第 1 个 live case 通过，第 2 个 case 因 `thread_compaction` 未满足非空字符串契约而失败，后续 14 个 case 按首错 gate 跳过；系统性修复转交 22.2。）
 
 ## 22. 系统性修复交接
 
 - [x] 22.1 在本 change 的 design 与任务账本中记录多次真实 LLM 集成验证发现、已修问题和最新契约失败；本阶段不修改 Memory 业务实现。
-- [ ] 22.2 在后续独立 thread 建立新的 OpenSpec change，建议命名为 `stabilize-memory-llm-contract`；先统一 prompt、parser、pipeline、Store、诊断和重试契约，再取得明确同意恢复真实 LLM 集成测试。
+- [x] 22.2 在后续独立 thread 建立新的 OpenSpec change，建议命名为 `stabilize-memory-llm-contract`；先统一 prompt、parser、pipeline、Store、诊断和重试契约，再取得明确同意恢复真实 LLM 集成测试。（已建立并严格校验 `stabilize-memory-llm-contract`；真实 LLM 集成测试仍等待单独明确授权。）
 - [x] 22.3 根据提交评审恢复 `docs/memory_design.md`，不在产品设计文档中加入本轮测试执行或质量校准说明；规格与任务账本保留行为契约和审计历史。
+
+## 23. 独立合同修复完成后的最终验证
+
+- [x] 23.1 在用户明确授权下，由 `stabilize-memory-llm-contract` 完成系统性修复并重复真实验证；最终完整 `pytest -q --run-live-llm` 实际完成全部 18 个 live cases，结果为 `498 passed`。
+- [x] 23.2 运行默认完整确定性回归、主规格与两份 change 的严格校验以及 `git diff --check`，并据最终 live 结果关闭 17.4、18.4、19.4、20.4 与 21.4。
+
+## 24. 最终审计发现的 watermark deadline 提示竞态
+
+- [x] 24.1 修复 worker 在 deadline 临界点以 `pending>0` 完成时遗漏“任务已保留并在后台继续”提示的竞态，不改变等待上限或任务状态。
+- [x] 24.2 连续 30 次运行 deadline 聚焦测试并全部通过；Memory pipeline 聚焦测试 `20 passed`，默认完整回归 `480 passed, 18 skipped`，主规格与两份 change 严格校验通过，`git diff --check` 无错误。
