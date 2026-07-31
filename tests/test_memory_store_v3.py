@@ -781,6 +781,8 @@ def test_extraction_provenance_rejects_quote_from_clipped_primary_middle(
             context_profile=ModelContextProfile(
                 model="projection-test",
                 context_window=input_capacity + 2,
+                provider_max_output_tokens=1,
+                input_capacity=input_capacity,
                 max_output_tokens=1,
                 provider_safety_tokens=1,
             )
@@ -848,6 +850,8 @@ def test_extraction_provenance_rejects_unloaded_adjacent_turn(
             context_profile=ModelContextProfile(
                 model="projection-test",
                 context_window=input_capacity + 2,
+                provider_max_output_tokens=1,
+                input_capacity=input_capacity,
                 max_output_tokens=1,
                 provider_safety_tokens=1,
             )

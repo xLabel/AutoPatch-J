@@ -165,6 +165,8 @@ class TinyCapacityMemoryLLM:
     context_profile = ModelContextProfile(
         model="tiny",
         context_window=120,
+        provider_max_output_tokens=40,
+        input_capacity=40,
         max_output_tokens=40,
         provider_safety_tokens=40,
     )
@@ -183,6 +185,8 @@ class CapacityGuardMemoryLLM:
         self.context_profile = ModelContextProfile(
             model="capacity-guard",
             context_window=input_capacity + 2,
+            provider_max_output_tokens=1,
+            input_capacity=input_capacity,
             max_output_tokens=1,
             provider_safety_tokens=1,
         )

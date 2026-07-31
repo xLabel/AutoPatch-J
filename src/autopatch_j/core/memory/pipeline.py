@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from copy import deepcopy
 from collections.abc import Collection
 from dataclasses import dataclass
@@ -15,12 +16,20 @@ from autopatch_j.llm.context_window import (
     estimate_text_tokens,
 )
 from autopatch_j.llm.options import LLMCallPurpose
+from autopatch_j.llm.errors import (
+    LLMProtocolError,
+    LLMResponseError,
+    LLMTransientError,
+    LLMTruncationError,
+)
 
 from .contracts import parse_consolidation_response, parse_extraction_response
 from .errors import (
     MemoryContractViolation,
+    MemoryCorruptError,
     MemoryLeaseError,
     MemoryOutputContractError,
+    MemorySchemaError,
 )
 from .models import (
     ClaimedJobBatch,
@@ -70,11 +79,74 @@ class _MemoryRepairFailure(RuntimeError):
         super().__init__("Memory repair failed")
 
 
+class _ProviderLeaseHeartbeat:
+    def __init__(
+        self,
+        store: MemoryStore,
+        batch: ClaimedJobBatch,
+        owner: str,
+        interval_seconds: float,
+    ) -> None:
+        self.store = store
+        self.batch = batch
+        self.owner = owner
+        self.interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self._lost_error: Exception | None = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name="autopatch-memory-provider-heartbeat",
+            daemon=True,
+        )
+
+    def __enter__(self) -> _ProviderLeaseHeartbeat:
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        self._stop.set()
+        self._thread.join()
+        if self._lost_error is not None:
+            raise self._lost_error
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            try:
+                self.batch = self.store.renew_job_lease(self.batch)
+                self.store.heartbeat_open_turns(self.owner)
+            except (MemoryLeaseError, MemorySchemaError, MemoryCorruptError) as exc:
+                self._lost_error = exc
+                self._stop.set()
+            except Exception:
+                # Short storage contention is retried by the next heartbeat; the
+                # post-call Store operation remains the authoritative fence.
+                continue
+
+
 class MemoryPipeline:
-    def __init__(self, store: MemoryStore, llm: MemoryLLM, owner: str) -> None:
+    def __init__(
+        self,
+        store: MemoryStore,
+        llm: MemoryLLM,
+        owner: str,
+        *,
+        heartbeat_interval_seconds: float = 30.0,
+    ) -> None:
         self.store = store
         self.llm = llm
         self.owner = owner
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+
+    def _provider_heartbeat(
+        self,
+        batch: ClaimedJobBatch,
+    ) -> _ProviderLeaseHeartbeat:
+        return _ProviderLeaseHeartbeat(
+            self.store,
+            batch,
+            self.owner,
+            self.heartbeat_interval_seconds,
+        )
 
     def process_one(
         self,
@@ -108,29 +180,46 @@ class MemoryPipeline:
             )
             source_inputs = self._extraction_source_inputs(payload)
             batch = self.store.reserve_llm_call(batch)
-            response = self.llm.chat(
-                messages=[
-                    {"role": "system", "content": MEMORY_EXTRACTION_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": json.dumps(payload, ensure_ascii=False),
-                    },
-                ],
-                tools=None,
-                purpose=LLMCallPurpose.MEMORY_EXTRACTION,
-            )
             try:
-                result = parse_extraction_response(response.content)
-                self._validate_extraction_result(result, payload, source_inputs)
-            except MemoryOutputContractError as exc:
-                batch, payload, source_inputs, response, result = (
-                    self._repair_extraction(
-                        batch,
-                        payload,
-                        exc,
-                        response,
+                with self._provider_heartbeat(batch):
+                    response = self.llm.chat(
+                        messages=[
+                            {"role": "system", "content": MEMORY_EXTRACTION_SYSTEM_PROMPT},
+                            {
+                                "role": "user",
+                                "content": json.dumps(payload, ensure_ascii=False),
+                            },
+                        ],
+                        tools=None,
+                        purpose=LLMCallPurpose.MEMORY_EXTRACTION,
+                    )
+            except LLMTruncationError:
+                violation_error = MemoryOutputContractError(
+                    MemoryContractViolation(
+                        path="response",
+                        rule="finish_reason_length",
+                        observed_type="truncated",
                     )
                 )
+                batch, payload, source_inputs, response, result = self._repair_extraction(
+                    batch,
+                    payload,
+                    violation_error,
+                    None,
+                )
+            else:
+                try:
+                    result = parse_extraction_response(response.content)
+                    self._validate_extraction_result(result, payload, source_inputs)
+                except MemoryOutputContractError as exc:
+                    batch, payload, source_inputs, response, result = (
+                        self._repair_extraction(
+                            batch,
+                            payload,
+                            exc,
+                            response,
+                        )
+                    )
             candidate_ids = self.store.complete_extraction(
                 batch,
                 result,
@@ -160,27 +249,44 @@ class MemoryPipeline:
                 self.store.consolidation_payload(batch)
             )
             batch = self.store.reserve_llm_call(batch)
-            response = self.llm.chat(
-                messages=[
-                    {"role": "system", "content": MEMORY_CONSOLIDATION_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": json.dumps(payload, ensure_ascii=False),
-                    },
-                ],
-                tools=None,
-                purpose=LLMCallPurpose.MEMORY_CONSOLIDATION,
-            )
             try:
-                result = parse_consolidation_response(response.content)
-                self._validate_consolidation_result(result, payload)
-            except MemoryOutputContractError as exc:
+                with self._provider_heartbeat(batch):
+                    response = self.llm.chat(
+                        messages=[
+                            {"role": "system", "content": MEMORY_CONSOLIDATION_SYSTEM_PROMPT},
+                            {
+                                "role": "user",
+                                "content": json.dumps(payload, ensure_ascii=False),
+                            },
+                        ],
+                        tools=None,
+                        purpose=LLMCallPurpose.MEMORY_CONSOLIDATION,
+                    )
+            except LLMTruncationError:
+                violation_error = MemoryOutputContractError(
+                    MemoryContractViolation(
+                        path="response",
+                        rule="finish_reason_length",
+                        observed_type="truncated",
+                    )
+                )
                 batch, response, result = self._repair_consolidation(
                     batch,
                     payload,
-                    exc,
-                    response,
+                    violation_error,
+                    None,
                 )
+            else:
+                try:
+                    result = parse_consolidation_response(response.content)
+                    self._validate_consolidation_result(result, payload)
+                except MemoryOutputContractError as exc:
+                    batch, response, result = self._repair_consolidation(
+                        batch,
+                        payload,
+                        exc,
+                        response,
+                    )
             self.store.apply_consolidation(batch, result)
             return PipelineStepResult(
                 processed=len(batch.jobs),
@@ -265,26 +371,27 @@ class MemoryPipeline:
             )
             source_inputs = self._extraction_source_inputs(fitted_payload)
             batch = self.store.reserve_llm_call(batch)
-            response = self.llm.chat(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": MEMORY_EXTRACTION_REPAIR_SYSTEM_PROMPT,
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "business_input": fitted_payload,
-                                "violation": violation,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-                tools=None,
-                purpose=LLMCallPurpose.MEMORY_EXTRACTION_REPAIR,
-            )
+            with self._provider_heartbeat(batch):
+                response = self.llm.chat(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": MEMORY_EXTRACTION_REPAIR_SYSTEM_PROMPT,
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                {
+                                    "business_input": fitted_payload,
+                                    "violation": violation,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    ],
+                    tools=None,
+                    purpose=LLMCallPurpose.MEMORY_EXTRACTION_REPAIR,
+                )
             result = parse_extraction_response(response.content)
             self._validate_extraction_result(
                 result,
@@ -322,26 +429,27 @@ class MemoryPipeline:
                 violation=violation,
             )
             batch = self.store.reserve_llm_call(batch)
-            response = self.llm.chat(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": MEMORY_CONSOLIDATION_REPAIR_SYSTEM_PROMPT,
-                    },
-                    {
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "business_input": fitted_payload,
-                                "violation": violation,
-                            },
-                            ensure_ascii=False,
-                        ),
-                    },
-                ],
-                tools=None,
-                purpose=LLMCallPurpose.MEMORY_CONSOLIDATION_REPAIR,
-            )
+            with self._provider_heartbeat(batch):
+                response = self.llm.chat(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": MEMORY_CONSOLIDATION_REPAIR_SYSTEM_PROMPT,
+                        },
+                        {
+                            "role": "user",
+                            "content": json.dumps(
+                                {
+                                    "business_input": fitted_payload,
+                                    "violation": violation,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    ],
+                    tools=None,
+                    purpose=LLMCallPurpose.MEMORY_CONSOLIDATION_REPAIR,
+                )
             result = parse_consolidation_response(response.content)
             self._validate_consolidation_result(result, fitted_payload)
             return batch, response, result
@@ -832,10 +940,12 @@ class MemoryPipeline:
         llm_call_count = max(job.llm_call_count for job in batch.jobs)
         response_id = MemoryPipeline._bounded_identifier(
             getattr(response, "response_id", None)
+            or getattr(exc, "response_id", None)
             or getattr(exc, "request_id", None)
         )
         finish_reason = MemoryPipeline._normalized_finish_reason(
             getattr(response, "finish_reason", None)
+            or getattr(exc, "finish_reason", None)
         )
         if isinstance(exc, MemoryOutputContractError):
             violation = exc.violation
@@ -870,11 +980,13 @@ class MemoryPipeline:
 
     @staticmethod
     def _is_transient_primary_error(exc: Exception) -> bool:
+        if isinstance(exc, LLMTransientError):
+            return True
         if isinstance(exc, sqlite3.OperationalError):
             message = str(exc).lower()
             return "locked" in message or "busy" in message
         status_code = MemoryPipeline._numeric_status_code(exc)
-        if status_code in {408, 429} or (
+        if status_code in {408, 409, 429} or (
             status_code is not None and 500 <= status_code <= 599
         ):
             return True
@@ -889,6 +1001,8 @@ class MemoryPipeline:
             return "lease"
         if isinstance(exc, sqlite3.OperationalError):
             return "sqlite"
+        if isinstance(exc, (LLMProtocolError, LLMResponseError)):
+            return "provider"
         exception_name = type(exc).__name__.lower()
         if (
             status_code is not None
