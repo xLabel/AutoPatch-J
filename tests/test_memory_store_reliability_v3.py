@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Barrier
@@ -344,7 +345,7 @@ def test_unknown_unversioned_schema_is_not_mutated_and_clear_is_explicit(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "memory.db"
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute("CREATE TABLE foreign_data(value TEXT)")
         connection.execute("INSERT INTO foreign_data VALUES ('keep-me')")
     before = db_path.read_bytes()
@@ -372,7 +373,7 @@ def test_runtime_bootstrap_damage_fails_closed_until_explicit_clear(
     db_path = tmp_path / "memory.db"
     manager = MemoryManager(db_path=db_path)
     store = manager.store
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute("DELETE FROM memory_meta")
 
     with pytest.raises(MemorySchemaError, match="memory_meta"):
@@ -416,7 +417,7 @@ def test_runtime_schema_damage_fails_closed_and_clear_rebuilds_catalog(
     db_path = tmp_path / "memory.db"
     manager = MemoryManager(db_path=db_path)
     assert manager.status().healthy
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute(damage_sql)
 
     status = manager.status()
@@ -503,12 +504,22 @@ def test_archived_thread_discussion_is_not_recalled_in_new_thread(
 
 
 def test_concurrent_exports_are_unique_complete_snapshots(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path / "memory.db", clock=FakeClock())
-    _complete_turn(store, "RAW concurrent user", "RAW final answer", owner="turn")
+    db_path = tmp_path / "memory.db"
+    clock = FakeClock()
+    stores = (
+        MemoryStore(db_path, clock=clock),
+        MemoryStore(db_path, clock=clock),
+    )
+    _complete_turn(stores[0], "RAW concurrent user", "RAW final answer", owner="turn")
     export_dir = tmp_path / "exports"
 
     with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(lambda _: store.export(export_dir), range(8)))
+        results = list(
+            executor.map(
+                lambda index: stores[index % len(stores)].export(export_dir),
+                range(8),
+            )
+        )
 
     assert len({result.path for result in results}) == 8
     for result in results:
@@ -516,6 +527,52 @@ def test_concurrent_exports_are_unique_complete_snapshots(tmp_path: Path) -> Non
         assert payload["turns"][0]["user_text"] == "RAW concurrent user"
         assert payload["turns"][0]["assistant_text"] == "RAW final answer"
     assert not any(path.suffix in {".tmp", ".lock"} for path in export_dir.iterdir())
+
+
+def test_export_permission_conflict_uses_next_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db", clock=FakeClock())
+    export_dir = tmp_path / "exports"
+    export_dir.mkdir()
+    occupied_path = export_dir / "memory-20260718T000000000000.json"
+    occupied_path.write_text("existing snapshot", encoding="utf-8")
+    occupied_lock = occupied_path.with_suffix(occupied_path.suffix + ".lock")
+    occupied_lock.touch()
+    original_touch = Path.touch
+
+    def fail_occupied_lock(path: Path, *args: Any, **kwargs: Any) -> None:
+        if path == occupied_lock:
+            raise PermissionError("simulated concurrent lock deletion")
+        original_touch(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "touch", fail_occupied_lock)
+
+    result = store.export(export_dir)
+
+    assert result.path == export_dir / "memory-20260718T000000000000-1.json"
+    assert occupied_path.read_text(encoding="utf-8") == "existing snapshot"
+    assert occupied_lock.exists()
+    assert not result.path.with_suffix(result.path.suffix + ".lock").exists()
+    assert not any(path.suffix == ".tmp" for path in export_dir.iterdir())
+
+
+def test_export_real_permission_error_fails_without_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = MemoryStore(tmp_path / "memory.db", clock=FakeClock())
+    export_dir = tmp_path / "exports"
+
+    def fail_lock_reservation(path: Path, *args: Any, **kwargs: Any) -> None:
+        raise PermissionError("simulated permission denial")
+
+    monkeypatch.setattr(Path, "touch", fail_lock_reservation)
+
+    with pytest.raises(MemoryStorageError, match="simulated permission denial"):
+        store.export(export_dir)
+    assert list(export_dir.iterdir()) == []
 
 
 def test_export_write_failure_cleans_reserved_artifacts(

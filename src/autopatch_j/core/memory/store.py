@@ -9,6 +9,7 @@ from datetime import datetime
 from functools import cache
 from itertools import combinations
 from pathlib import Path
+from threading import Lock
 from time import monotonic, sleep
 from typing import Any
 
@@ -501,6 +502,9 @@ def _expected_schema_manifest() -> tuple[tuple[str, str, str, str], ...]:
         return _schema_manifest(connection)
     finally:
         connection.close()
+
+
+_EXPORT_PUBLICATION_LOCK = Lock()
 
 
 class MemoryStore:
@@ -2803,52 +2807,60 @@ class MemoryStore:
                 raise
         serialized = json.dumps(snapshot, ensure_ascii=False, indent=2)
         stamp = self.clock().strftime("%Y%m%dT%H%M%S%f")
-        suffix = 0
-        while True:
-            suffix_text = "" if suffix == 0 else f"-{suffix}"
-            path = destination_dir / f"memory-{stamp}{suffix_text}.json"
-            lock_path = path.with_suffix(path.suffix + ".lock")
-            try:
-                lock_path.touch(exist_ok=False)
-            except FileExistsError:
+        with _EXPORT_PUBLICATION_LOCK:
+            suffix = 0
+            while True:
+                suffix_text = "" if suffix == 0 else f"-{suffix}"
+                path = destination_dir / f"memory-{stamp}{suffix_text}.json"
+                lock_path = path.with_suffix(path.suffix + ".lock")
+                try:
+                    lock_path.touch(exist_ok=False)
+                except FileExistsError:
+                    suffix += 1
+                    continue
+                except PermissionError as exc:
+                    if lock_path.exists() or path.exists():
+                        suffix += 1
+                        continue
+                    raise MemoryStorageError(
+                        f"无法预留 Memory export 文件名: {exc}"
+                    ) from exc
+                except OSError as exc:
+                    raise MemoryStorageError(
+                        f"无法预留 Memory export 文件名: {exc}"
+                    ) from exc
+                if not path.exists():
+                    break
+                try:
+                    lock_path.unlink()
+                except OSError as exc:
+                    raise MemoryStorageError(
+                        f"无法清理 Memory export lock: {exc}"
+                    ) from exc
                 suffix += 1
-                continue
-            except OSError as exc:
-                raise MemoryStorageError(
-                    f"无法预留 Memory export 文件名: {exc}"
-                ) from exc
-            if not path.exists():
-                break
-            try:
-                lock_path.unlink()
-            except OSError as exc:
-                raise MemoryStorageError(
-                    f"无法清理 Memory export lock: {exc}"
-                ) from exc
-            suffix += 1
 
-        temp_path = path.with_name(f".{path.name}.{generate_id('export')}.tmp")
-        write_error: OSError | None = None
-        try:
-            temp_path.write_text(serialized, encoding="utf-8")
-            temp_path.replace(path)
-        except OSError as exc:
-            write_error = exc
-        cleanup_error: OSError | None = None
-        for artifact in (temp_path, lock_path):
+            temp_path = path.with_name(f".{path.name}.{generate_id('export')}.tmp")
+            write_error: OSError | None = None
             try:
-                artifact.unlink(missing_ok=True)
+                temp_path.write_text(serialized, encoding="utf-8")
+                temp_path.replace(path)
             except OSError as exc:
-                if cleanup_error is None:
-                    cleanup_error = exc
-        if write_error is not None:
-            raise MemoryStorageError(
-                f"无法写入 Memory export: {write_error}"
-            ) from write_error
-        if cleanup_error is not None:
-            raise MemoryStorageError(
-                f"无法清理 Memory export 临时工件: {cleanup_error}"
-            ) from cleanup_error
+                write_error = exc
+            cleanup_error: OSError | None = None
+            for artifact in (temp_path, lock_path):
+                try:
+                    artifact.unlink(missing_ok=True)
+                except OSError as exc:
+                    if cleanup_error is None:
+                        cleanup_error = exc
+            if write_error is not None:
+                raise MemoryStorageError(
+                    f"无法写入 Memory export: {write_error}"
+                ) from write_error
+            if cleanup_error is not None:
+                raise MemoryStorageError(
+                    f"无法清理 Memory export 临时工件: {cleanup_error}"
+                ) from cleanup_error
         return ExportResult(
             path=path,
             thread_count=len(snapshot.get("threads", [])),

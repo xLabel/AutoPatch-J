@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import json
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -198,7 +199,7 @@ def test_degraded_v3_bootstrap_still_allows_show_export_and_explicit_clear(
         statement="项目采用 Java 21 runtime",
         owner="bootstrap",
     )
-    with sqlite3.connect(db_path) as connection:
+    with closing(sqlite3.connect(db_path)) as connection, connection:
         connection.execute("DELETE FROM memory_meta")
 
     manager = MemoryManager(db_path=db_path)
