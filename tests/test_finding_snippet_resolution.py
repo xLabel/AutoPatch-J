@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.agent.agent import Agent
@@ -45,7 +46,7 @@ def _build_agent(repo_root: Path) -> Agent:
         code_fetcher=code_fetcher,
         patch_verifier=patch_verifier
     )
-    return Agent(session=session, llm=None)
+    return Agent(session=session, llm=MagicMock())
 
 
 def _source_region(source: str, evidence: str) -> SourceRegion:
@@ -94,7 +95,8 @@ def test_build_semgrep_scan_result_prefers_source_lines_over_dirty_extra_lines(t
         "    }\n"
         "}\n"
     )
-    java_file.write_text(source, encoding="utf-8")
+    with java_file.open("w", encoding="utf-8", newline="") as stream:
+        stream.write(source)
     evidence = 'return user.getName().equals("admin");'
     region = _source_region(source, evidence)
 

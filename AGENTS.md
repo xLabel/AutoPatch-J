@@ -20,8 +20,9 @@ AutoPatch-J 是一个面向 Java 代码修复的 Python CLI Agent。源码位于
 ## 开发与验证命令
 
 - `pip install -e .[test]`：以 editable 模式安装项目和测试依赖。
-- `pytest -q`：运行完整回归测试。
+- `pytest -q`：运行确定性的完整回归测试；即使已配置真实 LLM 参数，也不会运行真实 LLM 集成测试。
 - `pytest tests/test_source_read_tools.py -q`：运行单个聚焦测试文件。
+- `pytest -q --run-live-llm`：在普通测试全部通过后运行真实 LLM 集成测试；仅在用户明确同意本次运行时使用。
 - `autopatch-j`：安装后启动 CLI。
 
 项目配置来自环境变量，例如 `AUTOPATCH_LLM_API_KEY`、`AUTOPATCH_LLM_BASE_URL` 和 `AUTOPATCH_LLM_MODEL`。
@@ -47,6 +48,9 @@ AutoPatch-J 是一个面向 Java 代码修复的 Python CLI Agent。源码位于
 - 测试框架使用 `pytest`。
 - 行为变更必须增加或更新聚焦测试，尤其是工具 schema、任务画像、路径/focus 约束、补丁生成、源码读取和 CLI 工作流。
 - 小范围改动优先运行相关聚焦测试；跨模块重构或核心流程调整后运行 `pytest -q`。
+- 默认验证顺序是聚焦测试后运行 `pytest -q`。真实 LLM 环境参数仅表示配置可用，不表示可以运行真实 LLM 集成测试。
+- 只有用户明确要求或明确同意“运行真实 LLM 集成测试”后，才可执行 `pytest -q --run-live-llm`。不得从环境参数存在、任务要求“完整测试”或一般测试授权中推断该同意。
+- 验证报告必须明确区分确定性完整回归与真实 LLM 集成测试，并在后者未运行时直接注明“未运行”。
 - 测试名称使用 `test_...`，fixture 优先保持局部，只有复用价值明确时才上提。
 - 未确认需要兼容旧行为时，不要为了旧格式、旧字段或旧 API 增加测试。
 

@@ -16,6 +16,11 @@ from autopatch_j.llm.context_window import ContextCapacityError, ModelContextPro
 from autopatch_j.llm.options import LLMCallPurpose, LLMReasoningMode, resolve_request_options
 
 
+@pytest.fixture(autouse=True)
+def _use_mock_openai_sdk(mock_openai_sdk: MagicMock) -> None:
+    del mock_openai_sdk
+
+
 def _chunk(
     content: str | None = None,
     reasoning_content: str | None = None,

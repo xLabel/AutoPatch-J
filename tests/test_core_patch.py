@@ -166,6 +166,7 @@ def test_apply_patch_preserves_gbk_encoding_and_permission_mode(tmp_path: Path) 
     content = 'public class Legacy {\n    String label = "中文";\n    String mode = "old";\n}\n'
     java_file.write_bytes(content.encode("gbk"))
     java_file.chmod(0o640)
+    original_mode = stat.S_IMODE(java_file.stat().st_mode)
     engine = SearchReplacePatchEngine(tmp_path)
     old_code = 'String mode = "old";'
     new_code = 'String mode = "new";'
@@ -184,7 +185,7 @@ def test_apply_patch_preserves_gbk_encoding_and_permission_mode(tmp_path: Path) 
     assert result.applied is True
     assert 'String label = "中文";' in java_file.read_bytes().decode("gbk")
     assert 'String mode = "new";' in java_file.read_bytes().decode("gbk")
-    assert stat.S_IMODE(java_file.stat().st_mode) == 0o640
+    assert stat.S_IMODE(java_file.stat().st_mode) == original_mode
 
 
 def test_create_draft_rejects_lossy_source_decode(tmp_path: Path) -> None:
@@ -373,7 +374,8 @@ def test_apply_rejects_unique_old_string_moved_from_bound_match_region(
 
 def test_rebase_shifts_later_pending_match_and_target_regions(tmp_path: Path) -> None:
     java_file = tmp_path / "App.java"
-    java_file.write_text("first();\nsecond();\n", encoding="utf-8")
+    with java_file.open("w", encoding="utf-8", newline="") as stream:
+        stream.write("first();\nsecond();\n")
     engine = SearchReplacePatchEngine(tmp_path)
     first_build = engine.create_draft("App.java", "first();", "first();\nextra();")
     second_build = engine.create_draft("App.java", "second();", "fixedSecond();")

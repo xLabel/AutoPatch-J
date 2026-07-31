@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from autopatch_j.llm.options import LLMCallPurpose
 from autopatch_j.core.review import ProjectArtifactStore
@@ -18,7 +19,7 @@ from autopatch_j.core.domain import CodeScopeKind, IntentType
 from autopatch_j.core.review import StaticScanRunner
 from autopatch_j.core.project import ScopeResolver
 from autopatch_j.scanners.catalog import DEFAULT_SCANNER_NAME, ScannerCatalog
-from autopatch_j.scanners.models import ScannerName
+from autopatch_j.scanners.models import ScannerName, ScanResult
 from autopatch_j.scanners.planned import PlannedScanner
 from autopatch_j.scanners.semgrep import SemgrepScanner, select_semgrep_targets
 from autopatch_j.scanners.semgrep import scanner as semgrep_scanner_module
@@ -396,10 +397,25 @@ def test_scanner_runner_persists_scan_result(tmp_path: Path) -> None:
     scope = scope_service.resolve("@Demo.java 检查代码")
     assert scope is not None
 
-    scanner_runner = StaticScanRunner(repo_root, artifacts)
+    scanner = MagicMock()
+    scanner.name = ScannerName.SEMGREP
+    scanner.scan.return_value = ScanResult(
+        engine="semgrep",
+        scope=["Demo.java"],
+        targets=["Demo.java"],
+        status="ok",
+        message="fake scan completed",
+        findings=[],
+    )
+    scanner_runner = StaticScanRunner(
+        repo_root,
+        artifacts,
+        scanner_catalog=ScannerCatalog([scanner]),
+    )
     artifact_id, result = scanner_runner.run_scan_and_save(scope)
 
     restored = artifacts.load_scan_result(artifact_id)
     assert result.status == "ok"
     assert restored is not None
     assert restored.targets == ["Demo.java"]
+    scanner.scan.assert_called_once_with(repo_root.resolve(), ["Demo.java"])

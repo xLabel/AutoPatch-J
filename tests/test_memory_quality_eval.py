@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,12 +14,10 @@ from autopatch_j.core.memory.prompts import (
     MEMORY_CONSOLIDATION_SYSTEM_PROMPT,
     MEMORY_EXTRACTION_SYSTEM_PROMPT,
 )
-from autopatch_j.llm.factory import build_default_llm_client
 from autopatch_j.llm.options import LLMCallPurpose
 
 
 CORPUS_PATH = Path(__file__).parent / "fixtures" / "memory_quality_v3.json"
-LIVE_EVAL_ENV = "AUTOPATCH_RUN_MEMORY_LIVE_EVAL"
 
 
 def _load_cases() -> list[dict[str, Any]]:
@@ -505,16 +502,15 @@ def test_memory_quality_corpus_through_deterministic_pipeline(
         assert LLMCallPurpose.MEMORY_CONSOLIDATION not in llm.purposes
 
 
-@pytest.mark.skipif(
-    os.getenv(LIVE_EVAL_ENV) != "1",
-    reason=f"set {LIVE_EVAL_ENV}=1 to run the live Memory quality evaluation",
-)
+@pytest.mark.live_llm
 @pytest.mark.parametrize("case", QUALITY_CASES, ids=lambda case: case["id"])
 def test_memory_quality_corpus_with_live_model(
     case: dict[str, Any],
     tmp_path: Path,
+    live_llm_client: Any,
 ) -> None:
-    llm = build_default_llm_client()
-    assert llm is not None, "live Memory eval requires AUTOPATCH_LLM_API_KEY"
-
-    _evaluate_case(case, tmp_path / "live" / case["id"] / "memory.db", llm)
+    _evaluate_case(
+        case,
+        tmp_path / "live" / case["id"] / "memory.db",
+        live_llm_client,
+    )

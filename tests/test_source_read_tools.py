@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.session import AgentSession
@@ -32,7 +33,7 @@ def _build_agent(repo_root: Path) -> Agent:
         patch_engine=patch_engine,
         code_fetcher=code_fetcher,
     )
-    return Agent(session=session, llm=None)
+    return Agent(session=session, llm=MagicMock())
 
 
 def test_read_source_context_uses_fixed_window_without_line_numbers(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -11,7 +12,6 @@ import pytest
 from autopatch_j.cli.app import AutoPatchCli
 from autopatch_j.cli.agent_stream_presenter import PresentedAgentResult
 from autopatch_j.cli.commands import CLI_COMMANDS
-from autopatch_j.cli.command_router import CommandRouter
 from autopatch_j.agent.react_runner import AgentRunResult
 from autopatch_j.config import GlobalConfig
 from autopatch_j.core.memory import MemoryManager, MemorySchemaError, MemoryStatus
@@ -42,13 +42,43 @@ from autopatch_j.tools.names import FunctionToolName
 
 
 @pytest.fixture
-def cli(tmp_path: Path) -> AutoPatchCli:
+def cli_factory(
+    request: pytest.FixtureRequest,
+) -> Callable[[Path], AutoPatchCli]:
+    instances: list[AutoPatchCli] = []
+
+    def build(repo_root: Path) -> AutoPatchCli:
+        cli_obj = AutoPatchCli(repo_root)
+        instances.append(cli_obj)
+        return cli_obj
+
+    def close_instances() -> None:
+        for cli_obj in reversed(instances):
+            cli_obj.clear_runtime()
+
+    request.addfinalizer(close_instances)
+    return build
+
+
+@pytest.fixture(autouse=True)
+def _use_fake_cli_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_llm_factory: Callable[[], object],
+) -> None:
+    monkeypatch.setattr("autopatch_j.cli.app.CliRenderer", MagicMock)
+    monkeypatch.setattr(
+        "autopatch_j.cli.app.build_default_llm_client",
+        fake_llm_factory,
+    )
+
+
+@pytest.fixture
+def cli(
+    tmp_path: Path,
+    cli_factory: Callable[[Path], AutoPatchCli],
+) -> AutoPatchCli:
     (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
-    cli_obj = AutoPatchCli(tmp_path)
-    cli_obj.renderer = MagicMock()
-    cli_obj.command_router = CommandRouter(cli_obj.command_handlers, cli_obj.renderer)
-    cli_obj.initialize_runtime(cli_obj.repo_root)
-    return cli_obj
+    return cli_factory(tmp_path)
 
 
 def _item(
@@ -668,7 +698,8 @@ def test_successful_apply_rebases_later_same_file_pending_patch(
     file_path = "src/main/java/demo/User.java"
     source_file = cli.repo_root / file_path
     source_file.parent.mkdir(parents=True, exist_ok=True)
-    source_file.write_text("first();\nsecond();\n", encoding="utf-8")
+    with source_file.open("w", encoding="utf-8", newline="") as stream:
+        stream.write("first();\nsecond();\n")
     first_build = cli.runtime.patch_engine.create_draft(
         file_path,
         "first();",
@@ -935,7 +966,11 @@ def test_successful_apply_remains_applied_when_verification_fails(cli: AutoPatch
     cli.renderer.print_error.assert_any_call("验证未通过：目标仍存在。")
 
 
-def test_cli_wires_llm_intent_classifier(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_wires_llm_intent_classifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cli_factory: Callable[[Path], AutoPatchCli],
+) -> None:
     class FakeResponse:
         content = "code_audit"
 
@@ -946,14 +981,18 @@ def test_cli_wires_llm_intent_classifier(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())
     (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
 
-    cli_obj = AutoPatchCli(tmp_path)
+    cli_obj = cli_factory(tmp_path)
 
     assert cli_obj.runtime.intent_detector is not None
     assert cli_obj.runtime.intent_detector.classify_with_llm is not None
     assert cli_obj.runtime.intent_detector.classify("@Foo.java check code", False) is IntentType.CODE_AUDIT
 
 
-def test_handle_chat_routes_llm_code_audit_intent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_handle_chat_routes_llm_code_audit_intent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cli_factory: Callable[[Path], AutoPatchCli],
+) -> None:
     class FakeResponse:
         content = "code_audit"
 
@@ -963,7 +1002,7 @@ def test_handle_chat_routes_llm_code_audit_intent(tmp_path: Path, monkeypatch: p
 
     monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())
     (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
-    cli_obj = AutoPatchCli(tmp_path)
+    cli_obj = cli_factory(tmp_path)
     cli_obj.input_router.handle_code_audit = MagicMock()
     cli_obj.input_router.handle_general_chat = MagicMock()
 
@@ -976,6 +1015,7 @@ def test_handle_chat_routes_llm_code_audit_intent(tmp_path: Path, monkeypatch: p
 def test_handle_chat_filters_patch_intent_without_pending_review(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    cli_factory: Callable[[Path], AutoPatchCli],
 ) -> None:
     class FakeResponse:
         content = "patch_revise"
@@ -986,7 +1026,7 @@ def test_handle_chat_filters_patch_intent_without_pending_review(
 
     monkeypatch.setattr("autopatch_j.cli.app.build_default_llm_client", lambda: FakeLLM())
     (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
-    cli_obj = AutoPatchCli(tmp_path)
+    cli_obj = cli_factory(tmp_path)
     cli_obj.input_router.handle_general_chat = MagicMock()
     cli_obj.input_router.handle_patch_revise = MagicMock()
     cli_obj.input_router.handle_patch_explain = MagicMock()
@@ -1031,15 +1071,15 @@ def test_handle_chat_switches_new_task_with_pending_review(cli: AutoPatchCli) ->
     cli.input_router.handle_general_chat.assert_called_once_with("@Foo.java explain code")
 
 
-def test_handle_code_explain_without_scope_uses_project_context(tmp_path: Path) -> None:
+def test_handle_code_explain_without_scope_uses_project_context(
+    tmp_path: Path,
+    cli_factory: Callable[[Path], AutoPatchCli],
+) -> None:
     (tmp_path / ".autopatch-j").mkdir(exist_ok=True)
     java_dir = tmp_path / "src" / "main" / "java" / "demo"
     java_dir.mkdir(parents=True)
     (java_dir / "App.java").write_text("class App {}", encoding="utf-8")
-    cli_obj = AutoPatchCli(tmp_path)
-    cli_obj.renderer = MagicMock()
-    cli_obj.command_router = CommandRouter(cli_obj.command_handlers, cli_obj.renderer)
-    cli_obj.initialize_runtime(cli_obj.repo_root)
+    cli_obj = cli_factory(tmp_path)
     cli_obj.agent_runner.run = MagicMock(return_value=_presented(display_answer="项目说明"))
     cli_obj.runtime.agent.perform_code_explain = MagicMock(return_value=_agent_result("项目说明"))
 

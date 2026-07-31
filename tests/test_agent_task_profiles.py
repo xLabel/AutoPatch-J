@@ -814,7 +814,8 @@ def test_source_read_cache_is_cleared_before_and_after_each_request(tmp_path: Pa
     assert agent.session.source_read_cache == {}
 
 
-def test_model_label_returns_llm_model_name() -> None:
+def test_model_label_returns_llm_model_name(mock_openai_sdk: MagicMock) -> None:
+    del mock_openai_sdk
     llm = LLMClient(api_key="key", base_url="https://example.com", model="deepseek-v4-flash")
     session = AgentSession(
         repo_root=Path("."),

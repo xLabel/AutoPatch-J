@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from autopatch_j.cli.app import AutoPatchCli
 from autopatch_j.core.domain import (
     ReviewWorkspace,
@@ -14,6 +16,17 @@ from autopatch_j.core.domain import (
     WorkspaceStatus,
 )
 from autopatch_j.scanners import SourceRegion
+
+
+@pytest.fixture(autouse=True)
+def _use_fake_cli_llm(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_llm_factory,
+) -> None:
+    monkeypatch.setattr(
+        "autopatch_j.cli.app.build_default_llm_client",
+        fake_llm_factory,
+    )
 
 
 def _make_cli(tmp_path: Path) -> AutoPatchCli:

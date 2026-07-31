@@ -37,7 +37,8 @@ def _raw_result(source: str, occurrence: int, path: str = "Demo.java") -> dict[s
 
 
 def _scan(tmp_path: Path, source: str, results: list[dict[str, object]]) -> ScanResult:
-    (tmp_path / "Demo.java").write_text(source, encoding="utf-8")
+    with (tmp_path / "Demo.java").open("w", encoding="utf-8", newline="") as stream:
+        stream.write(source)
     return build_semgrep_scan_result(
         payload={"results": results, "errors": []},
         repo_root=tmp_path,

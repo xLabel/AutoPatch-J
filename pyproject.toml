@@ -38,3 +38,6 @@ include = ["autopatch_j*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "live_llm: 仅在明确使用 --run-live-llm 时运行的真实 LLM 集成测试",
+]

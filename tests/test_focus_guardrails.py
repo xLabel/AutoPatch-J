@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.session import AgentSession
@@ -29,7 +30,7 @@ def _build_agent(repo_root: Path) -> Agent:
         code_fetcher=code_fetcher,
         patch_verifier=PatchQualityVerifier(repo_root, None),
     )
-    return Agent(session=session, llm=None)
+    return Agent(session=session, llm=MagicMock())
 
 
 def test_focus_lock_blocks_unrelated_read_and_patch(tmp_path: Path) -> None:
