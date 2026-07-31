@@ -11,6 +11,10 @@ import pytest
 from autopatch_j.core.domain import IntentType
 from autopatch_j.core.memory import MemoryNotFoundError
 from autopatch_j.core.memory.manager import MemoryManager
+from autopatch_j.core.memory.prompts import (
+    MEMORY_CONSOLIDATION_SYSTEM_PROMPT,
+    MEMORY_EXTRACTION_SYSTEM_PROMPT,
+)
 from autopatch_j.llm.factory import build_default_llm_client
 from autopatch_j.llm.options import LLMCallPurpose
 
@@ -26,6 +30,75 @@ def _load_cases() -> list[dict[str, Any]]:
 
 
 QUALITY_CASES = _load_cases()
+
+
+def test_memory_prompts_require_cross_language_project_decision_recall() -> None:
+    assert "动作、约束或取舍" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "只复制 memory schema" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "backward compatibility" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert (
+        "保留仍适用的 candidate/active aliases"
+        in MEMORY_CONSOLIDATION_SYSTEM_PROMPT
+    )
+    assert "discussion_context 不承担该硬要求" in MEMORY_CONSOLIDATION_SYSTEM_PROMPT
+
+    decision_case = next(
+        case for case in QUALITY_CASES if case["id"] == "explicit-project-decision"
+    )
+    assert "backward compatibility" in decision_case["queries"]
+
+
+def test_memory_extraction_prompt_keeps_user_backed_discussion_without_assistant_decision() -> None:
+    assert (
+        "assistant/tool 单方陈述不得生成 user_preference 或 project_decision"
+        in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    )
+    assert (
+        "当前 user turn 明确提出尚未决定、需要后续延续的项目方案取舍"
+        in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    )
+    assert (
+        "必须用该 user 原文 quote 生成 non-factual discussion_context"
+        in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    )
+    assert (
+        "assistant 的单方结论不得进入其 subject、statement 或 content"
+        in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    )
+
+    discussion_case = next(
+        case
+        for case in QUALITY_CASES
+        if case["id"] == "assistant-only-claim-is-not-decision"
+    )
+    user_text = discussion_case["turns"][0]["user"]
+    assert "暂时不要做决定" in user_text
+    assert "后续继续评估" in user_text
+    assert discussion_case["turns"][0]["assistant"] == "我决定使用向量数据库。"
+    assert discussion_case["expected_kinds"] == ["discussion_context"]
+    assert discussion_case["forbidden_kinds"] == [
+        "user_preference",
+        "project_decision",
+    ]
+
+
+def test_thread_scoped_discussion_fixture_has_user_backed_continuation_signal() -> None:
+    discussion_case = next(
+        case
+        for case in QUALITY_CASES
+        if case["id"] == "discussion-does-not-cross-new-thread"
+    )
+    user_text = discussion_case["turns"][0]["user"]
+
+    assert "暂时不要做决定" in user_text
+    assert "后续继续评估" in user_text
+    assert "retry backoff" in user_text
+    assert discussion_case["expected_kinds"] == ["discussion_context"]
+    assert discussion_case["forbidden_kinds"] == [
+        "user_preference",
+        "project_decision",
+    ]
+    assert discussion_case["after_new_expected_hits"] == []
 
 
 class DeterministicMemoryLLM:
@@ -437,7 +510,10 @@ def test_memory_quality_corpus_through_deterministic_pipeline(
     reason=f"set {LIVE_EVAL_ENV}=1 to run the live Memory quality evaluation",
 )
 @pytest.mark.parametrize("case", QUALITY_CASES, ids=lambda case: case["id"])
-def test_memory_quality_corpus_with_live_model(case: dict[str, Any], tmp_path: Path) -> None:
+def test_memory_quality_corpus_with_live_model(
+    case: dict[str, Any],
+    tmp_path: Path,
+) -> None:
     llm = build_default_llm_client()
     assert llm is not None, "live Memory eval requires AUTOPATCH_LLM_API_KEY"
 

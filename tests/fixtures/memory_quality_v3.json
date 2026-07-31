@@ -67,12 +67,12 @@
       "id": "assistant-only-claim-is-not-decision",
       "turns": [
         {
-          "user": "你觉得要不要用向量库？",
+          "user": "我们先讨论是否使用向量库，暂时不要做决定，后续继续评估。",
           "assistant": "我决定使用向量数据库。"
         }
       ],
       "expected_kinds": ["discussion_context"],
-      "forbidden_kinds": ["project_decision"]
+      "forbidden_kinds": ["user_preference", "project_decision"]
     },
     {
       "id": "decision-supersedes-old-decision",
@@ -93,11 +93,12 @@
       "id": "discussion-does-not-cross-new-thread",
       "turns": [
         {
-          "user": "我们先讨论调度器的重试策略。",
+          "user": "我们先讨论调度器的重试策略，暂时不要做决定；先比较 retry backoff 等方案，后续继续评估。",
           "assistant": "可以，从 retry backoff 开始。"
         }
       ],
       "expected_kinds": ["discussion_context"],
+      "forbidden_kinds": ["user_preference", "project_decision"],
       "queries": ["重试策略"],
       "after_new_expected_hits": []
     },
