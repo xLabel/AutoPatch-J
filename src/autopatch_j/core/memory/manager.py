@@ -81,7 +81,7 @@ def _clip_text_tokens(text: str, token_budget: int) -> str:
 
 
 class MemoryManager:
-    """Memory v3 facade：SQLite 是唯一事实源，后台处理可恢复。"""
+    """Memory v4 facade：SQLite 是唯一事实源，后台处理有界且可审计。"""
 
     def __init__(
         self,
@@ -724,16 +724,24 @@ class MemoryManager:
             except Exception:
                 self._watermark_threads.discard(watermark_thread)
                 raise
+        timeout_error = (
+            f"旧 thread Memory watermark 在 {wait_seconds:g}s 内未完成；"
+            "任务已保留并在后台继续"
+        )
         if completed.wait(timeout=wait_seconds):
-            return results[0]
+            result = results[0]
+            if (
+                result.pending > 0
+                and not self._stop.is_set()
+                and not any("后台继续" in error for error in result.errors)
+            ):
+                return replace(result, errors=(*result.errors, timeout_error))
+            return result
         return FlushResult(
             pending=len(
                 self._store.unfinished_watermark_job_ids(allowed_job_ids)
             ),
-            errors=(
-                f"旧 thread Memory watermark 在 {wait_seconds:g}s 内未完成；"
-                "任务已保留并在后台继续",
-            ),
+            errors=(timeout_error,),
         )
 
     def _flush_job_ids(

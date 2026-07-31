@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 
 class MemoryError(RuntimeError):
     """Memory 子系统的显式基础错误。"""
@@ -18,7 +20,26 @@ class MemorySchemaError(MemoryStorageError):
 
 
 class MemoryContractError(MemoryError, ValueError):
-    """Memory LLM 输出违反机器契约。"""
+    """Memory 运行时机器契约被违反。"""
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryContractViolation:
+    path: str
+    rule: str
+    observed_type: str = ""
+    observed_length: int | None = None
+    recognized_keys: tuple[str, ...] = ()
+    missing_keys: tuple[str, ...] = ()
+    unknown_key_count: int = 0
+
+
+class MemoryOutputContractError(MemoryContractError):
+    """Memory 模型输出违反可 repair 的结构或语义契约。"""
+
+    def __init__(self, violation: MemoryContractViolation) -> None:
+        self.violation = violation
+        super().__init__(f"{violation.path}: {violation.rule}")
 
 
 class MemoryLeaseError(MemoryError):

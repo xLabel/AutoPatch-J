@@ -18,6 +18,9 @@ from .constants import (
     EXTRACTION_MAX_WAIT_SECONDS,
     EXTRACTION_PENDING_THRESHOLD,
     JOB_LEASE_SECONDS,
+    JOB_RETRY_DELAY_SECONDS,
+    MAX_JOB_ATTEMPTS,
+    MAX_JOB_LLM_CALLS,
     MAX_CONTENT_TERM_CHARS,
     MAX_CONTENT_TERMS,
     MAX_JOB_ERROR_CHARS,
@@ -32,7 +35,6 @@ from .constants import (
     MAX_SOURCE_EXCERPT_CHARS,
     MEMORY_SCHEMA_VERSION,
     REPAIR_MEMORY_INTENTS,
-    RETRY_BACKOFF_SECONDS,
     TURN_LEASE_SECONDS,
 )
 from autopatch_j.llm.context_window import estimate_messages_tokens, estimate_text_tokens
@@ -46,6 +48,7 @@ from .errors import (
     MemoryThreadConflictError,
 )
 from .models import (
+    CandidateStatus,
     CandidateSource,
     ClaimedJobBatch,
     ClearResult,
@@ -60,6 +63,7 @@ from .models import (
     JobStatus,
     MemoryCandidate,
     MemoryDetail,
+    MemoryFailureDiagnostic,
     MemoryItemSummary,
     MemoryJob,
     MemoryMapEntry,
@@ -360,10 +364,16 @@ CREATE TABLE IF NOT EXISTS memory_jobs (
     payload_json TEXT NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL CHECK (
-        status IN ('pending', 'leased', 'retry_wait', 'succeeded', 'succeeded_no_output')
+        status IN (
+            'pending', 'leased', 'retry_wait', 'succeeded',
+            'succeeded_no_output', 'failed'
+        )
     ),
     generation INTEGER NOT NULL,
-    attempt_count INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0
+        CHECK (attempt_count BETWEEN 0 AND 2),
+    llm_call_count INTEGER NOT NULL DEFAULT 0
+        CHECK (llm_call_count BETWEEN 0 AND 3),
     lease_owner TEXT,
     lease_expires_at REAL,
     next_retry_at REAL,
@@ -508,7 +518,7 @@ _EXPORT_PUBLICATION_LOCK = Lock()
 
 
 class MemoryStore:
-    """SQLite v3 repository；每次操作使用短连接和显式事务。"""
+    """SQLite v4 repository；每次操作使用短连接和显式事务。"""
 
     def __init__(
         self,
@@ -551,7 +561,7 @@ class MemoryStore:
                     connection
                 )
                 if version == MEMORY_SCHEMA_VERSION:
-                    self._validate_v3_database(connection)
+                    self._validate_v4_database(connection)
             with self._connect(enable_wal=False) as connection:
                 try:
                     connection.execute("BEGIN IMMEDIATE")
@@ -559,8 +569,8 @@ class MemoryStore:
                         connection
                     )
                     if version == 0:
-                        self._create_v3_database(connection)
-                    self._validate_v3_database(connection)
+                        self._create_v4_database(connection)
+                    self._validate_v4_database(connection)
                     connection.commit()
                 except Exception:
                     connection.rollback()
@@ -574,7 +584,7 @@ class MemoryStore:
         except OSError as exc:
             raise MemoryStorageError(f"无法初始化 Memory database: {exc}") from exc
 
-    def _create_v3_database(self, connection: sqlite3.Connection) -> None:
+    def _create_v4_database(self, connection: sqlite3.Connection) -> None:
         for statement in _SCHEMA_SQL.split(";"):
             if statement.strip():
                 connection.execute(statement)
@@ -615,7 +625,7 @@ class MemoryStore:
             )
         return version
 
-    def _validate_v3_database(self, connection: sqlite3.Connection) -> None:
+    def _validate_v4_database(self, connection: sqlite3.Connection) -> None:
         check = connection.execute("PRAGMA quick_check(1)").fetchone()[0]
         if check != "ok":
             raise MemoryCorruptError(f"Memory database quick_check 失败: {check}")
@@ -704,7 +714,7 @@ class MemoryStore:
             connection.execute("PRAGMA main.schema_version").fetchone()[0]
         )
         if force_full or self._schema_cookie != schema_cookie:
-            self._validate_v3_database(connection)
+            self._validate_v4_database(connection)
             self._schema_cookie = schema_cookie
             return
         self._require_bootstrap_state(connection)
@@ -783,7 +793,7 @@ class MemoryStore:
         ).fetchall()
         if len(rows) != 1:
             raise MemorySchemaError(
-                "Memory v3 active thread 数量必须为 1，"
+                "Memory v4 active thread 数量必须为 1，"
                 f"实际为 {len(rows)}"
             )
         return rows[0]
@@ -792,7 +802,7 @@ class MemoryStore:
         rows = connection.execute("SELECT * FROM memory_meta ORDER BY id").fetchall()
         if len(rows) != 1 or int(rows[0]["id"]) != 1:
             raise MemorySchemaError(
-                "Memory v3 memory_meta singleton 缺失或不唯一"
+                "Memory v4 memory_meta singleton 缺失或不唯一"
             )
         return rows[0]
 
@@ -1009,22 +1019,8 @@ class MemoryStore:
                 )
                 self._insert_extraction_job(connection, row["thread_id"], row["id"], now)
                 recovered += 1
-            recovered_jobs = connection.execute(
-                """
-                UPDATE memory_jobs
-                SET status = 'retry_wait', lease_owner = NULL, lease_expires_at = NULL,
-                    next_retry_at = ?, updated_at = ?,
-                    last_error = CASE
-                        WHEN last_error = '' THEN 'lease expired before startup recovery'
-                        ELSE last_error
-                    END
-                WHERE status = 'leased' AND lease_expires_at <= ?
-                """,
-                (now, now, now),
-            ).rowcount
+            recovered_jobs = self._reclaim_expired_leases(connection, now)
             recovered += recovered_jobs
-            if recovered_jobs:
-                self._refresh_meta_last_error(connection, now)
         return recovered
 
     def claim_extraction_batch(
@@ -1070,12 +1066,19 @@ class MemoryStore:
                 if head["status"] == "retry_wait" and float(head["next_retry_at"]) > now:
                     continue
                 eligible_rows: list[sqlite3.Row] = []
+                head_attempt_count = int(head["attempt_count"])
+                head_llm_call_count = int(head["llm_call_count"])
                 for row in thread_rows:
                     if allowed_ids is not None and str(row["id"]) not in allowed_ids:
                         break
                     if row["status"] == "leased":
                         break
                     if row["status"] == "retry_wait" and float(row["next_retry_at"]) > now:
+                        break
+                    if (
+                        int(row["attempt_count"]) != head_attempt_count
+                        or int(row["llm_call_count"]) != head_llm_call_count
+                    ):
                         break
                     eligible_rows.append(row)
                 due = force or len(eligible_rows) >= EXTRACTION_PENDING_THRESHOLD
@@ -1159,6 +1162,46 @@ class MemoryStore:
                     (now, now, row["id"]),
                 )
                 continue
+            if (
+                int(row["attempt_count"]) >= MAX_JOB_ATTEMPTS
+                or int(row["llm_call_count"]) >= MAX_JOB_LLM_CALLS
+            ):
+                connection.execute(
+                    """
+                    UPDATE memory_jobs
+                    SET status = 'failed', lease_owner = NULL,
+                        lease_expires_at = NULL, next_retry_at = NULL,
+                        last_error = ?, updated_at = ?, completed_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        self._serialize_failure(
+                            MemoryFailureDiagnostic(
+                                category="limit",
+                                phase=str(row["kind"]),
+                                stage="claim",
+                                attempt_count=int(row["attempt_count"]),
+                                llm_call_count=int(row["llm_call_count"]),
+                                rule="job_budget_exhausted",
+                            )
+                        ),
+                        now,
+                        now,
+                        row["id"],
+                    ),
+                )
+                if row["kind"] == JobKind.CONSOLIDATION.value:
+                    payload = json.loads(str(row["payload_json"]))
+                    self._set_candidate_status(
+                        connection,
+                        {
+                            str(value)
+                            for value in payload.get("candidate_ids", ())
+                        },
+                        CandidateStatus.SUPPRESSED.value,
+                        now,
+                    )
+                continue
             connection.execute(
                 """
                 UPDATE memory_jobs
@@ -1182,16 +1225,52 @@ class MemoryStore:
         connection: sqlite3.Connection,
         now: float,
     ) -> int:
-        reclaimed = connection.execute(
+        rows = connection.execute(
             """
-            UPDATE memory_jobs
-            SET status = 'retry_wait', lease_owner = NULL, lease_expires_at = NULL,
-                next_retry_at = ?, updated_at = ?,
-                last_error = CASE WHEN last_error = '' THEN 'lease expired' ELSE last_error END
+            SELECT * FROM memory_jobs
             WHERE status = 'leased' AND lease_expires_at <= ?
+            ORDER BY created_at, id
             """,
-            (now, now, now),
-        ).rowcount
+            (now,),
+        ).fetchall()
+        for row in rows:
+            terminal = int(row["attempt_count"]) >= MAX_JOB_ATTEMPTS
+            diagnostic = self._serialize_failure(
+                MemoryFailureDiagnostic(
+                    category="lease",
+                    phase=str(row["kind"]),
+                    stage="primary",
+                    attempt_count=int(row["attempt_count"]),
+                    llm_call_count=int(row["llm_call_count"]),
+                    rule="lease_expired",
+                )
+            )
+            connection.execute(
+                """
+                UPDATE memory_jobs
+                SET status = ?, lease_owner = NULL, lease_expires_at = NULL,
+                    next_retry_at = ?, last_error = ?, updated_at = ?,
+                    completed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    JobStatus.FAILED.value if terminal else JobStatus.RETRY_WAIT.value,
+                    None if terminal else now + JOB_RETRY_DELAY_SECONDS,
+                    diagnostic,
+                    now,
+                    now if terminal else None,
+                    row["id"],
+                ),
+            )
+            if terminal and row["kind"] == JobKind.CONSOLIDATION.value:
+                payload = json.loads(str(row["payload_json"]))
+                self._set_candidate_status(
+                    connection,
+                    {str(value) for value in payload.get("candidate_ids", ())},
+                    CandidateStatus.SUPPRESSED.value,
+                    now,
+                )
+        reclaimed = len(rows)
         if reclaimed:
             self._refresh_meta_last_error(connection, now)
         return reclaimed
@@ -1834,22 +1913,88 @@ class MemoryStore:
             self._record_success(connection, now)
         return tuple(created_ids)
 
-    def record_job_failure(self, batch: ClaimedJobBatch, error: str) -> None:
+    def reserve_llm_call(self, batch: ClaimedJobBatch) -> ClaimedJobBatch:
         now = self._now()
-        persisted_error = error
-        if len(persisted_error) > MAX_JOB_ERROR_CHARS:
-            retained_chars = MAX_JOB_ERROR_CHARS - len(
-                _JOB_ERROR_TRUNCATION_MARKER
+        with self._transaction() as connection:
+            self._validate_lease(connection, batch)
+            current_rows = [
+                connection.execute(
+                    "SELECT * FROM memory_jobs WHERE id = ?",
+                    (job.id,),
+                ).fetchone()
+                for job in batch.jobs
+            ]
+            if any(
+                row is None or int(row["llm_call_count"]) >= MAX_JOB_LLM_CALLS
+                for row in current_rows
+            ):
+                raise MemoryContractError("Memory job provider 调用额度已用尽")
+            for job in batch.jobs:
+                connection.execute(
+                    """
+                    UPDATE memory_jobs
+                    SET llm_call_count = llm_call_count + 1, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now, job.id),
+                )
+            jobs = tuple(
+                self._job_from_row(
+                    connection.execute(
+                        "SELECT * FROM memory_jobs WHERE id = ?",
+                        (job.id,),
+                    ).fetchone()
+                )
+                for job in batch.jobs
             )
-            persisted_error = (
-                persisted_error[:retained_chars] + _JOB_ERROR_TRUNCATION_MARKER
-            )
+        return ClaimedJobBatch(jobs, batch.owner, batch.generation)
+
+    def renew_job_lease(
+        self,
+        batch: ClaimedJobBatch,
+        lease_seconds: int = JOB_LEASE_SECONDS,
+    ) -> ClaimedJobBatch:
+        now = self._now()
         with self._transaction() as connection:
             self._validate_lease(connection, batch)
             for job in batch.jobs:
-                delay = RETRY_BACKOFF_SECONDS[
-                    min(max(job.attempt_count, 1) - 1, len(RETRY_BACKOFF_SECONDS) - 1)
-                ]
+                connection.execute(
+                    """
+                    UPDATE memory_jobs
+                    SET lease_expires_at = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (now + lease_seconds, now, job.id),
+                )
+            jobs = tuple(
+                self._job_from_row(
+                    connection.execute(
+                        "SELECT * FROM memory_jobs WHERE id = ?",
+                        (job.id,),
+                    ).fetchone()
+                )
+                for job in batch.jobs
+            )
+        return ClaimedJobBatch(jobs, batch.owner, batch.generation)
+
+    def record_job_failure(self, batch: ClaimedJobBatch, error: str) -> None:
+        self.defer_job_retry(batch, error)
+
+    def defer_job_retry(self, batch: ClaimedJobBatch, error: str) -> None:
+        now = self._now()
+        persisted_error = self._bounded_job_error(error)
+        with self._transaction() as connection:
+            self._validate_lease(connection, batch)
+            if any(job.attempt_count >= MAX_JOB_ATTEMPTS for job in batch.jobs):
+                self._fail_jobs_in_transaction(
+                    connection,
+                    batch,
+                    persisted_error,
+                    now,
+                )
+                self._refresh_meta_last_error(connection, now)
+                return
+            for job in batch.jobs:
                 connection.execute(
                     """
                     UPDATE memory_jobs
@@ -1857,9 +2002,74 @@ class MemoryStore:
                         next_retry_at = ?, last_error = ?, updated_at = ?
                     WHERE id = ?
                     """,
-                    (now + delay, persisted_error, now, job.id),
+                    (
+                        now + JOB_RETRY_DELAY_SECONDS,
+                        persisted_error,
+                        now,
+                        job.id,
+                    ),
                 )
             self._refresh_meta_last_error(connection, now)
+
+    def fail_job(self, batch: ClaimedJobBatch, error: str) -> None:
+        now = self._now()
+        with self._transaction() as connection:
+            self._validate_lease(connection, batch)
+            self._fail_jobs_in_transaction(
+                connection,
+                batch,
+                self._bounded_job_error(error),
+                now,
+            )
+            self._refresh_meta_last_error(connection, now)
+
+    def _fail_jobs_in_transaction(
+        self,
+        connection: sqlite3.Connection,
+        batch: ClaimedJobBatch,
+        error: str,
+        now: float,
+    ) -> None:
+        suppressed_candidate_ids: set[str] = set()
+        for job in batch.jobs:
+            if job.kind == JobKind.CONSOLIDATION.value:
+                suppressed_candidate_ids.update(
+                    str(value)
+                    for value in job.payload.get("candidate_ids", ())
+                )
+            connection.execute(
+                """
+                UPDATE memory_jobs
+                SET status = 'failed', lease_owner = NULL,
+                    lease_expires_at = NULL, next_retry_at = NULL,
+                    last_error = ?, updated_at = ?, completed_at = ?
+                WHERE id = ?
+                """,
+                (error, now, now, job.id),
+            )
+        if suppressed_candidate_ids:
+            self._set_candidate_status(
+                connection,
+                suppressed_candidate_ids,
+                CandidateStatus.SUPPRESSED.value,
+                now,
+            )
+
+    @staticmethod
+    def _bounded_job_error(error: str) -> str:
+        if len(error) <= MAX_JOB_ERROR_CHARS:
+            return error
+        retained_chars = MAX_JOB_ERROR_CHARS - len(_JOB_ERROR_TRUNCATION_MARKER)
+        return error[:retained_chars] + _JOB_ERROR_TRUNCATION_MARKER
+
+    @staticmethod
+    def _serialize_failure(diagnostic: MemoryFailureDiagnostic) -> str:
+        return json.dumps(
+            diagnostic.to_dict(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     def complete_job_without_output(
         self,
@@ -2887,9 +3097,12 @@ class MemoryStore:
                     "SELECT status, COUNT(*) AS count FROM memory_jobs GROUP BY status"
                 ).fetchall()
             }
+            last_error = str(meta["last_error"])
+            last_failure = self._parse_failure(last_error)
+            failed_jobs = job_counts.get(JobStatus.FAILED.value, 0)
             return MemoryStatus(
                 healthy=True,
-                degraded=False,
+                degraded=failed_jobs > 0,
                 db_path=self.db_path,
                 schema_version=MEMORY_SCHEMA_VERSION,
                 generation=int(meta["generation"]),
@@ -2900,8 +3113,10 @@ class MemoryStore:
                 pending_jobs=job_counts.get("pending", 0),
                 leased_jobs=job_counts.get("leased", 0),
                 retry_wait_jobs=job_counts.get("retry_wait", 0),
-                last_error=str(meta["last_error"]),
+                last_error=last_error,
                 last_succeeded_at=iso_from_timestamp(meta["last_succeeded_at"]),
+                failed_jobs=failed_jobs,
+                last_failure=last_failure,
             )
 
     def _generation(self, connection: sqlite3.Connection) -> int:
@@ -2974,13 +3189,25 @@ class MemoryStore:
         row = connection.execute(
             """
             SELECT last_error FROM memory_jobs
-            WHERE status IN ('pending', 'leased', 'retry_wait')
+            WHERE status IN ('pending', 'leased', 'retry_wait', 'failed')
               AND last_error <> ''
             ORDER BY updated_at DESC, id DESC
             LIMIT 1
             """
         ).fetchone()
         return "" if row is None else str(row["last_error"])
+
+    @staticmethod
+    def _parse_failure(value: str) -> MemoryFailureDiagnostic | None:
+        if not value:
+            return None
+        try:
+            raw = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(raw, dict) or not isinstance(raw.get("category"), str):
+            return None
+        return MemoryFailureDiagnostic.from_dict(raw)
 
     def _assert_batch_shape(self, batch: ClaimedJobBatch, kind: str) -> None:
         if not batch.jobs or any(job.kind != kind for job in batch.jobs):
@@ -3449,6 +3676,7 @@ class MemoryStore:
             status=str(row["status"]),
             generation=int(row["generation"]),
             attempt_count=int(row["attempt_count"]),
+            llm_call_count=int(row["llm_call_count"]),
             lease_owner=str(row["lease_owner"]) if row["lease_owner"] else None,
             lease_expires_at=iso_from_timestamp(row["lease_expires_at"]),
             next_retry_at=iso_from_timestamp(row["next_retry_at"]),

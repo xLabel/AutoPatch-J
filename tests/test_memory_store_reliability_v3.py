@@ -149,7 +149,7 @@ def _activate_candidate(
     )[0]
 
 
-def test_concurrent_managers_initialize_one_v3_active_thread(tmp_path: Path) -> None:
+def test_concurrent_managers_initialize_one_v4_active_thread(tmp_path: Path) -> None:
     db_path = tmp_path / "memory.db"
     barrier = Barrier(4)
 
@@ -164,7 +164,7 @@ def test_concurrent_managers_initialize_one_v3_active_thread(tmp_path: Path) -> 
     assert all(healthy for healthy, _ in statuses)
     assert len({thread_id for _, thread_id in statuses}) == 1
     with sqlite3.connect(db_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert connection.execute(
             "SELECT COUNT(*) FROM threads WHERE status = 'active'"
         ).fetchone()[0] == 1
@@ -236,6 +236,8 @@ def test_extraction_batch_is_head_of_line_bounded_and_lease_fenced(
     clock.advance(JOB_LEASE_SECONDS + 1)
     with pytest.raises(MemoryLeaseError):
         _complete_extraction(store, stale, ExtractionResult("stale", ()))
+    assert store.claim_extraction_batch("worker-b", force=True) is None
+    clock.advance(5)
     current = store.claim_extraction_batch("worker-b", force=True)
     assert current is not None
     assert [job.id for job in current.jobs] == [job.id for job in stale.jobs]
@@ -361,7 +363,7 @@ def test_unknown_unversioned_schema_is_not_mutated_and_clear_is_explicit(
     manager.clear()
     assert manager.status().healthy
     with sqlite3.connect(db_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE name = 'foreign_data'"
         ).fetchone()[0] == 0
@@ -431,7 +433,7 @@ def test_runtime_schema_damage_fails_closed_and_clear_rebuilds_catalog(
 
     assert manager.status().healthy
     with sqlite3.connect(db_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
         assert connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE name = 'unexpected_runtime'"
         ).fetchone()[0] == 0

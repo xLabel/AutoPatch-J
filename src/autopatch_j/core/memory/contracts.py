@@ -13,7 +13,10 @@ from .constants import (
     MEMORY_RECALL_MODES,
     MEMORY_STRENGTHS,
 )
-from .errors import MemoryContractError
+from .errors import (
+    MemoryContractViolation,
+    MemoryOutputContractError,
+)
 from .models import (
     CandidateSource,
     ConsolidationOperation,
@@ -62,18 +65,22 @@ def parse_extraction_response(content: str) -> ExtractionResult:
     _require_exact_keys(raw, _EXTRACTION_KEYS, "extraction")
     compaction = _required_string(raw["thread_compaction"], "thread_compaction")
     if len(compaction) > MAX_COMPACTION_CHARS:
-        raise MemoryContractError("thread_compaction 超过 4000 字符")
+        _raise_output_error(
+            "thread_compaction",
+            "max_length",
+            compaction,
+        )
     candidates_raw = raw["candidates"]
     if not isinstance(candidates_raw, list) or len(candidates_raw) > 32:
-        raise MemoryContractError("candidates 必须是最多 32 项的数组")
+        _raise_output_error("candidates", "array_max_32", candidates_raw)
     candidates: list[ExtractionCandidateInput] = []
     for index, item in enumerate(candidates_raw):
         if not isinstance(item, dict):
-            raise MemoryContractError(f"candidate[{index}] 必须是对象")
+            _raise_output_error(f"candidate[{index}]", "object_required", item)
         _require_exact_keys(item, _CANDIDATE_KEYS, f"candidate[{index}]")
         kind = _required_string(item["kind"], f"candidate[{index}].kind")
         if kind not in MEMORY_KINDS:
-            raise MemoryContractError(f"不允许的 candidate kind: {kind}")
+            _raise_output_error(f"candidate[{index}].kind", "allowed_enum", kind)
         subject = _bounded_string(item["subject"], 160, f"candidate[{index}].subject")
         statement = _memory_statement(
             item["statement"], f"candidate[{index}].statement"
@@ -102,15 +109,23 @@ def parse_extraction_response(content: str) -> ExtractionResult:
         )
         sources_raw = item["sources"]
         if not isinstance(sources_raw, list) or not sources_raw or len(sources_raw) > 8:
-            raise MemoryContractError("candidate sources 必须是 1..8 项数组")
+            _raise_output_error(
+                f"candidate[{index}].sources",
+                "array_length_1_8",
+                sources_raw,
+            )
         sources: list[CandidateSource] = []
         for source_index, source in enumerate(sources_raw):
             if not isinstance(source, dict):
-                raise MemoryContractError("candidate source 必须是对象")
+                _raise_output_error(
+                    f"candidate[{index}].sources[{source_index}]",
+                    "object_required",
+                    source,
+                )
             _require_exact_keys(source, _SOURCE_KEYS, "candidate source")
             role = _required_string(source["role"], "source.role")
             if role not in {"user", "assistant"}:
-                raise MemoryContractError("source.role 只能是 user 或 assistant")
+                _raise_output_error("source.role", "allowed_enum", role)
             sources.append(
                 CandidateSource(
                     turn_id=_required_string(source["turn_id"], "source.turn_id"),
@@ -141,21 +156,29 @@ def parse_consolidation_response(content: str) -> ConsolidationResult:
     _require_exact_keys(raw, _CONSOLIDATION_KEYS, "consolidation")
     operations_raw = raw["operations"]
     if not isinstance(operations_raw, list) or len(operations_raw) > 32:
-        raise MemoryContractError("operations 必须是最多 32 项的数组")
+        _raise_output_error("operations", "array_max_32", operations_raw)
     operations: list[ConsolidationOperation] = []
     for index, item in enumerate(operations_raw):
         if not isinstance(item, dict):
-            raise MemoryContractError(f"operation[{index}] 必须是对象")
+            _raise_output_error(f"operation[{index}]", "object_required", item)
         _require_exact_keys(item, _OPERATION_KEYS, f"operation[{index}]")
         operation = _required_string(item["operation"], "operation")
         if operation not in {"create", "revise", "supersede", "reject"}:
-            raise MemoryContractError(f"不允许的 operation: {operation}")
+            _raise_output_error(f"operation[{index}].operation", "allowed_enum", operation)
         candidate_ids = _string_array(item["candidate_ids"], 32, 160, "candidate_ids")
         if not candidate_ids:
-            raise MemoryContractError("candidate_ids 不得为空")
+            _raise_output_error(
+                f"operation[{index}].candidate_ids",
+                "non_empty_array",
+                item["candidate_ids"],
+            )
         target_raw = item["target_id"]
         if target_raw is not None and not isinstance(target_raw, str):
-            raise MemoryContractError("target_id 必须是 string 或 null")
+            _raise_output_error(
+                f"operation[{index}].target_id",
+                "string_or_null",
+                target_raw,
+            )
         target_id = target_raw.strip() if isinstance(target_raw, str) else None
         if target_id == "":
             target_id = None
@@ -194,59 +217,70 @@ def parse_consolidation_response(content: str) -> ConsolidationResult:
 def _parse_object(content: str, label: str) -> dict[str, Any]:
     try:
         raw = json.loads(content)
-    except (TypeError, json.JSONDecodeError) as exc:
-        raise MemoryContractError(f"{label} 输出不是合法 JSON 对象") from exc
+    except (TypeError, json.JSONDecodeError):
+        _raise_output_error(label, "valid_json_object", content)
     if not isinstance(raw, dict):
-        raise MemoryContractError(f"{label} 输出必须是 JSON 对象")
+        _raise_output_error(label, "object_required", raw)
     return raw
 
 
 def _require_exact_keys(raw: dict[str, Any], expected: set[str], label: str) -> None:
     actual = set(raw)
     if actual != expected:
-        raise MemoryContractError(
-            f"{label} 字段不匹配，missing={sorted(expected - actual)}, "
-            f"unknown={sorted(actual - expected)}"
+        raise MemoryOutputContractError(
+            MemoryContractViolation(
+                path=label,
+                rule="exact_keys",
+                observed_type="object",
+                observed_length=len(raw),
+                recognized_keys=tuple(sorted(actual & expected)),
+                missing_keys=tuple(sorted(expected - actual)),
+                unknown_key_count=len(actual - expected),
+            )
         )
 
 
 def _required_string(value: Any, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
-        raise MemoryContractError(f"{label} 必须是非空 string")
+        _raise_output_error(label, "non_empty_string", value)
     return value.strip()
 
 
 def _bounded_string(value: Any, limit: int, label: str) -> str:
     text = _required_string(value, label)
     if len(text) > limit:
-        raise MemoryContractError(f"{label} 超过 {limit} 字符")
+        _raise_output_error(label, f"max_length_{limit}", text)
     return text
 
 
 def _optional_bounded_string(value: Any, limit: int, label: str) -> str:
     if not isinstance(value, str):
-        raise MemoryContractError(f"{label} 必须是 string")
+        _raise_output_error(label, "string_required", value)
     if len(value) > limit:
-        raise MemoryContractError(f"{label} 超过 {limit} 字符")
+        _raise_output_error(label, f"max_length_{limit}", value)
     return value.strip()
 
 
 def _memory_statement(value: Any, label: str) -> str:
     text = _required_string(value, label)
     if estimate_text_tokens(text) > MAX_MEMORY_STATEMENT_TOKENS:
-        raise MemoryContractError(
-            f"{label} 超过 {MAX_MEMORY_STATEMENT_TOKENS} tokens"
+        _raise_output_error(
+            label,
+            f"max_tokens_{MAX_MEMORY_STATEMENT_TOKENS}",
+            text,
         )
     return text
 
 
 def _optional_memory_statement(value: Any, label: str) -> str:
     if not isinstance(value, str):
-        raise MemoryContractError(f"{label} 必须是 string")
+        _raise_output_error(label, "string_required", value)
     text = value.strip()
     if text and estimate_text_tokens(text) > MAX_MEMORY_STATEMENT_TOKENS:
-        raise MemoryContractError(
-            f"{label} 超过 {MAX_MEMORY_STATEMENT_TOKENS} tokens"
+        _raise_output_error(
+            label,
+            f"max_tokens_{MAX_MEMORY_STATEMENT_TOKENS}",
+            text,
         )
     return text
 
@@ -254,27 +288,59 @@ def _optional_memory_statement(value: Any, label: str) -> str:
 def _enum_string(value: Any, allowed: set[str], label: str) -> str:
     text = _required_string(value, label)
     if text not in allowed:
-        raise MemoryContractError(f"{label} 不允许值: {text}")
+        _raise_output_error(label, "allowed_enum", text)
     return text
 
 
 def _optional_enum_string(value: Any, allowed: set[str], label: str) -> str:
     if not isinstance(value, str):
-        raise MemoryContractError(f"{label} 必须是 string")
+        _raise_output_error(label, "string_required", value)
     text = value.strip()
     if text and text not in allowed:
-        raise MemoryContractError(f"{label} 不允许值: {text}")
+        _raise_output_error(label, "allowed_enum_or_empty", text)
     return text
 
 
 def _string_array(value: Any, limit: int, item_limit: int, label: str) -> tuple[str, ...]:
     if not isinstance(value, list) or len(value) > limit:
-        raise MemoryContractError(f"{label} 必须是最多 {limit} 项数组")
+        _raise_output_error(label, f"array_max_{limit}", value)
     result: list[str] = []
     for item in value:
         if not isinstance(item, str) or not item.strip() or len(item) > item_limit:
-            raise MemoryContractError(f"{label} 包含非法 string")
+            _raise_output_error(label, f"non_empty_string_max_{item_limit}", item)
         text = compact_text(item, item_limit)
         if text not in result:
             result.append(text)
     return tuple(result)
+
+
+def _raise_output_error(path: str, rule: str, value: Any) -> None:
+    observed_length = (
+        len(value)
+        if isinstance(value, (str, list, tuple, dict))
+        else None
+    )
+    raise MemoryOutputContractError(
+        MemoryContractViolation(
+            path=path,
+            rule=rule,
+            observed_type=_json_type(value),
+            observed_length=observed_length,
+        )
+    )
+
+
+def _json_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "unknown"

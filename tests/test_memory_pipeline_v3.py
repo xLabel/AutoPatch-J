@@ -137,6 +137,16 @@ class LongFailureLLM:
         raise RuntimeError("provider RAW body: " + "x" * 25_000)
 
 
+class TimeoutFailureLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(self, messages, tools=None, purpose=None):
+        del messages, tools, purpose
+        self.calls += 1
+        raise TimeoutError("provider RAW timeout body")
+
+
 class EmptyCandidateLLM:
     def chat(self, messages, tools=None, purpose=None):
         del messages, tools, purpose
@@ -486,7 +496,7 @@ def test_extraction_payload_preserves_complete_raw_turn(tmp_path: Path) -> None:
     assert extraction_payload["turns"][0]["assistant"] == raw_assistant
 
 
-def test_provider_echo_is_persisted_in_job_error(tmp_path: Path) -> None:
+def test_provider_echo_is_redacted_in_terminal_job_error(tmp_path: Path) -> None:
     llm = EchoingFailureLLM()
     db_path = tmp_path / "memory.db"
     manager = MemoryManager(db_path=db_path, llm=llm)
@@ -498,11 +508,14 @@ def test_provider_echo_is_persisted_in_job_error(tmp_path: Path) -> None:
     status = manager.status()
 
     assert result.failed == 1
-    assert status.retry_wait_jobs == 1
-    assert raw_secret in status.last_error
-    assert status.last_error.startswith(
-        "Memory extraction failed: RuntimeError: provider echoed RAW prompt:"
-    )
+    assert status.retry_wait_jobs == 0
+    assert status.failed_jobs == 1
+    assert status.healthy is True
+    assert status.degraded is True
+    assert raw_secret not in status.last_error
+    assert "provider echoed" not in status.last_error
+    assert status.last_failure is not None
+    assert status.last_failure.exception_type == "RuntimeError"
     with sqlite3.connect(db_path) as connection:
         job_error = connection.execute(
             "SELECT last_error FROM memory_jobs WHERE kind = 'extraction'"
@@ -515,7 +528,7 @@ def test_provider_echo_is_persisted_in_job_error(tmp_path: Path) -> None:
     assert snapshot["memory_jobs"][0]["last_error"] == status.last_error
 
 
-def test_provider_error_is_bounded_and_job_meta_store_identical_text(
+def test_provider_error_is_safe_and_job_meta_store_identical_text(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "memory.db"
@@ -528,13 +541,10 @@ def test_provider_error_is_bounded_and_job_meta_store_identical_text(
 
     assert result.failed == 1
     assert MAX_JOB_ERROR_CHARS == MAX_RAW_LLM_ERROR_CHARS
-    assert len(status.last_error) == MAX_JOB_ERROR_CHARS
-    assert status.last_error.startswith(
-        "Memory extraction failed: RuntimeError: provider RAW body:"
-    )
-    assert status.last_error.endswith(
-        f"...[truncated to {MAX_JOB_ERROR_CHARS} characters]"
-    )
+    assert len(status.last_error) < 1_000
+    assert "provider RAW body" not in status.last_error
+    assert status.last_failure is not None
+    assert status.last_failure.exception_type == "RuntimeError"
     with sqlite3.connect(db_path) as connection:
         job_error = connection.execute(
             "SELECT last_error FROM memory_jobs WHERE kind = 'extraction'"
@@ -722,8 +732,8 @@ def test_flush_attempts_a_failed_job_at_most_once_per_snapshot(
 ) -> None:
     from autopatch_j.core.memory import store as memory_store_module
 
-    monkeypatch.setattr(memory_store_module, "RETRY_BACKOFF_SECONDS", (0,))
-    llm = EchoingFailureLLM()
+    monkeypatch.setattr(memory_store_module, "JOB_RETRY_DELAY_SECONDS", 0)
+    llm = TimeoutFailureLLM()
     db_path = tmp_path / "memory.db"
     manager = MemoryManager(db_path=db_path, llm=llm)
     turn = manager.begin_turn(intent="general_chat", user_text="会失败的 turn")
@@ -736,7 +746,7 @@ def test_flush_attempts_a_failed_job_at_most_once_per_snapshot(
         ).fetchone()[0]
 
     assert first.processed == 1
-    assert first.failed == 1
+    assert first.failed == 0
     assert first.pending == 1
     assert first_attempts == 1
     assert llm.calls == 1
@@ -746,6 +756,8 @@ def test_flush_attempts_a_failed_job_at_most_once_per_snapshot(
     assert second.processed == 1
     assert second.failed == 1
     assert llm.calls == 2
+    assert manager.status().failed_jobs == 1
+    assert manager.flush_once("third-failure").processed == 0
 
 
 def test_worker_survives_transient_pipeline_failure(tmp_path: Path) -> None:

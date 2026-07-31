@@ -62,6 +62,9 @@ def test_memory_extraction_prompt_keeps_user_backed_discussion_without_assistant
         "assistant 的单方结论不得进入其 subject、statement 或 content"
         in MEMORY_EXTRACTION_SYSTEM_PROMPT
     )
+    assert "We have not decided whether" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "不得自行推断 future discussion" in MEMORY_EXTRACTION_SYSTEM_PROMPT
+    assert "只有 user 原文明确表达延续意图" in MEMORY_EXTRACTION_SYSTEM_PROMPT
 
     discussion_case = next(
         case
@@ -116,11 +119,22 @@ class DeterministicMemoryLLM:
         payload = json.loads(messages[-1]["content"])
         assert isinstance(payload, dict)
         self.purposes.append(purpose)
-        if purpose is LLMCallPurpose.MEMORY_EXTRACTION:
+        if purpose in {
+            LLMCallPurpose.MEMORY_EXTRACTION_REPAIR,
+            LLMCallPurpose.MEMORY_CONSOLIDATION_REPAIR,
+        }:
+            payload = payload["business_input"]
+        if purpose in {
+            LLMCallPurpose.MEMORY_EXTRACTION,
+            LLMCallPurpose.MEMORY_EXTRACTION_REPAIR,
+        }:
             result = self._extract(payload)
-        elif purpose is LLMCallPurpose.MEMORY_CONSOLIDATION:
+        elif purpose in {
+            LLMCallPurpose.MEMORY_CONSOLIDATION,
+            LLMCallPurpose.MEMORY_CONSOLIDATION_REPAIR,
+        }:
             result = self._consolidate(payload)
-        else:  # pragma: no cover - Pipeline 只能使用两个 Memory purpose
+        else:  # pragma: no cover - Pipeline 只能使用 Memory purpose
             raise AssertionError(f"unexpected purpose: {purpose}")
         return SimpleNamespace(content=json.dumps(result, ensure_ascii=False))
 
@@ -129,7 +143,15 @@ class DeterministicMemoryLLM:
         assert turns
         current = turns[-1]
         user_text = current["user"]
-        compaction = f"当前讨论：{user_text}"
+        previous_compaction = str(payload.get("previous_compaction", "")).strip()
+        compaction = "\n".join(
+            part
+            for part in (
+                previous_compaction,
+                f"当前讨论：{user_text}",
+            )
+            if part
+        )
         candidates: list[dict[str, Any]] = []
 
         if self.case_id == "explicit-output-preference":
@@ -443,7 +465,12 @@ def _evaluate_case(case: dict[str, Any], db_path: Path, llm: Any) -> None:
 
         expected_content = case.get("expected_active_content")
         if expected_content:
-            matching = [detail for detail in details if expected_content in detail.content]
+            matching = [
+                detail
+                for detail in details
+                if expected_content in detail.statement
+                or expected_content in detail.content
+            ]
             assert len(matching) == 1, case["id"]
             assert matching[0].revision == 2, case["id"]
 
@@ -500,6 +527,55 @@ def test_memory_quality_corpus_through_deterministic_pipeline(
         assert LLMCallPurpose.MEMORY_CONSOLIDATION in llm.purposes
     else:
         assert LLMCallPurpose.MEMORY_CONSOLIDATION not in llm.purposes
+
+
+@pytest.mark.live_llm
+def test_memory_live_extraction_contract_smoke(
+    tmp_path: Path,
+    live_llm_client: Any,
+) -> None:
+    manager = MemoryManager(
+        db_path=tmp_path / "live-smoke-extraction" / "memory.db",
+        llm=live_llm_client,
+    )
+    try:
+        handle = manager.begin_turn(
+            intent=IntentType.GENERAL_CHAT,
+            user_text="这次简单说明当前实现，不要把它记成长期偏好。",
+        )
+        manager.complete_turn(handle.id, assistant_text="本轮仅做临时说明。")
+        result = manager.flush_once(reason="live-contract-smoke")
+
+        assert result.failed == 0, result.errors
+        assert manager.active_thread_checkpoint(max_tokens=2_000).strip()
+    finally:
+        manager.close()
+
+
+@pytest.mark.live_llm
+def test_memory_live_consolidation_contract_smoke(
+    tmp_path: Path,
+    live_llm_client: Any,
+) -> None:
+    manager = MemoryManager(
+        db_path=tmp_path / "live-smoke-consolidation" / "memory.db",
+        llm=live_llm_client,
+    )
+    try:
+        handle = manager.begin_turn(
+            intent=IntentType.GENERAL_CHAT,
+            user_text="最终决定：Memory 只使用本地 SQLite，不引入向量数据库。",
+        )
+        manager.complete_turn(handle.id, assistant_text="已记录这项明确决定。")
+        result = manager.flush_once(reason="live-contract-smoke")
+
+        assert result.failed == 0, result.errors
+        assert any(
+            item.kind == "project_decision"
+            for item in manager.list_items()
+        )
+    finally:
+        manager.close()
 
 
 @pytest.mark.live_llm

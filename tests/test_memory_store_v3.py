@@ -142,16 +142,16 @@ def _apply(
     return item_ids[0]
 
 
-def test_v3_initialization_keeps_legacy_json_untouched(tmp_path: Path) -> None:
+def test_v4_initialization_keeps_legacy_json_untouched(tmp_path: Path) -> None:
     legacy = tmp_path / "memory.json"
     legacy.write_text('{"version": 1}', encoding="utf-8")
 
     manager = MemoryManager(db_path=tmp_path / "memory.db")
 
     assert legacy.read_text(encoding="utf-8") == '{"version": 1}'
-    assert manager.status().schema_version == 3
+    assert manager.status().schema_version == 4
     with sqlite3.connect(tmp_path / "memory.db") as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 def test_existing_non_v3_database_is_degraded_and_not_modified(tmp_path: Path) -> None:

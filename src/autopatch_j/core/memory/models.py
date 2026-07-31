@@ -69,6 +69,7 @@ class JobStatus(str, Enum):
     RETRY_WAIT = "retry_wait"
     SUCCEEDED = "succeeded"
     SUCCEEDED_NO_OUTPUT = "succeeded_no_output"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +125,7 @@ class MemoryJob:
     last_error: str
     created_at: str
     updated_at: str
+    llm_call_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -323,6 +325,96 @@ class MemoryStatus:
     retry_wait_jobs: int
     last_error: str
     last_succeeded_at: str | None
+    failed_jobs: int = 0
+    last_failure: MemoryFailureDiagnostic | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryFailureDiagnostic:
+    category: str
+    phase: str
+    stage: str
+    attempt_count: int
+    llm_call_count: int
+    path: str = ""
+    rule: str = ""
+    observed_type: str = ""
+    observed_length: int | None = None
+    recognized_keys: tuple[str, ...] = ()
+    missing_keys: tuple[str, ...] = ()
+    unknown_key_count: int = 0
+    response_id: str | None = None
+    finish_reason: str | None = None
+    exception_type: str | None = None
+    status_code: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "category": self.category,
+            "phase": self.phase,
+            "stage": self.stage,
+            "attempt_count": self.attempt_count,
+            "llm_call_count": self.llm_call_count,
+        }
+        optional = {
+            "path": self.path,
+            "rule": self.rule,
+            "observed_type": self.observed_type,
+            "observed_length": self.observed_length,
+            "recognized_keys": list(self.recognized_keys),
+            "missing_keys": list(self.missing_keys),
+            "unknown_key_count": self.unknown_key_count,
+            "response_id": self.response_id,
+            "finish_reason": self.finish_reason,
+            "exception_type": self.exception_type,
+            "status_code": self.status_code,
+        }
+        result.update(
+            {
+                key: value
+                for key, value in optional.items()
+                if value not in ("", None, [], 0)
+            }
+        )
+        return result
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> MemoryFailureDiagnostic:
+        return cls(
+            category=str(raw.get("category", "unknown")),
+            phase=str(raw.get("phase", "unknown")),
+            stage=str(raw.get("stage", "primary")),
+            attempt_count=int(raw.get("attempt_count", 0)),
+            llm_call_count=int(raw.get("llm_call_count", 0)),
+            path=str(raw.get("path", "")),
+            rule=str(raw.get("rule", "")),
+            observed_type=str(raw.get("observed_type", "")),
+            observed_length=(
+                int(raw["observed_length"])
+                if isinstance(raw.get("observed_length"), int)
+                else None
+            ),
+            recognized_keys=tuple(
+                str(value) for value in raw.get("recognized_keys", ())
+            ),
+            missing_keys=tuple(str(value) for value in raw.get("missing_keys", ())),
+            unknown_key_count=int(raw.get("unknown_key_count", 0)),
+            response_id=_normalized_optional_text(raw.get("response_id")),
+            finish_reason=_normalized_optional_text(raw.get("finish_reason")),
+            exception_type=_normalized_optional_text(raw.get("exception_type")),
+            status_code=(
+                int(raw["status_code"])
+                if isinstance(raw.get("status_code"), int)
+                else None
+            ),
+        )
+
+
+def _normalized_optional_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 @dataclass(frozen=True, slots=True)
