@@ -104,12 +104,7 @@ class ReviewRouteClassifier:
             except ContextCapacityError as exc:
                 return None, f"route classifier capacity: {exc}"
         route, error = self._fetch_route_with_purpose(messages, LLMCallPurpose.CLASSIFIER)
-        if route is not None:
-            return route, ""
-        fallback_route, fallback_error = self._fetch_route_with_purpose(messages, LLMCallPurpose.REACT)
-        if fallback_route is not None:
-            return fallback_route, f"classifier empty or invalid; react fallback used ({error or 'no route'})"
-        return None, fallback_error or error
+        return route, error
 
     def _fetch_route_with_purpose(
         self,

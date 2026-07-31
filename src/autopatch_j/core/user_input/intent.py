@@ -30,10 +30,11 @@ def build_llm_user_intent_classifier(llm: Any | None) -> Callable[[str, bool], I
                 messages,
                 input_capacity=profile.input_capacity,
             )
-        intent = _classify_intent_with_purpose(llm, messages, LLMCallPurpose.CLASSIFIER)
-        if intent is not None:
-            return intent
-        return _classify_intent_with_purpose(llm, messages, LLMCallPurpose.REACT)
+        return _classify_intent_with_purpose(
+            llm,
+            messages,
+            LLMCallPurpose.CLASSIFIER,
+        )
 
     return classify
 
@@ -55,13 +56,12 @@ def build_llm_user_intent_classifier_with_diagnostics(
                 messages,
                 input_capacity=profile.input_capacity,
             )
-        intent, error = _classify_intent_with_purpose_diagnostics(llm, messages, LLMCallPurpose.CLASSIFIER)
-        if intent is not None:
-            return intent, ""
-        fallback_intent, fallback_error = _classify_intent_with_purpose_diagnostics(llm, messages, LLMCallPurpose.REACT)
-        if fallback_intent is not None:
-            return fallback_intent, f"classifier empty or invalid; react fallback used ({error or 'no label'})"
-        return None, fallback_error or error or "classifier returned no valid intent"
+        intent, error = _classify_intent_with_purpose_diagnostics(
+            llm,
+            messages,
+            LLMCallPurpose.CLASSIFIER,
+        )
+        return intent, error or ("" if intent is not None else "classifier returned no valid intent")
 
     return classify
 

@@ -137,7 +137,7 @@ def test_intent_classifier_prompt_treats_user_text_as_untrusted() -> None:
     assert "如果 has_pending_review=false，不允许返回 patch_explain 或 patch_revise" in prompt
 
 
-def test_llm_intent_classifier_falls_back_to_react_when_fast_path_is_empty() -> None:
+def test_llm_intent_classifier_does_not_issue_react_fallback() -> None:
     class FakeResponse:
         def __init__(self, content: str) -> None:
             self.content = content
@@ -149,19 +149,17 @@ def test_llm_intent_classifier_falls_back_to_react_when_fast_path_is_empty() -> 
         def chat(self, messages, **kwargs):
             purpose = kwargs["purpose"]
             self.purposes.append(purpose)
-            if purpose is LLMCallPurpose.CLASSIFIER:
-                return FakeResponse("")
-            return FakeResponse("code_audit")
+            return FakeResponse("")
 
     llm = FakeLLM()
     classifier = build_llm_user_intent_classifier(llm)
 
     assert classifier is not None
-    assert classifier("@LegacyConfig.java 检查代码", False) is IntentType.CODE_AUDIT
-    assert llm.purposes == [LLMCallPurpose.CLASSIFIER, LLMCallPurpose.REACT]
+    assert classifier("@LegacyConfig.java 检查代码", False) is None
+    assert llm.purposes == [LLMCallPurpose.CLASSIFIER]
 
 
-def test_intent_classifier_reuses_one_bounded_head_tail_projection_for_fallback() -> None:
+def test_intent_classifier_uses_one_bounded_head_tail_projection() -> None:
     class FakeResponse:
         def __init__(self, content: str) -> None:
             self.content = content
@@ -170,6 +168,8 @@ def test_intent_classifier_reuses_one_bounded_head_tail_projection_for_fallback(
         context_profile = ModelContextProfile(
             model="test",
             context_window=1_100,
+            provider_max_output_tokens=100,
+            input_capacity=900,
             max_output_tokens=100,
             provider_safety_tokens=100,
         )
@@ -180,25 +180,21 @@ def test_intent_classifier_reuses_one_bounded_head_tail_projection_for_fallback(
         def chat(self, messages, **kwargs):
             purpose = kwargs["purpose"]
             self.calls.append((purpose, messages))
-            return FakeResponse("" if purpose is LLMCallPurpose.CLASSIFIER else "code_audit")
+            return FakeResponse("")
 
     llm = FakeLLM()
     classifier = build_llm_user_intent_classifier(llm)
 
     assert classifier is not None
-    assert classifier("HEAD-" + "x" * 10_000 + "-TAIL", False) is IntentType.CODE_AUDIT
-    assert [purpose for purpose, _ in llm.calls] == [
-        LLMCallPurpose.CLASSIFIER,
-        LLMCallPurpose.REACT,
-    ]
-    assert llm.calls[0][1] == llm.calls[1][1]
+    assert classifier("HEAD-" + "x" * 10_000 + "-TAIL", False) is None
+    assert [purpose for purpose, _ in llm.calls] == [LLMCallPurpose.CLASSIFIER]
     projected = llm.calls[0][1][-1]["content"]
     assert HEAD_TAIL_OMISSION_MARKER in projected
     assert "HEAD-" in projected
     assert "-TAIL" in projected
 
 
-def test_intent_diagnostics_reports_successful_react_fallback() -> None:
+def test_intent_diagnostics_reports_safe_default_without_react_retry() -> None:
     class ProviderError(RuntimeError):
         status_code = 503
         code = "provider_unavailable"
@@ -209,23 +205,26 @@ def test_intent_diagnostics_reports_successful_react_fallback() -> None:
             self.content = content
 
     class FakeLLM:
-        def chat(self, messages, **kwargs):
-            if kwargs["purpose"] is LLMCallPurpose.CLASSIFIER:
-                raise ProviderError("classifier transport failed")
-            return FakeResponse("code_audit")
+        def __init__(self) -> None:
+            self.purposes: list[LLMCallPurpose] = []
 
-    classifier = build_llm_user_intent_classifier_with_diagnostics(FakeLLM())
+        def chat(self, messages, **kwargs):
+            self.purposes.append(kwargs["purpose"])
+            raise ProviderError("classifier transport failed")
+
+    llm = FakeLLM()
+    classifier = build_llm_user_intent_classifier_with_diagnostics(llm)
     service = UserIntentClassifier(classify_with_llm=classifier)
 
     result = service.classify_with_diagnostics("@LegacyConfig.java 检查代码", has_pending_review=False)
 
-    assert result.intent is IntentType.CODE_AUDIT
-    assert result.source == "llm"
-    assert "react fallback used" in result.fallback_reason
+    assert result.intent is IntentType.GENERAL_CHAT
+    assert result.source == "fallback"
     assert "ProviderError: classifier transport failed" in result.fallback_reason
     assert "status_code: 503" in result.fallback_reason
     assert "code: provider_unavailable" in result.fallback_reason
     assert 'body: {"detail": "RAW classifier failure"}' in result.fallback_reason
+    assert llm.purposes == [LLMCallPurpose.CLASSIFIER]
 
 
 def test_scope_service_resolves_file_directory_and_project(tmp_path: Path) -> None:

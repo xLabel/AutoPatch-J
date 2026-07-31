@@ -76,7 +76,7 @@ def test_continuity_judge_uses_llm_classifier_for_ambiguous_review_input() -> No
     }
 
 
-def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
+def test_continuity_judge_uses_safe_default_after_classifier_failure() -> None:
     class ProviderError(RuntimeError):
         status_code = 502
         body = {"detail": "RAW route failure"}
@@ -96,9 +96,7 @@ def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
                 def __init__(self, content: str) -> None:
                     self.content = content
 
-            if purpose is LLMCallPurpose.CLASSIFIER:
-                raise ProviderError("route transport failed")
-            return Response("NEW_TASK")
+            raise ProviderError("route transport failed")
 
     llm = FakeLLM()
     service = ReviewRouteClassifier(llm=llm)  # type: ignore[arg-type]
@@ -111,20 +109,21 @@ def test_continuity_judge_falls_back_to_react_when_fast_path_is_empty() -> None:
         current_scope=_scope(),
     )
 
-    assert result.route is ConversationRoute.NEW_TASK
-    assert result.source == "llm"
-    assert "react fallback used" in result.fallback_reason
+    assert result.route is ConversationRoute.REVIEW_CONTINUE
+    assert result.source == "fallback"
     assert "ProviderError: route transport failed" in result.fallback_reason
     assert "status_code: 502" in result.fallback_reason
     assert 'body: {"detail": "RAW route failure"}' in result.fallback_reason
-    assert llm.purposes == [LLMCallPurpose.CLASSIFIER, LLMCallPurpose.REACT]
+    assert llm.purposes == [LLMCallPurpose.CLASSIFIER]
 
 
-def test_review_route_classifier_reuses_bounded_projection_for_react_fallback() -> None:
+def test_review_route_classifier_uses_one_bounded_projection() -> None:
     class FakeLLM:
         context_profile = ModelContextProfile(
             model="test",
             context_window=1_100,
+            provider_max_output_tokens=100,
+            input_capacity=900,
             max_output_tokens=100,
             provider_safety_tokens=100,
         )
@@ -137,7 +136,7 @@ def test_review_route_classifier_reuses_bounded_projection_for_react_fallback() 
             self.calls.append((purpose, messages))
 
             class Response:
-                content = "" if purpose is LLMCallPurpose.CLASSIFIER else "NEW_TASK"
+                content = ""
 
             return Response()
 
@@ -152,8 +151,8 @@ def test_review_route_classifier_reuses_bounded_projection_for_react_fallback() 
         current_scope=_scope(),
     )
 
-    assert route is ConversationRoute.NEW_TASK
-    assert llm.calls[0][1] == llm.calls[1][1]
+    assert route is ConversationRoute.REVIEW_CONTINUE
+    assert len(llm.calls) == 1
     projected = llm.calls[0][1][-1]["content"]
     assert HEAD_TAIL_OMISSION_MARKER in projected
     assert "HEAD-" in projected
@@ -165,6 +164,8 @@ def test_review_route_classifier_uses_fallback_when_fixed_prompt_exceeds_capacit
         context_profile = ModelContextProfile(
             model="tiny",
             context_window=100,
+            provider_max_output_tokens=1,
+            input_capacity=98,
             max_output_tokens=1,
             provider_safety_tokens=1,
         )
