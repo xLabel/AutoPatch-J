@@ -1,26 +1,23 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
-from autopatch_j.llm.options import LLMReasoningMode, LLMRequestOptions
+from .options import LLMRequestOptions
+from .providers import ProviderProfile
 
 
 class LLMRequestBuilder:
-    """
-    OpenAI 兼容请求参数构造器。
-
-    根据调用用途解析出的 options，组装模型、工具、stream、reasoning 和供应商扩展参数。
-    """
+    """Build one provider request from typed provider and purpose profiles."""
 
     def __init__(
         self,
+        *,
         model: str,
-        reasoning_effort: str | None = None,
+        provider: ProviderProfile,
         max_output_tokens: int | None = None,
     ) -> None:
         self.model = model
-        self.reasoning_effort = reasoning_effort
+        self.provider = provider
         self.max_output_tokens = max_output_tokens
 
     def build_request_kwargs(
@@ -29,38 +26,29 @@ class LLMRequestBuilder:
         tools: list[dict[str, Any]] | None,
         options: LLMRequestOptions,
     ) -> dict[str, Any]:
-        kwargs = {
+        requested_max = options.max_tokens
+        if requested_max is None:
+            if self.max_output_tokens is None:
+                raise ValueError("LLM purpose 缺少 operational output cap")
+            requested_max = self.max_output_tokens
+        effective_max = (
+            min(requested_max, self.max_output_tokens)
+            if self.max_output_tokens is not None
+            else requested_max
+        )
+        kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
-            "tools": tools,
+            "messages": self.provider.prepare_messages(messages, options),
             "stream": options.stream,
         }
-        extra_body = self._build_extra_body(options)
-        if extra_body is not None:
-            kwargs["extra_body"] = extra_body
-        if options.stream and extra_body and (extra_body.get("enable_thinking") or "thinking" in extra_body):
-            kwargs["stream_options"] = {"include_usage": True}
-        if (
-            not options.standard_only
-            and options.reasoning is LLMReasoningMode.INHERIT
-            and self.reasoning_effort
-        ):
-            kwargs["reasoning_effort"] = self.reasoning_effort
-        if options.max_tokens is not None:
-            kwargs["max_tokens"] = (
-                min(options.max_tokens, self.max_output_tokens)
-                if self.max_output_tokens is not None
-                else options.max_tokens
+        if tools is not None:
+            kwargs["tools"] = tools
+        kwargs.update(
+            self.provider.request_fields(
+                options=options,
+                max_output_tokens=effective_max,
             )
-        elif options.stream:
-            max_output_tokens = self.max_output_tokens
-            if max_output_tokens is None:
-                from autopatch_j.config import GlobalConfig
-
-                max_output_tokens = (
-                    GlobalConfig.resolve_llm_context_profile().max_output_tokens
-                )
-            kwargs["max_tokens"] = max_output_tokens
+        )
         if options.temperature is not None:
             kwargs["temperature"] = options.temperature
         if options.timeout_seconds is not None:
@@ -68,28 +56,3 @@ class LLMRequestBuilder:
         if options.response_format is not None:
             kwargs["response_format"] = dict(options.response_format)
         return kwargs
-
-    def _build_extra_body(self, options: LLMRequestOptions) -> dict[str, Any] | None:
-        if options.standard_only:
-            return None
-        if options.reasoning is LLMReasoningMode.DISABLED:
-            return {
-                "thinking": {"type": "disabled"},
-                "enable_thinking": False,
-            }
-
-        extra_body = self._load_global_extra_body()
-        return extra_body or None
-
-    def _load_global_extra_body(self) -> dict[str, Any]:
-        from autopatch_j.config import GlobalConfig
-
-        if GlobalConfig.llm_extra_body_error:
-            raise ValueError(GlobalConfig.llm_extra_body_error)
-        try:
-            parsed = json.loads(GlobalConfig.llm_extra_body)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"AUTOPATCH_LLM_EXTRA_BODY 不是有效 JSON：{exc.msg}") from exc
-        if not isinstance(parsed, dict):
-            raise ValueError("AUTOPATCH_LLM_EXTRA_BODY 必须是 JSON object")
-        return parsed

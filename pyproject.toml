@@ -12,7 +12,7 @@ authors = [
   { name = "weijianguan" }
 ]
 dependencies = [
-  "openai",
+  "openai>=2.32.0,<3",
   "prompt_toolkit",
   "rich",
   "socksio",

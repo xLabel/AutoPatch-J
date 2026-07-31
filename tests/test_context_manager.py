@@ -24,8 +24,8 @@ def test_default_1m_budget_uses_large_history_and_bounded_recall() -> None:
         resolve_context_profile(model="deepseek-v4-flash")
     )
 
-    assert budget.input_capacity == 950_848
-    assert budget.recent_history_tokens == int(950_848 * 0.40)
+    assert budget.input_capacity == 840_000
+    assert budget.recent_history_tokens == int(840_000 * 0.40)
     assert budget.recent_tail_tokens == 128 * 1024
     assert budget.checkpoint_tokens == 16 * 1024
     assert budget.durable_recall_tokens == 24 * 1024
@@ -78,6 +78,8 @@ def test_small_input_capacity_allows_compaction_that_fits_after_rebuild() -> Non
         ModelContextProfile(
             model="small-window",
             context_window=50_000,
+            provider_max_output_tokens=4_000,
+            input_capacity=29_616,
             max_output_tokens=4_000,
             provider_safety_tokens=16_384,
         ),
@@ -109,6 +111,8 @@ def test_context_manager_prunes_replayable_tool_without_mutating_trace() -> None
         ModelContextProfile(
             model="test",
             context_window=100_000,
+            provider_max_output_tokens=1_000,
+            input_capacity=98_000,
             max_output_tokens=1_000,
             provider_safety_tokens=1_000,
         ),
@@ -167,6 +171,8 @@ def test_context_manager_builds_checkpoint_and_keeps_recent_tail() -> None:
         ModelContextProfile(
             model="test",
             context_window=200_000,
+            provider_max_output_tokens=1_000,
+            input_capacity=198_000,
             max_output_tokens=1_000,
             provider_safety_tokens=1_000,
         ),
@@ -204,6 +210,8 @@ def test_repeated_runtime_compaction_never_drops_current_user_input() -> None:
         ModelContextProfile(
             model="test",
             context_window=200_000,
+            provider_max_output_tokens=1_000,
+            input_capacity=198_000,
             max_output_tokens=1_000,
             provider_safety_tokens=1_000,
         ),
@@ -264,6 +272,8 @@ def test_thread_checkpoint_and_memory_map_use_separate_budgets() -> None:
         ModelContextProfile(
             model="test",
             context_window=100_000,
+            provider_max_output_tokens=1_000,
+            input_capacity=98_000,
             max_output_tokens=1_000,
             provider_safety_tokens=1_000,
         ),

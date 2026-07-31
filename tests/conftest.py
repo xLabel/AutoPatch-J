@@ -44,8 +44,6 @@ def _live_llm_block_reason(*, enabled: bool, tests_failed: int) -> str | None:
 def _live_llm_config_error(config: AppConfig) -> str | None:
     if not config.is_llm_ready():
         return config.get_missing_llm_message()
-    if config.llm_extra_body_error:
-        return config.llm_extra_body_error
     try:
         config.resolve_llm_context_profile()
     except ValueError as exc:

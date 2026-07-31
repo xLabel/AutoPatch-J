@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+import time
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -9,16 +12,20 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from autopatch_j.core.memory import MemoryManager, MemoryOutputContractError
+from autopatch_j.core.memory import (
+    MemoryManager,
+    MemoryOutputContractError,
+)
 from autopatch_j.core.memory.contracts import parse_extraction_response
+from autopatch_j.core.memory.errors import MemorySchemaError
 from autopatch_j.core.memory.models import ExtractionResult
 from autopatch_j.core.memory.pipeline import MemoryPipeline
 from autopatch_j.core.memory.store import MemoryStore
 from autopatch_j.llm.client import LLMClient
+from autopatch_j.llm.errors import LLMTruncationError
 from autopatch_j.llm.models import LLMResponse
 from autopatch_j.llm.options import LLMCallPurpose
 from autopatch_j.llm.parser import LLMResponseParser
-from autopatch_j.llm.dialects import StandardDialect
 
 
 class SequenceMemoryLLM:
@@ -107,45 +114,14 @@ def test_extraction_contract_accepts_empty_candidates_with_nonempty_compaction()
     assert result.candidates == ()
 
 
-def test_memory_request_uses_standard_json_mode_without_hidden_retry(
-    mock_openai_sdk: MagicMock,
-) -> None:
-    client = LLMClient(
-        api_key="test-key",
-        base_url="https://example.invalid/v1",
-        model="test-model",
-        stream_dialect="bailian-dsml",
-    )
-    sdk = mock_openai_sdk
-    sdk.with_options.return_value = sdk
-    sdk.chat.completions.create.side_effect = RuntimeError(
-        "unsupported extra_body with RAW provider body"
-    )
-    client.client = sdk
-
-    with pytest.raises(RuntimeError):
-        client.chat(
-            [{"role": "user", "content": "memory input"}],
-            purpose=LLMCallPurpose.MEMORY_EXTRACTION,
-        )
-
-    sdk.with_options.assert_called_once_with(max_retries=0)
-    sdk.chat.completions.create.assert_called_once()
-    kwargs = sdk.chat.completions.create.call_args.kwargs
-    assert kwargs["response_format"] == {"type": "json_object"}
-    assert kwargs["max_tokens"] == 4096
-    assert "extra_body" not in kwargs
-    assert "reasoning_effort" not in kwargs
-    assert client.diagnostics[-1].error == "RuntimeError"
-
-
 def test_extraction_repair_uses_same_expanded_output_budget() -> None:
     from autopatch_j.llm.options import resolve_request_options
 
     primary = resolve_request_options(LLMCallPurpose.MEMORY_EXTRACTION)
     repair = resolve_request_options(LLMCallPurpose.MEMORY_EXTRACTION_REPAIR)
 
-    assert primary.max_tokens == repair.max_tokens == 4096
+    assert primary.max_tokens == repair.max_tokens == 128_000
+    assert primary.sdk_max_retries == repair.sdk_max_retries == 2
 
 
 def test_consolidation_repair_uses_same_expanded_output_budget() -> None:
@@ -154,45 +130,12 @@ def test_consolidation_repair_uses_same_expanded_output_budget() -> None:
     primary = resolve_request_options(LLMCallPurpose.MEMORY_CONSOLIDATION)
     repair = resolve_request_options(LLMCallPurpose.MEMORY_CONSOLIDATION_REPAIR)
 
-    assert primary.max_tokens == repair.max_tokens == 4096
-
-
-def test_memory_response_forces_standard_parser(
-    mock_openai_sdk: MagicMock,
-) -> None:
-    client = LLMClient(
-        api_key="test-key",
-        base_url="https://example.invalid/v1",
-        model="test-model",
-        stream_dialect="bailian-dsml",
-    )
-    sdk = mock_openai_sdk
-    sdk.with_options.return_value = sdk
-    sdk.chat.completions.create.return_value = SimpleNamespace(choices=[])
-    client.client = sdk
-    client.response_parser.parse_non_stream_response = MagicMock(
-        side_effect=AssertionError("provider dialect must not parse Memory")
-    )
-    client.standard_response_parser.parse_non_stream_response = MagicMock(
-        return_value=LLMResponse(
-            content=json.dumps(_valid_empty_extraction()),
-            response_id="response-safe",
-            finish_reason="stop",
-        )
-    )
-
-    response = client.chat(
-        [{"role": "user", "content": "memory input"}],
-        purpose=LLMCallPurpose.MEMORY_EXTRACTION,
-    )
-
-    assert response.response_id == "response-safe"
-    client.standard_response_parser.parse_non_stream_response.assert_called_once()
-    client.response_parser.parse_non_stream_response.assert_not_called()
+    assert primary.max_tokens == repair.max_tokens == 128_000
+    assert primary.sdk_max_retries == repair.sdk_max_retries == 2
 
 
 def test_non_stream_parser_captures_bounded_response_metadata() -> None:
-    parser = LLMResponseParser(StandardDialect)
+    parser = LLMResponseParser()
     response = SimpleNamespace(
         id="response-" + "x" * 200,
         choices=[
@@ -313,6 +256,198 @@ def test_transient_primary_retries_once_then_uses_final_repair_call(
         ).fetchone()
     assert row == ("succeeded_no_output", 2, 3)
     assert manager.flush_once("budget-exhausted").processed == 0
+
+
+def test_memory_length_finish_reason_uses_one_contract_repair(tmp_path: Path) -> None:
+    llm = SequenceMemoryLLM(
+        [
+            LLMTruncationError(
+                "truncated",
+                response_id="response-truncated",
+                finish_reason="length",
+            ),
+            _valid_empty_extraction(),
+        ]
+    )
+    manager = MemoryManager(db_path=tmp_path / "memory.db", llm=llm)
+    _complete_turn(manager)
+
+    result = manager.flush_once("length-repair")
+
+    assert result.failed == 0
+    assert llm.purposes == [
+        LLMCallPurpose.MEMORY_EXTRACTION,
+        LLMCallPurpose.MEMORY_EXTRACTION_REPAIR,
+    ]
+    with sqlite3.connect(tmp_path / "memory.db") as connection:
+        count = connection.execute(
+            "SELECT llm_call_count FROM memory_jobs WHERE kind = 'extraction'"
+        ).fetchone()[0]
+    assert count == 2
+
+
+def test_memory_provider_call_renews_job_and_open_turn_leases(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingLLM:
+        def chat(self, **_kwargs: Any) -> SimpleNamespace:
+            started.set()
+            assert release.wait(2)
+            return SimpleNamespace(content=json.dumps(_valid_empty_extraction()))
+
+    manager = MemoryManager(db_path=tmp_path / "memory.db", llm=BlockingLLM())
+    _complete_turn(manager)
+    pipeline = manager._pipeline
+    assert pipeline is not None
+    pipeline.heartbeat_interval_seconds = 0.01
+    renewed = threading.Event()
+    open_turn_heartbeat = threading.Event()
+    original_renew = manager.store.renew_job_lease
+    original_open_turns = manager.store.heartbeat_open_turns
+
+    def renew(batch):
+        result = original_renew(batch)
+        renewed.set()
+        return result
+
+    def heartbeat_open_turns(owner: str) -> int:
+        result = original_open_turns(owner)
+        open_turn_heartbeat.set()
+        return result
+
+    manager.store.renew_job_lease = renew  # type: ignore[method-assign]
+    manager.store.heartbeat_open_turns = heartbeat_open_turns  # type: ignore[method-assign]
+    results: list[Any] = []
+    worker = threading.Thread(
+        target=lambda: results.append(manager.flush_once("heartbeat")),
+        daemon=True,
+    )
+    worker.start()
+    assert started.wait(1)
+    assert renewed.wait(1)
+    assert open_turn_heartbeat.wait(1)
+    release.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert results[0].failed == 0
+
+
+def test_provider_heartbeat_schema_damage_marks_summary_stale_without_late_commit(
+    tmp_path: Path,
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    heartbeat_schema_error = threading.Event()
+    late_compaction = "late provider result must not commit"
+
+    class BlockingLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat(self, **_kwargs: Any) -> SimpleNamespace:
+            self.calls += 1
+            started.set()
+            assert release.wait(3)
+            return SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "thread_compaction": late_compaction,
+                        "candidates": [],
+                    }
+                )
+            )
+
+    db_path = tmp_path / "memory.db"
+    llm = BlockingLLM()
+    manager = MemoryManager(db_path=db_path, llm=llm)
+    _complete_turn(manager, "第一个待提取 turn")
+    _complete_turn(manager, "第二个待提取 turn")
+    assert manager.rebuild_summary().status.state == "current"
+    pipeline = manager._pipeline
+    assert pipeline is not None
+    pipeline.heartbeat_interval_seconds = 0.01
+    original_renew = manager.store.renew_job_lease
+
+    def renew(batch):
+        try:
+            return original_renew(batch)
+        except MemorySchemaError:
+            heartbeat_schema_error.set()
+            raise
+
+    manager.store.renew_job_lease = renew  # type: ignore[method-assign]
+    manager.start()
+    try:
+        assert started.wait(3)
+        with closing(sqlite3.connect(db_path)) as connection:
+            with connection:
+                connection.execute("PRAGMA user_version = 999")
+
+        assert heartbeat_schema_error.wait(3)
+        release.set()
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            status = manager.summary_status()
+            if status.state == "stale":
+                break
+            time.sleep(0.02)
+        else:
+            pytest.fail("provider heartbeat schema 损坏未使 Memory summary 失效")
+
+        assert llm.calls == 1
+    finally:
+        release.set()
+        manager.close()
+
+    with closing(sqlite3.connect(db_path)) as connection:
+        with connection:
+            connection.execute("PRAGMA user_version = 4")
+        thread_compaction = connection.execute(
+            "SELECT compaction FROM threads WHERE status = 'active'"
+        ).fetchone()
+        candidate_count = connection.execute(
+            "SELECT COUNT(*) FROM memory_candidates"
+        ).fetchone()[0]
+
+    assert thread_compaction == ("",)
+    assert candidate_count == 0
+
+
+def test_clear_generation_fences_late_provider_result(tmp_path: Path) -> None:
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingLLM:
+        def chat(self, **_kwargs: Any) -> SimpleNamespace:
+            started.set()
+            assert release.wait(2)
+            return SimpleNamespace(content=json.dumps(_valid_empty_extraction()))
+
+    manager = MemoryManager(db_path=tmp_path / "memory.db", llm=BlockingLLM())
+    _complete_turn(manager)
+    pipeline = manager._pipeline
+    assert pipeline is not None
+    pipeline.heartbeat_interval_seconds = 0.02
+    results: list[Any] = []
+    worker = threading.Thread(
+        target=lambda: results.append(manager.flush_once("fenced")),
+        daemon=True,
+    )
+    worker.start()
+    assert started.wait(1)
+
+    cleared = manager.clear()
+    time.sleep(0.05)
+    release.set()
+    worker.join(2)
+
+    assert not worker.is_alive()
+    assert results[0].failed == 1
+    assert manager.list_items() == []
+    assert manager.active_thread_checkpoint(max_tokens=2_000) == ""
+    assert cleared.deleted_jobs == 1
 
 
 def test_repair_capacity_failure_does_not_send_second_call(
@@ -586,7 +721,11 @@ def test_second_lease_expiry_becomes_terminal_failed(tmp_path: Path) -> None:
 def test_transient_classifier_is_explicit_and_bounded() -> None:
     pipeline = MemoryPipeline.__new__(MemoryPipeline)
 
+    class ConflictError(RuntimeError):
+        status_code = 409
+
     assert pipeline._is_transient_primary_error(TimeoutError("RAW")) is True
+    assert pipeline._is_transient_primary_error(ConflictError("conflict")) is True
     assert pipeline._is_transient_primary_error(
         sqlite3.OperationalError("database is locked")
     ) is True

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from autopatch_j.config import AppConfig
 from autopatch_j.llm.context_window import (
-    DEFAULT_CONTEXT_WINDOW,
-    DEFAULT_MAX_OUTPUT_TOKENS,
+    DEEPSEEK_CONTEXT_WINDOW,
+    DEEPSEEK_INPUT_CAPACITY,
+    DEEPSEEK_OPERATION_MAX_OUTPUT_TOKENS,
+    DEEPSEEK_PROVIDER_MAX_OUTPUT_TOKENS,
 )
 
 
@@ -21,7 +23,6 @@ def test_app_config_reads_llm_environment(monkeypatch) -> None:
     assert config.llm_context_window is None
     assert config.debug_mode is True
     assert config.is_llm_ready() is True
-    assert config.llm_extra_body_error is None
 
 
 def test_app_config_uses_defaults_and_isolates_ignored_dirs(monkeypatch) -> None:
@@ -38,19 +39,25 @@ def test_app_config_uses_defaults_and_isolates_ignored_dirs(monkeypatch) -> None
     assert first.llm_base_url == "https://api.deepseek.com"
     assert first.llm_model == "deepseek-v4-flash"
     profile = first.resolve_llm_context_profile()
-    assert profile.context_window == DEFAULT_CONTEXT_WINDOW
-    assert profile.max_output_tokens == DEFAULT_MAX_OUTPUT_TOKENS
+    assert profile.context_window == DEEPSEEK_CONTEXT_WINDOW
+    assert profile.provider_max_output_tokens == DEEPSEEK_PROVIDER_MAX_OUTPUT_TOKENS
+    assert profile.input_capacity == DEEPSEEK_INPUT_CAPACITY
+    assert profile.max_output_tokens == DEEPSEEK_OPERATION_MAX_OUTPUT_TOKENS
     assert first.debug_mode is False
     assert first.is_llm_ready() is False
     assert "custom" not in second.ignored_dirs
 
 
-def test_app_config_keeps_invalid_extra_body_diagnostic(monkeypatch) -> None:
+def test_app_config_ignores_removed_provider_environment(monkeypatch) -> None:
     monkeypatch.setenv("AUTOPATCH_LLM_EXTRA_BODY", "{bad json")
+    monkeypatch.setenv("AUTOPATCH_LLM_REASONING_EFFORT", "low")
+    monkeypatch.setenv("AUTOPATCH_LLM_STREAM_DIALECT", "bailian-dsml")
 
     config = AppConfig.from_env()
 
-    assert "AUTOPATCH_LLM_EXTRA_BODY 不是有效 JSON" in str(config.llm_extra_body_error)
+    assert not hasattr(config, "llm_extra_body")
+    assert not hasattr(config, "llm_reasoning_effort")
+    assert not hasattr(config, "llm_stream_dialect")
 
 
 def test_app_config_reads_context_overrides(monkeypatch) -> None:
@@ -61,6 +68,8 @@ def test_app_config_reads_context_overrides(monkeypatch) -> None:
     profile = AppConfig.from_env().resolve_llm_context_profile()
 
     assert profile.context_window == 900_000
+    assert profile.provider_max_output_tokens == 16_000
+    assert profile.input_capacity == 867_616
     assert profile.max_output_tokens == 16_000
 
 

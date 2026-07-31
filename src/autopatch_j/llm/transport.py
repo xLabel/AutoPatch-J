@@ -1,59 +1,36 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import openai
 
-from autopatch_j.llm.options import LLMReasoningMode, LLMRequestOptions
+from .options import LLMRequestOptions
+
+
+@dataclass(frozen=True, slots=True)
+class TransportCompletion:
+    response: Any
+    sdk_retries_taken: int | None
 
 
 class OpenAIChatTransport:
-    """
-    OpenAI 兼容 Chat Completions 传输层。
-
-    只负责 SDK 调用和协议兼容 retry，不解析响应，也不理解上层业务意图。
-    """
+    """OpenAI Chat Completions transport for one logical operation."""
 
     def __init__(self, api_key: str, base_url: str) -> None:
         self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
 
-    def create_completion(self, kwargs: dict[str, Any], options: LLMRequestOptions) -> Any:
-        client = (
-            self.client.with_options(max_retries=options.sdk_max_retries)
-            if options.sdk_max_retries is not None
-            else self.client
-        )
-        try:
-            return client.chat.completions.create(**kwargs)
-        except Exception as exc:
-            if not self.should_retry_without_disabled_reasoning(exc, kwargs, options):
-                raise
-            retry_kwargs = dict(kwargs)
-            retry_kwargs["extra_body"] = None
-            retry_kwargs.pop("stream_options", None)
-            return client.chat.completions.create(**retry_kwargs)
-
-    def should_retry_without_disabled_reasoning(
+    def create_completion(
         self,
-        exc: Exception,
         kwargs: dict[str, Any],
         options: LLMRequestOptions,
-    ) -> bool:
-        if options.standard_only:
-            return False
-        if options.reasoning is not LLMReasoningMode.DISABLED:
-            return False
-        if not kwargs.get("extra_body"):
-            return False
-        message = str(exc).lower()
-        retry_markers = (
-            "thinking",
-            "enable_thinking",
-            "extra_body",
-            "unsupported",
-            "not supported",
-            "unknown parameter",
-            "unrecognized",
-            "invalid parameter",
+    ) -> TransportCompletion:
+        client = self.client.with_options(max_retries=options.sdk_max_retries)
+        raw_response = client.chat.completions.with_raw_response.create(**kwargs)
+        retries_taken = getattr(raw_response, "retries_taken", None)
+        if not isinstance(retries_taken, int) or retries_taken < 0:
+            retries_taken = None
+        return TransportCompletion(
+            response=raw_response.parse(),
+            sdk_retries_taken=retries_taken,
         )
-        return any(marker in message for marker in retry_markers)

@@ -19,7 +19,7 @@ class LLMCallPurpose(Enum):
 class LLMReasoningMode(Enum):
     """LLMClient 内部使用的 reasoning 策略。"""
 
-    INHERIT = auto()
+    ENABLED = auto()
     DISABLED = auto()
 
 
@@ -33,8 +33,7 @@ class LLMRequestOptions:
     temperature: float | None = None
     timeout_seconds: float | None = None
     response_format: dict[str, str] | None = None
-    standard_only: bool = False
-    sdk_max_retries: int | None = None
+    sdk_max_retries: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,12 +53,15 @@ class LLMCallDiagnostic:
     error: str = ""
     response_id: str | None = None
     finish_reason: str | None = None
+    sdk_max_retries: int = 2
+    sdk_retries_taken: int | None = None
 
 
 _PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
     LLMCallPurpose.REACT: LLMRequestOptions(
         stream=True,
-        reasoning=LLMReasoningMode.INHERIT,
+        reasoning=LLMReasoningMode.ENABLED,
+        max_tokens=128_000,
     ),
     LLMCallPurpose.CLASSIFIER: LLMRequestOptions(
         stream=False,
@@ -69,49 +71,36 @@ _PURPOSE_OPTIONS: dict[LLMCallPurpose, LLMRequestOptions] = {
     ),
     LLMCallPurpose.MEMORY_EXTRACTION: LLMRequestOptions(
         stream=False,
-        reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=4096,
-        temperature=0,
+        reasoning=LLMReasoningMode.ENABLED,
+        max_tokens=128_000,
         timeout_seconds=60,
         response_format={"type": "json_object"},
-        standard_only=True,
-        sdk_max_retries=0,
     ),
     LLMCallPurpose.MEMORY_EXTRACTION_REPAIR: LLMRequestOptions(
         stream=False,
-        reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=4096,
-        temperature=0,
+        reasoning=LLMReasoningMode.ENABLED,
+        max_tokens=128_000,
         timeout_seconds=60,
         response_format={"type": "json_object"},
-        standard_only=True,
-        sdk_max_retries=0,
     ),
     LLMCallPurpose.MEMORY_CONSOLIDATION: LLMRequestOptions(
         stream=False,
-        reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=4096,
-        temperature=0,
+        reasoning=LLMReasoningMode.ENABLED,
+        max_tokens=128_000,
         timeout_seconds=60,
         response_format={"type": "json_object"},
-        standard_only=True,
-        sdk_max_retries=0,
     ),
     LLMCallPurpose.MEMORY_CONSOLIDATION_REPAIR: LLMRequestOptions(
         stream=False,
-        reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=4096,
-        temperature=0,
+        reasoning=LLMReasoningMode.ENABLED,
+        max_tokens=128_000,
         timeout_seconds=60,
         response_format={"type": "json_object"},
-        standard_only=True,
-        sdk_max_retries=0,
     ),
     LLMCallPurpose.CONTEXT_COMPACTION: LLMRequestOptions(
         stream=False,
-        reasoning=LLMReasoningMode.DISABLED,
-        max_tokens=16_384,
-        temperature=0,
+        reasoning=LLMReasoningMode.ENABLED,
+        max_tokens=128_000,
         timeout_seconds=120,
     ),
 }

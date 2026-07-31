@@ -10,13 +10,15 @@ from autopatch_j.llm.context_window import (
 )
 
 
-def test_deepseek_profile_reserves_output_and_safety_margin() -> None:
-    profile = resolve_context_profile(model="deepseek-v4-flash")
+@pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-v4-pro"])
+def test_deepseek_profile_separates_capability_and_operation_budgets(model: str) -> None:
+    profile = resolve_context_profile(model=model)
 
     assert profile.context_window == 1_000_000
-    assert profile.max_output_tokens == 32_768
-    assert profile.provider_safety_tokens == 16_384
-    assert profile.input_capacity == 950_848
+    assert profile.provider_max_output_tokens == 384_000
+    assert profile.input_capacity == 840_000
+    assert profile.max_output_tokens == 128_000
+    assert profile.provider_safety_tokens == 32_000
 
 
 def test_unknown_profile_accepts_explicit_capacity() -> None:

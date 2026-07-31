@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -50,17 +49,7 @@ class AppConfig:
     # 默认使用 deepseek-v4-flash；如供应商支持，也可切换为 qwen-max 等 OpenAI 兼容模型名。
     llm_model: str
 
-    # 可选值取决于模型供应商，常见为 low、medium、high、max；不需要时留空。
-    llm_reasoning_effort: str | None
-
-    # 供应商私有扩展参数，必须是 JSON 字符串；例如 '{"thinking": {"type": "enabled"}}'。
-    llm_extra_body: str
-    llm_extra_body_error: str | None
-
-    # 可选值：standard、bailian-dsml；阿里云百炼旧版 DeepSeek DSML 流式输出使用 bailian-dsml。
-    llm_stream_dialect: str
-
-    # 模型 context 容量；未知模型必须显式配置 window。
+    # 模型 context 容量；未知模型必须显式配置 window 与运行输出上限。
     llm_context_window: int | None
     llm_max_output_tokens: int | None
 
@@ -80,15 +69,10 @@ class AppConfig:
 
     @classmethod
     def from_env(cls) -> "AppConfig":
-        llm_extra_body = os.getenv("AUTOPATCH_LLM_EXTRA_BODY", "{}")
         return cls(
             llm_api_key = os.getenv("AUTOPATCH_LLM_API_KEY", ""),
             llm_base_url = os.getenv("AUTOPATCH_LLM_BASE_URL", "https://api.deepseek.com").rstrip("/"),
             llm_model = os.getenv("AUTOPATCH_LLM_MODEL", "deepseek-v4-flash"),
-            llm_reasoning_effort = os.getenv("AUTOPATCH_LLM_REASONING_EFFORT"),
-            llm_extra_body = llm_extra_body,
-            llm_extra_body_error = cls._validate_llm_extra_body(llm_extra_body),
-            llm_stream_dialect = os.getenv("AUTOPATCH_LLM_STREAM_DIALECT", "standard"),
             llm_context_window = cls._optional_positive_int_env(
                 "AUTOPATCH_LLM_CONTEXT_WINDOW"
             ),
@@ -123,16 +107,6 @@ class AppConfig:
             context_window=self.llm_context_window,
             max_output_tokens=self.llm_max_output_tokens,
         )
-
-    @staticmethod
-    def _validate_llm_extra_body(value: str) -> str | None:
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError as exc:
-            return f"AUTOPATCH_LLM_EXTRA_BODY 不是有效 JSON：{exc.msg}"
-        if not isinstance(parsed, dict):
-            return "AUTOPATCH_LLM_EXTRA_BODY 必须是 JSON object"
-        return None
 
     @staticmethod
     def _positive_int_env(name: str, default: int) -> int:

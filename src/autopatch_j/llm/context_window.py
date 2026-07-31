@@ -6,8 +6,11 @@ from math import ceil
 from typing import Any
 
 
-DEFAULT_CONTEXT_WINDOW = 1_000_000
-DEFAULT_MAX_OUTPUT_TOKENS = 32_768
+DEEPSEEK_CONTEXT_WINDOW = 1_000_000
+DEEPSEEK_PROVIDER_MAX_OUTPUT_TOKENS = 384_000
+DEEPSEEK_INPUT_CAPACITY = 840_000
+DEEPSEEK_OPERATION_MAX_OUTPUT_TOKENS = 128_000
+DEEPSEEK_PROVIDER_SAFETY_TOKENS = 32_000
 MIN_PROVIDER_SAFETY_TOKENS = 16_384
 MESSAGE_OVERHEAD_TOKENS = 6
 HEAD_TAIL_OMISSION_MARKER = "\n… [中间内容已按 input capacity 省略] …\n"
@@ -21,20 +24,22 @@ class ContextCapacityError(RuntimeError):
 class ModelContextProfile:
     model: str
     context_window: int
+    provider_max_output_tokens: int
+    input_capacity: int
     max_output_tokens: int
     provider_safety_tokens: int
 
-    @property
-    def input_capacity(self) -> int:
-        return (
-            self.context_window
-            - self.max_output_tokens
-            - self.provider_safety_tokens
-        )
 
-
-_KNOWN_MODEL_PROFILES: dict[str, tuple[int, int]] = {
-    "deepseek-v4-flash": (DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS),
+_KNOWN_MODEL_PROFILES: dict[str, ModelContextProfile] = {
+    model: ModelContextProfile(
+        model=model,
+        context_window=DEEPSEEK_CONTEXT_WINDOW,
+        provider_max_output_tokens=DEEPSEEK_PROVIDER_MAX_OUTPUT_TOKENS,
+        input_capacity=DEEPSEEK_INPUT_CAPACITY,
+        max_output_tokens=DEEPSEEK_OPERATION_MAX_OUTPUT_TOKENS,
+        provider_safety_tokens=DEEPSEEK_PROVIDER_SAFETY_TOKENS,
+    )
+    for model in ("deepseek-v4-flash", "deepseek-v4-pro")
 }
 
 
@@ -44,17 +49,24 @@ def resolve_context_profile(
     context_window: int | None = None,
     max_output_tokens: int | None = None,
 ) -> ModelContextProfile:
-    normalized_model = model.strip().lower()
+    normalized_model = model.strip()
     known = _KNOWN_MODEL_PROFILES.get(normalized_model)
-    if context_window is None:
-        if known is None:
-            raise ValueError(
-                "未知模型缺少 context window；请设置 "
-                "AUTOPATCH_LLM_CONTEXT_WINDOW"
-            )
-        context_window = known[0]
-    if max_output_tokens is None:
-        max_output_tokens = known[1] if known is not None else DEFAULT_MAX_OUTPUT_TOKENS
+    if known is not None:
+        if context_window is not None or max_output_tokens is not None:
+            raise ValueError("内置 DeepSeek V4 profile 不接受 context 容量覆盖")
+        return ModelContextProfile(
+            model=model,
+            context_window=known.context_window,
+            provider_max_output_tokens=known.provider_max_output_tokens,
+            input_capacity=known.input_capacity,
+            max_output_tokens=known.max_output_tokens,
+            provider_safety_tokens=known.provider_safety_tokens,
+        )
+    if context_window is None or max_output_tokens is None:
+        raise ValueError(
+            "未知模型缺少 context profile；请同时设置 "
+            "AUTOPATCH_LLM_CONTEXT_WINDOW 和 AUTOPATCH_LLM_MAX_OUTPUT_TOKENS"
+        )
     if context_window <= 0:
         raise ValueError("LLM context window 必须是正整数")
     if max_output_tokens <= 0:
@@ -71,6 +83,8 @@ def resolve_context_profile(
     return ModelContextProfile(
         model=model,
         context_window=context_window,
+        provider_max_output_tokens=max_output_tokens,
+        input_capacity=context_window - max_output_tokens - provider_safety_tokens,
         max_output_tokens=max_output_tokens,
         provider_safety_tokens=provider_safety_tokens,
     )

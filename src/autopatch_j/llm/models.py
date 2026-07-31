@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from autopatch_j.llm.dialects import ToolCall
+
+@dataclass(slots=True)
+class ToolCall:
+    """标准 OpenAI function tool call 的内部表示。"""
+
+    name: str
+    arguments: dict[str, Any]
+    call_id: str
+    raw_arguments: str = ""
 
 
 @dataclass(slots=True)
@@ -17,5 +26,6 @@ class LLMResponse:
     content: str
     tool_calls: list[ToolCall] | None = None
     reasoning_content: str | None = None
+    reasoning_content_present: bool = False
     response_id: str | None = None
     finish_reason: str | None = None
