@@ -17,6 +17,11 @@
 - **THEN** Memory 进入 degraded 状态且不修改现有文件
 - **AND** 不执行 migration、双读或自动删除，只有显式 `/memory clear --confirm` 才创建干净 v4 database
 
+#### Scenario: 拒绝含未知对象的未标版本 database
+- **WHEN** `memory.db` 的 `user_version=0` 且已包含未知 schema object
+- **THEN** Memory 进入 degraded 状态且不修改现有文件
+- **AND** 用户可见诊断准确报告当前支持的 schema version，以及首个未知对象的类型和名称
+
 #### Scenario: 遗留 memory JSON
 - **WHEN** 初始化发现 `.autopatch-j/memory.json`
 - **THEN** 系统不读取、不迁移且不自动删除该文件

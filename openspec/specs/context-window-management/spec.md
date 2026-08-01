@@ -2,7 +2,7 @@
 
 ## Purpose
 
-TBD - 定义统一的模型上下文容量、压缩、预检、召回预算与 provider overflow 处理契约。
+定义统一的模型上下文管理契约，覆盖 provider 能力与运行预算建模、输入压缩、请求预检、Memory 召回预算，以及 provider overflow 的受控恢复与诊断行为。
 
 ## Requirements
 

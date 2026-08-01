@@ -1,6 +1,6 @@
 ## Purpose
 
-Define how AutoPatch-J structures natural-language LLM prompts so task boundaries, evidence, raw user input, Memory Context, and machine-readable contracts remain explicit and predictable.
+定义 AutoPatch-J 如何组织自然语言 LLM prompt，使任务边界、证据、原始用户输入、Memory Context 与机器可读契约保持显式且可预测。
 
 ## Requirements
 
