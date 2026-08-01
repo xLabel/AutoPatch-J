@@ -148,5 +148,8 @@ class ScopeResolver:
                 if not file_name.endswith(".java"):
                     continue
                 full_path = Path(root) / file_name
-                java_files.append(full_path.relative_to(self.repo_root).as_posix())
+                rel_path = full_path.relative_to(self.repo_root).as_posix()
+                if not self._is_source_entry(rel_path):
+                    continue
+                java_files.append(rel_path)
         return java_files

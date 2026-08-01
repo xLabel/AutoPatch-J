@@ -8,6 +8,12 @@ from pathlib import Path
 from typing import Any
 
 from autopatch_j.config import get_project_state_dir
+from autopatch_j.core.project.repo_path import (
+    UnsafeRepoPathError,
+    is_project_state_path,
+    resolve_repo_path,
+    to_repo_relative_path,
+)
 
 
 @dataclass(slots=True)
@@ -76,17 +82,22 @@ class SymbolIndex:
         self._reset_symbol_extract_status()
 
         for root, dirs, files in os.walk(repo_root_abs):
-            dirs[:] = [directory for directory in dirs if directory not in self.ignored_dirs]
-
             rel_root = os.path.relpath(root, repo_root_abs).replace(os.sep, "/")
             if rel_root == ".":
                 rel_root = ""
 
+            safe_dirs: list[str] = []
             for directory in dirs:
-                if directory.startswith(".") and directory != ".autopatch-j":
+                if directory in self.ignored_dirs:
                     continue
                 path = os.path.join(rel_root, directory).replace(os.sep, "/")
+                if not self._is_indexable_path(path):
+                    continue
+                safe_dirs.append(directory)
+                if directory.startswith("."):
+                    continue
                 all_entries.append(SymbolIndexEntry(path=path, name=directory, kind="dir"))
+            dirs[:] = safe_dirs
 
             for file_name in files:
                 if file_name.startswith(".") and file_name != ".autopatch-j":
@@ -94,6 +105,8 @@ class SymbolIndex:
 
                 abs_file = os.path.join(root, file_name)
                 path = os.path.join(rel_root, file_name).replace(os.sep, "/")
+                if not self._is_indexable_path(path):
+                    continue
                 current_mtime = os.path.getmtime(abs_file)
 
                 all_entries.append(SymbolIndexEntry(path=path, name=file_name, kind="file", mtime=current_mtime))
@@ -110,6 +123,14 @@ class SymbolIndex:
             conn.commit()
 
         return self.get_stats()
+
+    def _is_indexable_path(self, path: str) -> bool:
+        try:
+            resolved = resolve_repo_path(self.repo_root, path)
+            repo_path = to_repo_relative_path(self.repo_root, resolved)
+        except UnsafeRepoPathError:
+            return False
+        return not is_project_state_path(repo_path)
 
     def search(self, query: str, limit: int = 20) -> list[SymbolIndexEntry]:
         with self._connect() as conn:

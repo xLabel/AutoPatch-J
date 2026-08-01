@@ -57,6 +57,32 @@ def test_ignored_dirs(tmp_path: Path):
     assert len(results) == 0
 
 
+def test_rebuild_index_excludes_state_symlinks_but_keeps_safe_source_symlinks(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / ".autopatch-j" / "StateOnly.java"
+    safe_file = tmp_path / "src" / "SafeSource.java"
+    state_file.parent.mkdir(parents=True)
+    safe_file.parent.mkdir(parents=True)
+    state_file.write_text("class StateOnly {}", encoding="utf-8")
+    safe_file.write_text("class SafeSource {}", encoding="utf-8")
+    (tmp_path / "StateAlias.java").symlink_to(state_file)
+    (tmp_path / "SafeAlias.java").symlink_to(safe_file)
+
+    symbol_indexer = SymbolIndex(tmp_path)
+    symbol_indexer.rebuild_index()
+
+    indexed_paths = {
+        entry.path
+        for query in ("StateOnly", "StateAlias", "SafeSource", "SafeAlias")
+        for entry in symbol_indexer.search(query)
+    }
+    assert ".autopatch-j/StateOnly.java" not in indexed_paths
+    assert "StateAlias.java" not in indexed_paths
+    assert "src/SafeSource.java" in indexed_paths
+    assert "SafeAlias.java" in indexed_paths
+
+
 def test_symbol_indexer_marks_symbol_extract_degraded_when_dependency_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

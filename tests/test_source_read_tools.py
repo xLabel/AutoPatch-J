@@ -244,3 +244,28 @@ def test_source_path_symlink_resolving_into_project_state_is_blocked(
         )
         == ""
     )
+
+
+def test_project_scope_excludes_state_symlinks_but_keeps_safe_source_symlinks(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / ".autopatch-j" / "StateOnly.java"
+    safe_file = tmp_path / "src" / "SafeSource.java"
+    state_file.parent.mkdir(parents=True)
+    safe_file.parent.mkdir(parents=True)
+    state_file.write_text("class StateOnly {}", encoding="utf-8")
+    safe_file.write_text("class SafeSource {}", encoding="utf-8")
+    (tmp_path / "StateAlias.java").symlink_to(state_file)
+    (tmp_path / "SafeAlias.java").symlink_to(safe_file)
+
+    symbol_index = SymbolIndex(tmp_path)
+    scope = ScopeResolver(tmp_path, symbol_index).resolve(
+        "",
+        default_to_project=True,
+    )
+
+    assert scope is not None
+    assert "src/SafeSource.java" in scope.focus_files
+    assert "SafeAlias.java" in scope.focus_files
+    assert ".autopatch-j/StateOnly.java" not in scope.focus_files
+    assert "StateAlias.java" not in scope.focus_files

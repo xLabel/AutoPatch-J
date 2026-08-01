@@ -7,8 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from autopatch_j.core.finding import SourceRegion
-from autopatch_j.core.project import SourceReader, UnsafeRepoPathError, resolve_repo_path
-from autopatch_j.core.project import to_repo_relative_path
+from autopatch_j.core.project import (
+    SourceReader,
+    UnsafeRepoPathError,
+    is_project_state_path,
+    resolve_repo_path,
+    to_repo_relative_path,
+)
 from autopatch_j.scanners.models import Finding, ScanResult
 
 
@@ -276,6 +281,8 @@ def normalize_result_path(repo_root: Path, raw_path: str) -> tuple[str, Path]:
             normalized = to_repo_relative_path(repo_root, resolved)
     except UnsafeRepoPathError as exc:
         raise ValueError(f"finding path 超出仓库范围：{raw_path}") from exc
+    if is_project_state_path(normalized):
+        raise ValueError(f"finding path 不属于源码范围：{raw_path}")
     return normalized, resolved
 
 

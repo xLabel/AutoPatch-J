@@ -620,7 +620,7 @@ class MemoryStore:
         if existing is not None:
             raise MemorySchemaError(
                 "拒绝把 user_version=0 且包含未知 schema object 的 "
-                "Memory database 静默升级到 v3: "
+                f"Memory database 静默升级到 v{MEMORY_SCHEMA_VERSION}: "
                 f"{existing['type']}:{existing['name']}"
             )
         return version

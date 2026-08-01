@@ -186,3 +186,67 @@ def test_malformed_finding_discards_entire_scan(
 
     assert result.status == "error"
     assert result.findings == []
+
+
+@pytest.mark.parametrize(
+    "finding_path",
+    [
+        ".autopatch-j/StateOnly.java",
+        "StateAlias.java",
+    ],
+)
+def test_state_finding_path_discards_entire_scan_without_exposing_source(
+    tmp_path: Path,
+    finding_path: str,
+) -> None:
+    safe_source = "class Demo { void run() { weak(); } }"
+    state_source = (
+        'class StateOnly { String value = "STATE_FINDING_SECRET"; '
+        "void run() { weak(); } }"
+    )
+    (tmp_path / "Demo.java").write_text(safe_source, encoding="utf-8")
+    state_file = tmp_path / ".autopatch-j" / "StateOnly.java"
+    state_file.parent.mkdir(parents=True)
+    state_file.write_text(state_source, encoding="utf-8")
+    (tmp_path / "StateAlias.java").symlink_to(state_file)
+
+    result = build_semgrep_scan_result(
+        payload={
+            "results": [
+                _raw_result(safe_source, 0),
+                _raw_result(state_source, 0, path=finding_path),
+            ],
+            "errors": [],
+        },
+        repo_root=tmp_path,
+        scope=["Demo.java"],
+        targets=["Demo.java"],
+    )
+
+    assert result.status == "error"
+    assert result.findings == []
+    assert "不属于源码范围" in result.message
+    assert "STATE_FINDING_SECRET" not in result.message
+
+
+def test_safe_source_symlink_finding_is_canonicalized(tmp_path: Path) -> None:
+    source = "class SafeSource { void run() { weak(); } }"
+    source_file = tmp_path / "src" / "SafeSource.java"
+    source_file.parent.mkdir(parents=True)
+    source_file.write_text(source, encoding="utf-8")
+    (tmp_path / "SafeAlias.java").symlink_to(source_file)
+
+    result = build_semgrep_scan_result(
+        payload={
+            "results": [_raw_result(source, 0, path="SafeAlias.java")],
+            "errors": [],
+        },
+        repo_root=tmp_path,
+        scope=["SafeAlias.java"],
+        targets=["src/SafeSource.java"],
+    )
+
+    assert result.status == "ok"
+    assert len(result.findings) == 1
+    assert result.findings[0].path == "src/SafeSource.java"
+    assert "weak()" in result.findings[0].snippet

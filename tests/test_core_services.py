@@ -317,6 +317,28 @@ def test_semgrep_target_selection_rejects_paths_outside_repo(tmp_path: Path) -> 
     assert select_semgrep_targets(tmp_path, ["Demo.java", "../Outside.java"]) == ["Demo.java"]
 
 
+def test_semgrep_target_selection_excludes_state_symlinks_but_keeps_safe_source_symlinks(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / ".autopatch-j" / "StateOnly.java"
+    safe_file = tmp_path / "src" / "SafeSource.java"
+    state_file.parent.mkdir(parents=True)
+    safe_file.parent.mkdir(parents=True)
+    state_file.write_text("class StateOnly {}", encoding="utf-8")
+    safe_file.write_text("class SafeSource {}", encoding="utf-8")
+    (tmp_path / "StateAlias.java").symlink_to(state_file)
+    (tmp_path / "SafeAlias.java").symlink_to(safe_file)
+
+    assert select_semgrep_targets(
+        tmp_path,
+        [
+            ".autopatch-j/StateOnly.java",
+            "StateAlias.java",
+            "SafeAlias.java",
+        ],
+    ) == ["src/SafeSource.java"]
+
+
 def test_semgrep_scanner_reports_invalid_json_output(tmp_path: Path, monkeypatch) -> None:
     java_file = tmp_path / "Demo.java"
     java_file.write_text("class Demo {}", encoding="utf-8")

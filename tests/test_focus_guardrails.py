@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 from autopatch_j.agent.agent import Agent
 from autopatch_j.agent.session import AgentSession
 from autopatch_j.core.patching import PatchQualityVerifier, SearchReplacePatchEngine
-from autopatch_j.core.project import SourceReader, SymbolIndex
+from autopatch_j.core.project import SourceReader, SymbolIndex, SymbolIndexEntry
 from autopatch_j.core.review import ProjectArtifactStore, ReviewWorkspaceManager
 from autopatch_j.tools.function_calls.propose_patch import ProposePatchTool
 from autopatch_j.tools.function_calls.read_source_context import ReadSourceContextTool
@@ -100,6 +100,39 @@ def test_focus_lock_filters_symbol_search_results(tmp_path: Path) -> None:
     assert allowed.status == "ok"
     assert "LegacyConfig.java" in allowed.message
     assert "AppConfig.java" not in allowed.message
+
+
+def test_symbol_search_filters_stale_state_entries_without_focus_lock(
+    tmp_path: Path,
+) -> None:
+    state_file = tmp_path / ".autopatch-j" / "StateOnly.java"
+    safe_file = tmp_path / "src" / "SafeSource.java"
+    state_file.parent.mkdir(parents=True)
+    safe_file.parent.mkdir(parents=True)
+    state_file.write_text("class SharedSymbol {}", encoding="utf-8")
+    safe_file.write_text("class SharedSymbol {}", encoding="utf-8")
+    (tmp_path / "StateAlias.java").symlink_to(state_file)
+    (tmp_path / "SafeAlias.java").symlink_to(safe_file)
+    agent = _build_agent(tmp_path)
+    agent.session.symbol_indexer.search = lambda query, limit=20: [  # type: ignore[method-assign]
+        SymbolIndexEntry(
+            path="StateAlias.java",
+            name="SharedSymbol",
+            kind="class",
+        ),
+        SymbolIndexEntry(
+            path="SafeAlias.java",
+            name="SharedSymbol",
+            kind="class",
+        ),
+    ]
+
+    assert agent.session.is_focus_locked() is False
+    result = SearchSymbolsTool(agent.session).execute("SharedSymbol")
+
+    assert result.status == "ok"
+    assert result.payload == ["SafeAlias.java"]
+    assert "StateAlias.java" not in result.message
 
 
 def test_source_reader_uses_same_turn_cache(tmp_path: Path) -> None:

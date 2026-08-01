@@ -12,7 +12,11 @@ from typing import Any
 import pytest
 
 from autopatch_j.core.memory import MemoryManager
-from autopatch_j.core.memory.constants import JOB_LEASE_SECONDS, TURN_LEASE_SECONDS
+from autopatch_j.core.memory.constants import (
+    JOB_LEASE_SECONDS,
+    MEMORY_SCHEMA_VERSION,
+    TURN_LEASE_SECONDS,
+)
 from autopatch_j.core.memory.errors import (
     MemoryContractError,
     MemoryLeaseError,
@@ -354,7 +358,10 @@ def test_unknown_unversioned_schema_is_not_mutated_and_clear_is_explicit(
 
     manager = MemoryManager(db_path=db_path)
 
-    assert manager.status().degraded
+    status = manager.status()
+    assert status.degraded
+    assert f"v{MEMORY_SCHEMA_VERSION}" in status.last_error
+    assert "table:foreign_data" in status.last_error
     assert db_path.read_bytes() == before
     exported = manager.export(tmp_path / "exports")
     payload = json.loads(exported.path.read_text(encoding="utf-8"))
@@ -363,7 +370,10 @@ def test_unknown_unversioned_schema_is_not_mutated_and_clear_is_explicit(
     manager.clear()
     assert manager.status().healthy
     with sqlite3.connect(db_path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert (
+            connection.execute("PRAGMA user_version").fetchone()[0]
+            == MEMORY_SCHEMA_VERSION
+        )
         assert connection.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE name = 'foreign_data'"
         ).fetchone()[0] == 0

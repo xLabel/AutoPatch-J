@@ -28,9 +28,11 @@ class SearchSymbolsTool(FunctionTool):
     def execute(self, query: Annotated[str, ToolArg("要搜索的类名、方法名、接口名或文件名关键词。")]) -> ToolExecutionResult:
         context = self.require_context()
         symbol_indexer = context.symbol_indexer
-        results = symbol_indexer.search(query, limit=10)
-        if context.is_focus_locked():
-            results = [entry for entry in results if context.is_path_in_focus(entry.path)]
+        results = [
+            entry
+            for entry in symbol_indexer.search(query, limit=10)
+            if context.is_path_in_focus(entry.path)
+        ]
 
         if not results:
             return ToolExecutionResult(
