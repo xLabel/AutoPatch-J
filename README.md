@@ -1,7 +1,9 @@
+
+
 <h1 align="center">AutoPatch-J</h1>
 
 <p align="center">面向 Java 仓库的代码修复 Agent，自动审阅代码，并针对发现的问题生成高质量补丁。</p>
-<p align="center">它既可以在本地 CLI 中使用，也可以接入 CI/CD。</p>
+<p align="center">它既可以在本地 CLI 中使用（Python 3.10+），也可以接入 CI/CD。</p>
 <p align="center">持续交付经得起审查和验证的补丁。</p>
 
 <p align="center">
