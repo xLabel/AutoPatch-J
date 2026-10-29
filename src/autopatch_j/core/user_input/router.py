@@ -1,26 +1,16 @@
-from __future__ import annotations
+"""审核会话的显式信号与语义分类结果，不依赖模型 SDK。"""
 
-import re
-from dataclasses import dataclass
+from collections.abc import Callable
+import dataclasses
 
-from autopatch_j.core.domain.intent import ConversationRoute
-from autopatch_j.core.domain.scope import CodeScope
-from autopatch_j.core.user_input.diagnostics import RouteClassificationResult
-from autopatch_j.core.user_input.prompts import REVIEW_ROUTE_CLASSIFIER_PROMPT, build_review_route_user_prompt
-from autopatch_j.llm.client import LLMClient
-from autopatch_j.llm.context_window import (
-    ContextCapacityError,
-    ModelContextProfile,
-    fit_last_user_message,
-)
-from autopatch_j.llm.diagnostics import format_raw_llm_exception
-from autopatch_j.llm.options import LLMCallPurpose
+from autopatch_j.core.domain import intent
+from autopatch_j.core.domain import scope
+from autopatch_j.core.user_input import diagnostics
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class ReviewRouteClassifier:
-    """
-    pending review 场景下的会话连续性路由器。
+    """pending review 场景下的会话连续性路由器。
 
     职责边界：
     1. 判断用户输入是继续当前补丁审核、发起新任务，还是系统命令。
@@ -28,16 +18,23 @@ class ReviewRouteClassifier:
     3. 不分类具体业务意图；route 确定后才由 UserIntentClassifier 决定工作流类型。
     """
 
-    llm: LLMClient | None = None
+    classify_with_llm: (
+        Callable[
+            [str, str | None, scope.CodeScope | None],
+            tuple[intent.ConversationRoute | None, str],
+        ]
+        | None
+    ) = None
 
     def classify_route(
         self,
         user_text: str,
         has_pending_review: bool,
-        requested_scope: CodeScope | None,
+        requested_scope: scope.CodeScope | None,
         current_patch_file: str | None,
-        current_scope: CodeScope | None,
-    ) -> ConversationRoute:
+        current_scope: scope.CodeScope | None,
+    ) -> intent.ConversationRoute:
+        """判断是否继续当前审核，显式新范围优先于模型分类。"""
         return self.classify_route_with_diagnostics(
             user_text=user_text,
             has_pending_review=has_pending_review,
@@ -50,91 +47,39 @@ class ReviewRouteClassifier:
         self,
         user_text: str,
         has_pending_review: bool,
-        requested_scope: CodeScope | None,
+        requested_scope: scope.CodeScope | None,
         current_patch_file: str | None,
-        current_scope: CodeScope | None,
-    ) -> RouteClassificationResult:
+        current_scope: scope.CodeScope | None,
+    ) -> diagnostics.RouteClassificationResult:
+        """返回审核路由及分类失败原因，失败默认继续审核。"""
         stripped = user_text.strip()
         if stripped.startswith("/"):
-            return RouteClassificationResult(route=ConversationRoute.COMMAND, source="explicit_command")
+            return diagnostics.RouteClassificationResult(
+                route=intent.ConversationRoute.COMMAND,
+                source="explicit_command",
+            )
         if not has_pending_review:
-            return RouteClassificationResult(route=ConversationRoute.NEW_TASK, source="no_pending_review")
+            return diagnostics.RouteClassificationResult(
+                route=intent.ConversationRoute.NEW_TASK,
+                source="no_pending_review",
+            )
         if "@" in user_text or requested_scope is not None:
-            return RouteClassificationResult(route=ConversationRoute.NEW_TASK, source="explicit_scope")
+            return diagnostics.RouteClassificationResult(
+                route=intent.ConversationRoute.NEW_TASK, source="explicit_scope"
+            )
 
-        llm_route, error = self._fetch_route_by_llm(
-            user_text=user_text,
-            current_patch_file=current_patch_file,
-            current_scope=current_scope,
+        llm_route, error = (
+            self.classify_with_llm(user_text, current_patch_file, current_scope)
+            if self.classify_with_llm is not None
+            else (None, "未配置路由分类器")
         )
         if llm_route is not None:
-            return RouteClassificationResult(route=llm_route, source="llm", fallback_reason=error)
-        return RouteClassificationResult(
-            route=ConversationRoute.REVIEW_CONTINUE,
+            return diagnostics.RouteClassificationResult(
+                route=llm_route, source="llm", fallback_reason=error
+            )
+        return diagnostics.RouteClassificationResult(
+            route=intent.ConversationRoute.REVIEW_CONTINUE,
             source="fallback",
             fallback_reason=error or "route classifier returned no valid route",
             error=error,
         )
-
-    def _fetch_route_by_llm(
-        self,
-        user_text: str,
-        current_patch_file: str | None,
-        current_scope: CodeScope | None,
-    ) -> tuple[ConversationRoute | None, str]:
-        if self.llm is None:
-            return None, "route classifier llm is not configured"
-
-        scope_summary = (
-            ", ".join(current_scope.focus_files)
-            if current_scope and current_scope.focus_files
-            else "无"
-        )
-        messages = [
-            {"role": "system", "content": REVIEW_ROUTE_CLASSIFIER_PROMPT},
-            {"role": "user", "content": build_review_route_user_prompt(user_text, current_patch_file, scope_summary)},
-        ]
-        profile = getattr(self.llm, "context_profile", None)
-        if isinstance(profile, ModelContextProfile):
-            try:
-                messages = fit_last_user_message(
-                    messages,
-                    input_capacity=profile.input_capacity,
-                )
-            except ContextCapacityError as exc:
-                return None, f"route classifier capacity: {exc}"
-        route, error = self._fetch_route_with_purpose(messages, LLMCallPurpose.CLASSIFIER)
-        return route, error
-
-    def _fetch_route_with_purpose(
-        self,
-        messages: list[dict[str, str]],
-        purpose: LLMCallPurpose,
-    ) -> tuple[ConversationRoute | None, str]:
-        if self.llm is None:
-            return None, "route classifier llm is not configured"
-        try:
-            response = self.llm.chat(
-                messages=messages,
-                tools=None,
-                purpose=purpose,
-            )
-        except Exception as exc:
-            return None, (
-                f"{purpose.name.lower()} exception: {format_raw_llm_exception(exc)}"
-            )
-        route = self._parse_route(str(response.content))
-        if route is None:
-            return None, f"{purpose.name.lower()} returned invalid route"
-        return route, ""
-
-    def _parse_route(self, raw_text: str) -> ConversationRoute | None:
-        normalized = re.sub(r"[^A-Z_]", "", raw_text.upper())
-        compact = normalized.replace("_", "")
-        if "NEWTASK" in compact:
-            return ConversationRoute.NEW_TASK
-        if "REVIEWCONTINUE" in compact:
-            return ConversationRoute.REVIEW_CONTINUE
-        if "COMMAND" in compact:
-            return ConversationRoute.COMMAND
-        return None

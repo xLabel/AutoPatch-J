@@ -1,51 +1,118 @@
-from __future__ import annotations
+"""完整请求容量预检：schema、中文和设置同样计入。"""
 
+import asyncio
+
+from pydantic_ai import messages
+from pydantic_ai import models
+from pydantic_ai import settings as model_settings
+from pydantic_ai import tools
+from pydantic_ai.models import test
 import pytest
 
-from autopatch_j.llm.context_window import (
-    estimate_messages_tokens,
-    estimate_text_tokens,
-    estimate_tools_tokens,
-    resolve_context_profile,
-)
+from autopatch_j.llm import context_window
+from autopatch_j.llm import policy
 
 
-@pytest.mark.parametrize("model", ["deepseek-v4-flash", "deepseek-v4-pro"])
-def test_deepseek_profile_separates_capability_and_operation_budgets(model: str) -> None:
-    profile = resolve_context_profile(model=model)
-
-    assert profile.context_window == 1_000_000
-    assert profile.provider_max_output_tokens == 384_000
-    assert profile.input_capacity == 840_000
+def test_deepseek_capacity_uses_official_window_and_application_budget():
+    profile = context_window.resolve_context_profile(model="deepseek-flash")
+    assert profile.context_window == 1_048_576
+    assert profile.provider_max_output_tokens == 393_216
+    assert profile.input_capacity == 887_808
     assert profile.max_output_tokens == 128_000
-    assert profile.provider_safety_tokens == 32_000
 
 
-def test_unknown_profile_accepts_explicit_capacity() -> None:
-    profile = resolve_context_profile(
-        model="private-deepseek",
-        context_window=1_000_000,
-        max_output_tokens=20_000,
+@pytest.mark.parametrize(
+    "model",
+    ["deepseek-chat", "deepseek-reasoner", "deepseek-v4-flash", "custom"],
+)
+def test_unknown_models_require_explicit_capacities(model):
+    with pytest.raises(ValueError):
+        context_window.resolve_context_profile(model=model)
+
+
+def test_schemas_and_chinese_are_included_without_clipping():
+    profile = context_window.ModelContextProfile("test", 1000, 100, 100, 100)
+    model = policy.CapacityGuard(test.TestModel(), profile)
+    history: list[messages.ModelMessage] = [
+        messages.ModelRequest(
+            parts=[messages.UserPromptPart("当前用户必须保留")]
+        )
+    ]
+    parameters = models.ModelRequestParameters(
+        function_tools=[
+            tools.ToolDefinition(
+                name="read_source",
+                parameters_json_schema={"description": "中文" * 200},
+            )
+        ]
     )
+    with pytest.raises(policy.ContextCapacityError):
+        asyncio.run(model.request(history, {"max_tokens": 100}, parameters))
+    request = history[0]
+    assert isinstance(request, messages.ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, messages.UserPromptPart)
+    assert part.content == "当前用户必须保留"
+    assert policy.text_units("中文") == 6
 
-    assert profile.input_capacity == 963_616
 
-
-def test_invalid_profile_is_rejected() -> None:
-    with pytest.raises(ValueError, match="未知模型"):
-        resolve_context_profile(model="private")
-    with pytest.raises(ValueError, match="必须大于"):
-        resolve_context_profile(
-            model="private",
-            context_window=20_000,
-            max_output_tokens=10_000,
+def test_output_reservation_is_checked_even_for_short_prompt():
+    profile = context_window.ModelContextProfile("test", 1000, 900, 900, 100)
+    model = policy.CapacityGuard(test.TestModel(), profile)
+    with pytest.raises(policy.ContextCapacityError):
+        asyncio.run(
+            model.request(
+                [messages.ModelRequest(parts=[messages.UserPromptPart("x")])],
+                {"max_tokens": 900},
+                models.ModelRequestParameters(),
+            )
         )
 
 
-def test_token_estimator_counts_utf8_messages_and_tools() -> None:
-    assert estimate_text_tokens("中文") == 2
-    messages = [{"role": "user", "content": "解释 UserService"}]
-    tools = [{"type": "function", "function": {"name": "memory_search"}}]
-
-    assert estimate_messages_tokens(messages) > estimate_text_tokens("解释 UserService")
-    assert estimate_tools_tokens(tools) > 0
+@pytest.mark.parametrize(
+    "component", ["user", "instructions", "output_schema", "settings"]
+)
+def test_required_context_is_rejected_before_sdk_transport(
+    component, sdk_scenario
+):
+    scenario = sdk_scenario([])
+    runtime = scenario.runtime()
+    profile = context_window.ModelContextProfile("test", 1000, 100, 100, 100)
+    assert runtime.model is not None
+    guarded = policy.CapacityGuard(runtime.model, profile)
+    history: list[messages.ModelMessage] = [
+        messages.ModelRequest(
+            parts=[
+                messages.UserPromptPart(
+                    "必需中文证据" * 100 if component == "user" else "短问题"
+                )
+            ]
+        )
+    ]
+    parameters = models.ModelRequestParameters()
+    settings: model_settings.ModelSettings = {"max_tokens": 100}
+    if component == "instructions":
+        parameters = models.ModelRequestParameters(
+            instruction_parts=[
+                messages.InstructionPart("当前用户的必要约束" * 100)
+            ]
+        )
+    elif component == "output_schema":
+        parameters = models.ModelRequestParameters(
+            output_tools=[
+                tools.ToolDefinition(
+                    name="answer",
+                    parameters_json_schema={
+                        "description": "完整中文输出结构" * 100
+                    },
+                )
+            ]
+        )
+    elif component == "settings":
+        settings["extra_body"] = {"required_context": "附加必需输入" * 100}
+    try:
+        with pytest.raises(policy.ContextCapacityError):
+            runtime.run(guarded.request(history, settings, parameters))
+        assert scenario.requests == []
+    finally:
+        runtime.close()

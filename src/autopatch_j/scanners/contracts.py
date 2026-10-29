@@ -1,20 +1,26 @@
+"""扫描器的标准元信息与扫描结果接口。"""
+
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from pathlib import Path
+import abc
+import pathlib
 
-from autopatch_j.scanners.models import ScannerMeta, ScannerName, ScanResult
+from autopatch_j.scanners import models
 
 
-class StaticScanner(ABC):
-    """Static Java scanner contract used by audit and patch verification flows."""
+class StaticScanner(abc.ABC):
+    """审计与应用后验证共用的 Java 扫描器契约。"""
 
-    name: ScannerName
+    name: models.ScannerName
 
-    @abstractmethod
-    def get_meta(self, repo_root: Path | None = None) -> ScannerMeta:
-        """Return scanner capability and readiness metadata."""
+    @abc.abstractmethod
+    def get_meta(
+        self, repo_root: pathlib.Path | None = None
+    ) -> models.ScannerMeta:
+        """返回扫描器实际能力和就绪状态。"""
 
-    @abstractmethod
-    def scan(self, repo_root: Path, scope: list[str]) -> ScanResult:
-        """Scan the given repository scope and return a normalized result."""
+    @abc.abstractmethod
+    def scan(
+        self, repo_root: pathlib.Path, scope: list[str]
+    ) -> models.ScanResult:
+        """扫描指定仓库范围，返回完整标准结果或明确失败。"""

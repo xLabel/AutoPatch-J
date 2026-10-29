@@ -1,44 +1,48 @@
+"""解析后的命令动作及人工决定的终端反馈。"""
+
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Protocol
+import pathlib
+import sqlite3
+from typing import Protocol
 
-from rich.table import Table
+from pydantic_ai_harness import memory as sdk_memory
+from rich import table
 
-from autopatch_j.cli.commands import CLI_COMMANDS
-from autopatch_j.cli.memory_presenter import MemoryPresenter
-from autopatch_j.cli.render import DECISION_STYLE, SYSTEM_STYLE
-from autopatch_j.cli.runtime import CliRuntime
-from autopatch_j.cli.status_presenter import StatusPresenter
-from autopatch_j.config import GlobalConfig
-from autopatch_j.core.patching import (
-    PatchApplicationResult,
-    SearchReplacePatchDraft,
-    VerificationOutcome,
-)
-from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
+from autopatch_j.cli import commands
+from autopatch_j.cli import render
+from autopatch_j.cli import runtime as cli_runtime
+from autopatch_j.cli import status_presenter
+from autopatch_j.core.patching import types
+from autopatch_j.scanners.semgrep import runtime as semgrep_runtime
 
 
 class CliHostActions(Protocol):
-    """
-    命令处理器需要调用的 CLI 主机能力。
+    """命令处理器需要调用的 CLI 主机能力。
 
     这里保留生命周期动作和当前 runtime 引用，避免命令层依赖完整 app 实现。
     """
 
-    cwd: Path
-    repo_root: Path | None
-    renderer: Any
-    runtime: CliRuntime | None
+    cwd: pathlib.Path
+    repo_root: pathlib.Path | None
+    renderer: render.CliRenderer
+    runtime: cli_runtime.CliRuntime | None
 
-    def initialize_runtime(self, repo_root: Path) -> None: ...
-    def reset_project_state(self) -> None: ...
-    def request_exit(self, message: str | None = None) -> None: ...
+    def initialize_runtime(self, repo_root: pathlib.Path) -> None:
+        """为目标项目装配运行时并交还旧资源。"""
+        ...
+
+    def reset_project_state(self) -> None:
+        """清理工作台并关闭运行时，保留独立用户数据。"""
+        ...
+
+    def request_exit(self, message: str | None = None) -> None:
+        """完成资源关闭后退出 CLI。"""
+        ...
 
 
 class CommandHandlers:
-    """
-    斜杠命令和补丁确认动作的具体处理器。
+    """斜杠命令和补丁确认动作的具体处理器。
 
     它只执行已解析的命令；自然语言路由由 UserInputRouter 负责。
     """
@@ -47,41 +51,64 @@ class CommandHandlers:
         self.host = host
 
     def handle_help(self, args: list[str] | None = None) -> None:
-        sys_table = Table(show_header=True, header_style=f"bold {SYSTEM_STYLE}", box=None)
-        sys_table.add_column("系统命令", style=SYSTEM_STYLE, width=15)
+        """展示已注册系统命令与人工审核操作。"""
+        del args
+        sys_table = table.Table(
+            show_header=True,
+            header_style=f"bold {render.SYSTEM_STYLE}",
+            box=None,
+        )
+        sys_table.add_column("系统命令", style=render.SYSTEM_STYLE, width=15)
         sys_table.add_column("功能描述")
-        for command in CLI_COMMANDS:
+        for command in commands.CLI_COMMANDS:
             if command.show_in_help:
                 sys_table.add_row(command.name, command.help_description)
 
-        act_table = Table(show_header=True, header_style=f"bold {DECISION_STYLE}", box=None)
-        act_table.add_column("交互关键字", style=DECISION_STYLE, width=15)
+        act_table = table.Table(
+            show_header=True,
+            header_style=f"bold {render.DECISION_STYLE}",
+            box=None,
+        )
+        act_table.add_column(
+            "交互关键字", style=render.DECISION_STYLE, width=15
+        )
         act_table.add_column("用法说明")
         act_table.add_row("@符号", "补全文件或目录")
         act_table.add_row("apply", "应用当前补丁预览")
         act_table.add_row("discard", "丢弃当前补丁草案")
         act_table.add_row("abort", "中止审核并丢弃剩余所有补丁")
 
-        self.host.renderer.print_panel("命令帮助", style=SYSTEM_STYLE)
+        self.host.renderer.print_panel("命令帮助", style=render.SYSTEM_STYLE)
         self.host.renderer.print_table(sys_table)
         self.host.renderer.print_blank()
         self.host.renderer.print_heading("交互说明")
         self.host.renderer.print_table(act_table)
 
     def handle_reset(self, args: list[str] | None = None) -> None:
+        """重置工作台并展示保留数据的边界。"""
+        del args
         self.host.reset_project_state()
         self.host.renderer.print_success(
-            "项目工作台已重置；Memory、Memory 导出和 CLI history 已保留。"
-            "如需清空 Memory，请执行 /memory clear --confirm。"
+            "项目工作台已重置；普通会话、项目笔记、导出和终端历史已保留。"
+            "如需清空 Memory，请执行 /memory clear --"
+            "confirm。"
         )
 
     def handle_scanners(self, args: list[str] | None = None) -> None:
-        StatusPresenter(self.host.renderer).render_scanners(self.host.repo_root)
+        """展示实际扫描器实现及可用性，不触发安装。"""
+        del args
+        status_presenter.StatusPresenter(self.host.renderer).render_scanners(
+            self.host.repo_root
+        )
 
     def handle_quit(self, args: list[str] | None = None) -> None:
+        """完成退出收尾，再结束 CLI 进程。"""
+        del args
         self.host.request_exit()
 
     def handle_init(self, args: list[str] | None = None) -> None:
+        """准备受管扫描器并重建索引；清空原审核工作台。"""
+        del args
         if self.host.repo_root is None:
             self.host.renderer.print_error("未检测到项目根目录，无法初始化。")
             return
@@ -93,231 +120,151 @@ class CommandHandlers:
             return
         runtime.workspace_manager.clear()
 
-        status, _ = install_managed_semgrep_runtime()
+        status, _ = semgrep_runtime.install_managed_semgrep_runtime()
         self.host.renderer.print_step(f"扫描器运行时自检: {status}")
 
         stats = runtime.symbol_indexer.rebuild_index()
-        self.host.renderer.print_success(f"初始化完成，索引 {stats.get('total', 0)} 项")
+        self.host.renderer.print_success(
+            f"初始化完成，索引 {stats.get("total", 0)} 项"
+        )
 
         if stats.get("class", 0) == 0 and stats.get("method", 0) == 0:
             self.host.renderer.print_panel(
-                "[bold yellow]索引构建完成，但未提取到任何 Java 类或方法！[/]\n"
-                "这似乎不是一个标准的 Java 源码项目，AutoPatch-J 的大模型上下文感知能力将严重受限。",
+                "[bold yellow]索引构建完成，但未提取到任何 Java"
+                " 类或方法！[/]\n"
+                "这似乎不是一个标准的 Java 源码项目，AutoPatch-J"
+                " 的大模型上下文感知能力将严重受限。",
                 title="警告",
                 style="bold yellow",
             )
 
     def handle_status(self, args: list[str] | None = None) -> None:
-        StatusPresenter(self.host.renderer).render_status(self.host.runtime, self.host.repo_root)
+        """展示当前配置和工作台诊断，不发送模型请求。"""
+        del args
+        status_presenter.StatusPresenter(self.host.renderer).render_status(
+            self.host.runtime, self.host.repo_root
+        )
 
     def handle_reindex(self, args: list[str] | None = None) -> None:
+        """重建当前项目符号索引，保留会话和审核工作台。"""
+        del args
         runtime = self._require_runtime()
         if runtime is None:
             return
         self.host.renderer.print_step("正在重新构建索引...")
         stats = runtime.symbol_indexer.rebuild_index()
-        self.host.renderer.print_success(f"索引刷新完成，累计 {stats.get('total', 0)} 项")
+        self.host.renderer.print_success(
+            f"索引刷新完成，累计 {stats.get("total", 0)} 项"
+        )
 
     def handle_new(self, args: list[str] | None = None) -> None:
+        """归档普通会话、清理待审草案和临时要求，保留长期笔记。"""
+        del args
         runtime = self._require_runtime()
         if runtime is None:
             return
 
-        old_thread = runtime.memory_manager.ensure_active_thread()
-        self._flush_memory_watermark(runtime, thread_id=old_thread.id)
-        had_pending_patch = runtime.workspace_manager.load().has_pending_patch()
+        conversation_id = runtime.model_runtime.run(runtime.conversations.new())
         runtime.workspace_manager.clear()
         runtime.agent.reset_history()
-        new_thread = runtime.memory_manager.start_new_thread(expected_thread_id=old_thread.id)
-        if had_pending_patch:
-            self.host.renderer.print_agent_text("已中止待确认补丁并清空 review workspace。")
-        self.host.renderer.print_success(f"已创建新的普通对话 thread：{new_thread.id}")
+        self.host.renderer.print_success(
+            f"已开启新普通会话：{conversation_id}；项目笔记已保留。"
+        )
 
     def handle_memory(self, args: list[str] | None = None) -> None:
+        """执行显式笔记管理操作；冲突或存储异常准确显示为未完成。"""
         runtime = self._require_runtime()
         if runtime is None:
             return
-        command_args = args or []
-        if not command_args:
-            self._render_memory_usage()
-            return
-
-        subcommand = command_args[0].lower()
-        rest = command_args[1:]
-        presenter = MemoryPresenter(
-            self.host.renderer,
-            show_raw_errors=GlobalConfig.debug_mode,
-        )
+        command, *rest = args or [""]
+        run = runtime.model_runtime.run
+        notebook = runtime.memory
+        renderer = self.host.renderer
         try:
-            if subcommand == "status" and not rest:
-                presenter.render_status(
-                    runtime.memory_manager.status(),
-                    runtime.memory_manager.summary_status(),
+            if command in {"status", "list"} and not rest:
+                paths = run(notebook.paths())
+                renderer.print_agent_text(
+                    "项目笔记：" + ("、".join(paths) if paths else "空")
                 )
-                return
-            if subcommand == "summary" and not rest:
-                result = runtime.memory_manager.rebuild_summary()
-                status = result.status
-                if status.state == "current":
-                    self.host.renderer.print_success(
-                        "Memory 审阅摘要已更新："
-                        f"state=current，active items={status.active_item_count}，"
-                        f"path={status.path}。"
-                    )
-                else:
-                    self.host.renderer.print_error(
-                        "Memory 审阅摘要更新失败；SQLite Memory 不受影响。"
-                        f"状态={status.state}，路径={status.path}。"
-                    )
-                return
-            if subcommand == "list" and not rest:
-                presenter.render_list(runtime.memory_manager.list_items())
-                return
-            if subcommand == "show" and len(rest) == 1:
-                presenter.render_detail(runtime.memory_manager.show_item(rest[0]))
-                return
-            if subcommand == "forget" and len(rest) == 1:
-                result = runtime.memory_manager.forget(rest[0])
-                if result.forgotten:
-                    self.host.renderer.print_success(
-                        f"已忘记派生 Memory {result.memory_id}；原始 turn 仍被保留用于审计。"
-                    )
-                return
-            if subcommand == "clear":
-                if rest != ["--confirm"]:
-                    self.host.renderer.print_error(
-                        "清空会删除全部 thread、turn、派生 Memory 和 job；"
-                        "确认执行请使用 /memory clear --confirm。"
-                    )
-                    return
-                result = runtime.memory_manager.clear()
-                runtime.agent.reset_history()
-                self.host.renderer.print_success(
-                    "Memory 已清空并创建新 thread "
-                    f"{result.active_thread_id}；既有导出与 CLI history 未删除。"
+            elif command == "show" and len(rest) <= 1:
+                item = run(notebook.show(rest[0] if rest else "MEMORY.md"))
+                renderer.print_agent_text(
+                    item.content if item else "未找到该笔记。"
                 )
-                return
-            if subcommand == "export" and not rest:
-                result = runtime.memory_manager.export()
-                self.host.renderer.print_success(
-                    f"RAW Memory 已导出至 {result.path}（未脱敏，不会覆盖既有导出）。"
+            elif command == "forget" and len(rest) == 1:
+                run(notebook.forget(rest[0]))
+                renderer.print_success(
+                    "笔记已删除；普通会话中的历史内容仍保留。"
                 )
-                return
-        except LookupError as exc:
-            self.host.renderer.print_error(f"未找到 Memory：{exc}")
-            return
-        except Exception as exc:
-            self.host.renderer.print_error(f"Memory 命令执行失败：{exc}")
-            return
+            elif command == "clear" and rest == ["--confirm"]:
+                run(notebook.clear())
+                renderer.print_success(
+                    "项目笔记已清空；普通会话、导出和终端历史仍保留。"
+                )
+            elif command == "export" and not rest:
+                destination = run(notebook.export())
+                renderer.print_success(f"项目笔记已导出：{destination}")
+            else:
+                renderer.print_error(
+                    "用法：/memory status|list|show [path]|"
+                    "forget <path>|clear --confirm|expor"
+                    "t"
+                )
+        except (
+            sqlite3.DatabaseError,
+            OSError,
+            LookupError,
+            ValueError,
+            sdk_memory.MemoryConflictError,
+        ) as exc:
+            renderer.print_error(f"Memory 操作未完成：{exc}")
 
-        self._render_memory_usage()
-
-    def _flush_memory_once(self, runtime: CliRuntime, reason: str, thread_id: str | None = None) -> None:
-        try:
-            result = runtime.flush_memory_once(reason=reason, thread_id=thread_id)
-        except Exception as exc:
-            self.host.renderer.print_error(f"Memory 本次处理失败，任务已保留：{exc}")
-            return
-        if result.failed:
-            pending_suffix = (
-                f"；另有 pending={result.pending} 将继续处理"
-                if result.pending
-                else ""
-            )
-            self.host.renderer.print_error(
-                f"Memory 本次处理产生 terminal failed={result.failed}，"
-                f"不会自动重试{pending_suffix}。"
-            )
-        elif result.pending:
-            self.host.renderer.print_error(
-                f"Memory 本次处理仍有 pending={result.pending}，任务已保留。"
-            )
-
-    def _flush_memory_watermark(
-        self,
-        runtime: CliRuntime,
-        *,
-        thread_id: str,
-    ) -> None:
-        try:
-            result = runtime.flush_memory_watermark(
-                reason="new",
-                thread_id=thread_id,
-                wait_seconds=5,
-            )
-        except Exception as exc:
-            self.host.renderer.print_error(
-                f"Memory 本次处理失败，任务已保留：{exc}"
-            )
-            return
-        if result.failed:
-            pending_suffix = (
-                "；其他 pending 任务仍会在后台继续"
-                if result.pending
-                else ""
-            )
-            self.host.renderer.print_error(
-                "旧 thread Memory 存在 terminal failed，"
-                f"不会自动重试{pending_suffix}。"
-            )
-        elif result.pending:
-            self.host.renderer.print_error(
-                "旧 thread Memory 尚未完全物化；任务已保留并在后台继续。"
-            )
-        elif result.errors:
-            self.host.renderer.print_error(
-                "旧 thread Memory 处理已结束，但本次未生成可用 Memory；"
-                "任务已进入终态，不会在后台重试。原因："
-                + "；".join(result.errors)
-            )
-
-    def _render_memory_usage(self) -> None:
-        self.host.renderer.print_error(
-            "用法：/memory status|summary|list|show <id>|forget <id>|clear --confirm|export"
-        )
-
-    def handle_apply(self, pending: SearchReplacePatchDraft) -> PatchApplicationResult:
+    def handle_apply(
+        self, pending: types.SearchReplacePatchDraft
+    ) -> types.PatchApplicationResult:
+        """调用审核业务服务并分别展示写入事实与验证结论。"""
         runtime = self._require_runtime()
         if runtime is None:
-            return PatchApplicationResult(
+            return types.PatchApplicationResult(
                 applied=False,
                 error_code="RUNTIME_UNAVAILABLE",
                 message="系统未初始化，无法应用补丁。",
             )
-        if pending.error_code == "STALE_DRAFT":
-            result = PatchApplicationResult(
-                applied=False,
-                error_code="STALE_DRAFT",
-                message=pending.message,
-            )
-            self.host.renderer.print_error(f"应用失败 [STALE_DRAFT]：{pending.message}")
-            return result
         self.host.renderer.print_step(f"正在应用补丁至 {pending.file_path}...")
-        apply_result = runtime.patch_engine.apply_patch(pending)
-        if not apply_result.applied:
-            error_code = apply_result.error_code or "UNKNOWN"
-            self.host.renderer.print_error(f"应用失败 [{error_code}]：{apply_result.message}")
-            return apply_result
-
-        self.host.renderer.print_success("补丁已应用")
-
-        if runtime.patch_verifier:
-            result = runtime.patch_verifier.verify_finding_resolved(
-                pending,
-                apply_result,
+        outcome = runtime.review_service.apply(pending)
+        applied = outcome.application
+        if outcome.workspace_error:
+            self.host.renderer.print_error(outcome.workspace_error)
+        if not applied.applied:
+            self.host.renderer.print_error(
+                f"应用失败 [{applied.error_code or "UNKNOWN"}]：{applied.message}"
             )
-            if result.outcome is VerificationOutcome.RESOLVED:
-                self.host.renderer.print_success(result.message)
-            else:
-                self.host.renderer.print_error(result.message)
+            return applied
+        self.host.renderer.print_success("补丁已应用")
+        if outcome.workspace_error:
+            return applied
+        if outcome.queue_empty:
+            self.host.renderer.print_agent_text("补丁队列已清空")
+        if outcome.rebased or outcome.stale:
+            self.host.renderer.print_agent_text(
+                f"已重定位 {outcome.rebased} 个同文件待审补丁；{outcome.stale} 个补丁需重新扫描。"
+            )
+        verified = outcome.verification
+        if verified is None:
+            self.host.renderer.print_error(
+                "已应用；无法确认修复结果：未配置补丁验证器。"
+            )
+        elif verified.outcome is types.VerificationOutcome.RESOLVED:
+            self.host.renderer.print_success(verified.message)
         else:
-            self.host.renderer.print_error("无法确认修复结果：未配置补丁验证器。")
-        return apply_result
+            self.host.renderer.print_error(verified.message)
+        return applied
 
     def handle_discard(self) -> None:
+        """展示丢弃反馈；领域状态推进由审核服务负责。"""
         self.host.renderer.print_agent_text("已丢弃当前草案")
 
-    def _require_runtime(self) -> CliRuntime | None:
+    def _require_runtime(self) -> cli_runtime.CliRuntime | None:
         if self.host.runtime is None:
             self.host.renderer.print_error("系统未初始化，请先执行 /init")
             return None

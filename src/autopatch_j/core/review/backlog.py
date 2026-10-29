@@ -1,22 +1,18 @@
+"""按 finding 顺序推进草案处理，最多一次强制重读。"""
+
 from __future__ import annotations
 
+import dataclasses
 import re
-from dataclasses import dataclass
-from typing import Any
 
-from autopatch_j.core.domain.audit import (
-    AuditAttemptOutcome,
-    AuditFindingStatus,
-    FindingAttemptDecision,
-    FindingTask,
-)
-from autopatch_j.scanners.models import ScanResult
+from autopatch_j.core.domain import audit
+from autopatch_j.scanners import models
+from autopatch_j.tools import contract
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class FindingBacklog:
-    """
-    本轮审计 finding 队列的状态机。
+    """本轮审计 finding 队列的状态机。
 
     职责边界：
     1. 将 ScanResult 展开为 F1/F2 这类可逐个推进的 FindingTask。
@@ -24,11 +20,14 @@ class FindingBacklog:
     3. 不生成补丁、不调用 Agent，也不写 workspace；这些由 CLI workflow 协调。
     """
 
-    def build_from_scan_result(self, scan_result: ScanResult) -> list[FindingTask]:
-        backlog: list[FindingTask] = []
+    def build_from_scan_result(
+        self, scan_result: models.ScanResult
+    ) -> list[audit.FindingTask]:
+        """将完整成功扫描的 finding 按顺序分配本轮 F 句柄。"""
+        backlog: list[audit.FindingTask] = []
         for index, finding in enumerate(scan_result.findings, start=1):
             backlog.append(
-                FindingTask(
+                audit.FindingTask(
                     finding_id=f"F{index}",
                     file_path=finding.path,
                     check_id=finding.check_id,
@@ -40,27 +39,34 @@ class FindingBacklog:
             )
         return backlog
 
-    def current(self, backlog: list[FindingTask]) -> FindingTask | None:
+    def current(
+        self, backlog: list[audit.FindingTask]
+    ) -> audit.FindingTask | None:
+        """返回下一个待处理 finding，没有待办时返回 None。"""
         for item in backlog:
             if item.is_pending():
                 return item
         return None
 
-    def mark_patch_ready(self, backlog: list[FindingTask], finding_id: str) -> None:
+    def mark_patch_ready(
+        self, backlog: list[audit.FindingTask], finding_id: str
+    ) -> None:
+        """将指定 finding 标记为已有待审草案。"""
         item = self._fetch_item(backlog, finding_id)
         if item is None:
             return
-        item.status = AuditFindingStatus.PATCH_READY
+        item.status = audit.AuditFindingStatus.PATCH_READY
         item.last_error_code = None
         item.last_error_message = None
 
     def record_retry(
         self,
-        backlog: list[FindingTask],
+        backlog: list[audit.FindingTask],
         finding_id: str,
         error_code: str | None,
         error_message: str | None,
     ) -> None:
+        """记录本次强制重读次数及上次错误，不自动执行模型。"""
         item = self._fetch_item(backlog, finding_id)
         if item is None:
             return
@@ -70,84 +76,75 @@ class FindingBacklog:
 
     def mark_failed(
         self,
-        backlog: list[FindingTask],
+        backlog: list[audit.FindingTask],
         finding_id: str,
         error_code: str | None,
         error_message: str | None,
     ) -> None:
+        """保存指定 finding 的处理失败原因并结束该项。"""
         item = self._fetch_item(backlog, finding_id)
         if item is None:
             return
-        item.status = AuditFindingStatus.FAILED
+        item.status = audit.AuditFindingStatus.FAILED
         item.last_error_code = error_code
         item.last_error_message = error_message
 
     def infer_attempt_decision(
         self,
-        current_item: FindingTask,
-        messages: list[dict[str, Any]],
-    ) -> FindingAttemptDecision:
-        propose_messages = [
-            message
-            for message in messages
-            if message.get("role") == "tool" and message.get("name") == "propose_patch"
-        ]
-
-        for message in reversed(propose_messages):
-            payload = message.get("tool_payload")
-            if not isinstance(payload, dict):
-                payload = {}
-            payload_finding_id = payload.get("associated_finding_id")
-            payload_file_path = payload.get("file_path")
-            normalized_finding_id = self._normalize_finding_id(payload_finding_id)
-            if normalized_finding_id and normalized_finding_id != current_item.finding_id:
+        current_item: audit.FindingTask,
+        observations: tuple[contract.ToolExecutionResult, ...],
+    ) -> audit.FindingAttemptDecision:
+        """只根据当前目标的真实 propose 观察判断草案或一次重读资格。"""
+        for observation in reversed(observations):
+            if observation.name != "propose_patch":
                 continue
-            if payload_file_path and payload_file_path != current_item.file_path:
-                continue
-
-            status = str(message.get("tool_status", ""))
-            if status in {"ok", "invalid"}:
-                return FindingAttemptDecision(outcome=AuditAttemptOutcome.PATCH_READY)
-
-            error_code = self._fetch_error_code(payload=payload, message=message)
-            error_message = self._fetch_error_message(payload=payload, message=message)
-            if error_code == "OLD_STRING_NOT_FOUND":
-                return FindingAttemptDecision(
-                    outcome=AuditAttemptOutcome.RETRYABLE_ERROR,
-                    error_code=error_code,
-                    error_message=error_message,
-                )
-            return FindingAttemptDecision(
-                outcome=AuditAttemptOutcome.NO_PATCH,
-                error_code=error_code,
-                error_message=error_message,
+            payload = (
+                observation.payload
+                if isinstance(observation.payload, dict)
+                else {}
             )
+            finding_id = self._normalize_finding_id(
+                payload.get("associated_finding_id")
+            )
+            if finding_id and finding_id != current_item.finding_id:
+                continue
+            if (
+                payload.get("file_path")
+                and payload["file_path"] != current_item.file_path
+            ):
+                continue
+            if observation.status in {"ok", "invalid"}:
+                return audit.FindingAttemptDecision(
+                    outcome=audit.AuditAttemptOutcome.PATCH_READY
+                )
+            error_code = str(payload.get("error_code") or "UNKNOWN")
+            return audit.FindingAttemptDecision(
+                outcome=(
+                    audit.AuditAttemptOutcome.RETRYABLE_ERROR
+                    if error_code == "OLD_STRING_NOT_FOUND"
+                    else audit.AuditAttemptOutcome.NO_PATCH
+                ),
+                error_code=error_code,
+                error_message=str(
+                    payload.get("error_message") or observation.message
+                ),
+            )
+        return audit.FindingAttemptDecision(
+            outcome=audit.AuditAttemptOutcome.NO_PATCH
+        )
 
-        return FindingAttemptDecision(outcome=AuditAttemptOutcome.NO_PATCH)
-
-    def _fetch_item(self, backlog: list[FindingTask], finding_id: str) -> FindingTask | None:
+    def _fetch_item(
+        self, backlog: list[audit.FindingTask], finding_id: str
+    ) -> audit.FindingTask | None:
         for item in backlog:
             if item.finding_id == finding_id:
                 return item
         return None
 
-    def _fetch_error_code(self, payload: dict[str, Any], message: dict[str, Any]) -> str | None:
-        if payload.get("error_code") is not None:
-            return str(payload["error_code"])
-        if message.get("tool_status") == "error":
-            return "UNKNOWN"
-        return None
-
-    def _normalize_finding_id(self, finding_id: Any) -> str | None:
+    def _normalize_finding_id(self, finding_id: object) -> str | None:
         if finding_id is None:
             return None
         match = re.fullmatch(r"[Ff]([1-9]\d*)", str(finding_id).strip())
         if match is None:
             return str(finding_id)
         return f"F{int(match.group(1))}"
-
-    def _fetch_error_message(self, payload: dict[str, Any], message: dict[str, Any]) -> str | None:
-        if payload.get("error_message") is not None:
-            return str(payload["error_message"])
-        content = message.get("content")
-        return str(content) if content is not None else None

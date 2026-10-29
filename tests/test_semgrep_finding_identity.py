@@ -1,16 +1,24 @@
+"""模拟 Semgrep JSON，核对不完整证据的整次拒绝及应用侧稳定身份。"""
+
 from __future__ import annotations
 
-from pathlib import Path
+import pathlib
 
 import pytest
 
-from autopatch_j.scanners import ScanResult
-from autopatch_j.scanners.semgrep import build_semgrep_scan_result
+from autopatch_j.scanners import models
+from autopatch_j.scanners.semgrep import results as semgrep_results
 
 
-def _raw_result(source: str, occurrence: int, path: str = "Demo.java") -> dict[str, object]:
+def _raw_result(
+    source: str, occurrence: int, path: str = "Demo.java"
+) -> dict[str, object]:
     evidence = "weak()"
-    offsets = [index for index in range(len(source)) if source.startswith(evidence, index)]
+    offsets = [
+        index
+        for index in range(len(source))
+        if source.startswith(evidence, index)
+    ]
     start_offset = offsets[occurrence]
     end_offset = start_offset + len(evidence)
     start_prefix = source[:start_offset]
@@ -36,10 +44,14 @@ def _raw_result(source: str, occurrence: int, path: str = "Demo.java") -> dict[s
     }
 
 
-def _scan(tmp_path: Path, source: str, results: list[dict[str, object]]) -> ScanResult:
-    with (tmp_path / "Demo.java").open("w", encoding="utf-8", newline="") as stream:
+def _scan(
+    tmp_path: pathlib.Path, source: str, results: list[dict[str, object]]
+) -> models.ScanResult:
+    with (tmp_path / "Demo.java").open(
+        "w", encoding="utf-8", newline=""
+    ) as stream:
         stream.write(source)
-    return build_semgrep_scan_result(
+    return semgrep_results.build_semgrep_scan_result(
         payload={"results": results, "errors": []},
         repo_root=tmp_path,
         scope=["Demo.java"],
@@ -48,9 +60,11 @@ def _scan(tmp_path: Path, source: str, results: list[dict[str, object]]) -> Scan
 
 
 def test_fingerprints_are_stable_across_result_order_and_distinguish_duplicates(
-    tmp_path: Path,
+    tmp_path: pathlib.Path,
 ) -> None:
-    source = "class Demo {\n  void a() { weak(); }\n  void b() { weak(); }\n}\n"
+    source = (
+        "class Demo {\n  void a() { weak(); }" "\n  void b() { weak(); }\n}\n"
+    )
     first_raw = _raw_result(source, 0)
     second_raw = _raw_result(source, 1)
 
@@ -68,27 +82,36 @@ def test_fingerprints_are_stable_across_result_order_and_distinguish_duplicates(
     }
     assert first_by_offset == second_by_offset
     assert len(set(first_by_offset.values())) == 2
-    ordered_fingerprints = [first_by_offset[offset] for offset in sorted(first_by_offset)]
+    ordered_fingerprints = [
+        first_by_offset[offset] for offset in sorted(first_by_offset)
+    ]
     assert ordered_fingerprints[0].endswith(":1")
     assert ordered_fingerprints[1].endswith(":2")
 
 
-def test_fingerprint_does_not_change_when_only_preceding_lines_move(tmp_path: Path) -> None:
+def test_fingerprint_does_not_change_when_only_preceding_lines_move(
+    tmp_path: pathlib.Path,
+) -> None:
     original = "class Demo {\n  void run() { weak(); }\n}\n"
     moved = "// unrelated\n" + original
 
     original_scan = _scan(tmp_path, original, [_raw_result(original, 0)])
     moved_scan = _scan(tmp_path, moved, [_raw_result(moved, 0)])
 
-    assert original_scan.findings[0].fingerprint == moved_scan.findings[0].fingerprint
+    assert (
+        original_scan.findings[0].fingerprint
+        == moved_scan.findings[0].fingerprint
+    )
     assert original_scan.findings[0].region != moved_scan.findings[0].region
 
 
-def test_finding_identity_round_trips_in_scan_artifact_schema(tmp_path: Path) -> None:
+def test_finding_identity_round_trips_in_scan_artifact_schema(
+    tmp_path: pathlib.Path,
+) -> None:
     source = "class Demo { void run() { weak(); } }"
     scan = _scan(tmp_path, source, [_raw_result(source, 0)])
 
-    restored = ScanResult.from_dict(scan.to_dict())
+    restored = models.ScanResult.from_dict(scan.to_dict())
 
     assert restored.findings[0].identity == scan.findings[0].identity
     assert restored.to_dict() == scan.to_dict()
@@ -96,7 +119,7 @@ def test_finding_identity_round_trips_in_scan_artifact_schema(tmp_path: Path) ->
 
 def test_old_scan_artifact_schema_is_rejected() -> None:
     with pytest.raises(KeyError):
-        ScanResult.from_dict(
+        models.ScanResult.from_dict(
             {
                 "engine": "semgrep",
                 "scope": ["Demo.java"],
@@ -117,11 +140,13 @@ def test_old_scan_artifact_schema_is_rejected() -> None:
         )
 
 
-def test_semgrep_errors_discard_otherwise_valid_findings(tmp_path: Path) -> None:
+def test_semgrep_errors_discard_otherwise_valid_findings(
+    tmp_path: pathlib.Path,
+) -> None:
     source = "class Demo { void run() { weak(); } }"
     (tmp_path / "Demo.java").write_text(source, encoding="utf-8")
 
-    result = build_semgrep_scan_result(
+    result = semgrep_results.build_semgrep_scan_result(
         payload={
             "results": [_raw_result(source, 0)],
             "errors": [{"message": "Java parse error"}],
@@ -132,7 +157,7 @@ def test_semgrep_errors_discard_otherwise_valid_findings(tmp_path: Path) -> None
     )
 
     assert result.status == "error"
-    assert result.findings == []
+    assert not result.findings
     assert "parse error" in result.message
 
 
@@ -145,10 +170,10 @@ def test_semgrep_errors_discard_otherwise_valid_findings(tmp_path: Path) -> None
     ],
 )
 def test_missing_required_semgrep_arrays_fail_closed(
-    tmp_path: Path,
+    tmp_path: pathlib.Path,
     payload: dict[str, object],
 ) -> None:
-    result = build_semgrep_scan_result(
+    result = semgrep_results.build_semgrep_scan_result(
         payload=payload,
         repo_root=tmp_path,
         scope=["Demo.java"],
@@ -156,7 +181,7 @@ def test_missing_required_semgrep_arrays_fail_closed(
     )
 
     assert result.status == "error"
-    assert result.findings == []
+    assert not result.findings
     assert "缺少必需字段" in result.message
 
 
@@ -169,7 +194,7 @@ def test_missing_required_semgrep_arrays_fail_closed(
     ],
 )
 def test_malformed_finding_discards_entire_scan(
-    tmp_path: Path,
+    tmp_path: pathlib.Path,
     mutate,
 ) -> None:
     source = "class Demo { void run() { weak(); } }"
@@ -177,7 +202,7 @@ def test_malformed_finding_discards_entire_scan(
     malformed = _raw_result(source, 0)
     mutate(malformed)
 
-    result = build_semgrep_scan_result(
+    result = semgrep_results.build_semgrep_scan_result(
         payload={"results": [_raw_result(source, 0), malformed], "errors": []},
         repo_root=tmp_path,
         scope=["Demo.java"],
@@ -185,7 +210,7 @@ def test_malformed_finding_discards_entire_scan(
     )
 
     assert result.status == "error"
-    assert result.findings == []
+    assert not result.findings
 
 
 @pytest.mark.parametrize(
@@ -196,12 +221,13 @@ def test_malformed_finding_discards_entire_scan(
     ],
 )
 def test_state_finding_path_discards_entire_scan_without_exposing_source(
-    tmp_path: Path,
+    tmp_path: pathlib.Path,
     finding_path: str,
 ) -> None:
     safe_source = "class Demo { void run() { weak(); } }"
     state_source = (
-        'class StateOnly { String value = "STATE_FINDING_SECRET"; '
+        "class StateOnly { String value ="
+        ' "STATE_FINDING_SECRET"; '
         "void run() { weak(); } }"
     )
     (tmp_path / "Demo.java").write_text(safe_source, encoding="utf-8")
@@ -210,7 +236,7 @@ def test_state_finding_path_discards_entire_scan_without_exposing_source(
     state_file.write_text(state_source, encoding="utf-8")
     (tmp_path / "StateAlias.java").symlink_to(state_file)
 
-    result = build_semgrep_scan_result(
+    result = semgrep_results.build_semgrep_scan_result(
         payload={
             "results": [
                 _raw_result(safe_source, 0),
@@ -224,19 +250,21 @@ def test_state_finding_path_discards_entire_scan_without_exposing_source(
     )
 
     assert result.status == "error"
-    assert result.findings == []
+    assert not result.findings
     assert "不属于源码范围" in result.message
     assert "STATE_FINDING_SECRET" not in result.message
 
 
-def test_safe_source_symlink_finding_is_canonicalized(tmp_path: Path) -> None:
+def test_safe_source_symlink_finding_is_canonicalized(
+    tmp_path: pathlib.Path,
+) -> None:
     source = "class SafeSource { void run() { weak(); } }"
     source_file = tmp_path / "src" / "SafeSource.java"
     source_file.parent.mkdir(parents=True)
     source_file.write_text(source, encoding="utf-8")
     (tmp_path / "SafeAlias.java").symlink_to(source_file)
 
-    result = build_semgrep_scan_result(
+    result = semgrep_results.build_semgrep_scan_result(
         payload={
             "results": [_raw_result(source, 0, path="SafeAlias.java")],
             "errors": [],

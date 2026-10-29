@@ -1,19 +1,21 @@
+"""斜杠命令注册信息，供路由、帮助与补全共用。"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+import dataclasses
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class CliSubcommand:
-    """Nested slash-command declaration used by help and completion."""
+    """帮助和补全共用的斜杠子命令声明。"""
 
     name: str
     completion_description: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class CliCommand:
-    """CLI slash command declaration shared by routing, help and completion."""
+    """路由、帮助和补全共用的斜杠命令声明。"""
 
     name: str
     handler_name: str
@@ -27,12 +29,11 @@ class CliCommand:
 
 MEMORY_SUBCOMMANDS: tuple[CliSubcommand, ...] = (
     CliSubcommand("status", "查看 Memory 运行状态"),
-    CliSubcommand("summary", "重建人类审阅用 Memory 摘要"),
-    CliSubcommand("list", "列出 active Memory"),
-    CliSubcommand("show", "查看单条 Memory 与来源"),
-    CliSubcommand("forget", "忘记单条派生 Memory"),
+    CliSubcommand("list", "列出项目笔记"),
+    CliSubcommand("show", "查看项目笔记内容"),
+    CliSubcommand("forget", "删除指定项目笔记"),
     CliSubcommand("clear", "清空 Memory 数据集"),
-    CliSubcommand("export", "导出一次性 RAW JSON 快照"),
+    CliSubcommand("export", "导出当前项目笔记"),
 )
 
 
@@ -70,13 +71,13 @@ CLI_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand(
         name="/new",
         handler_name="handle_new",
-        help_description="结束当前工作状态并创建新的普通对话 thread",
-        completion_description="新建普通对话 thread",
+        help_description="结束当前工作状态并创建新的普通会话",
+        completion_description="新建普通会话",
     ),
     CliCommand(
         name="/memory",
         handler_name="handle_memory",
-        help_description="管理 Memory：status/summary/list/show/forget/clear/export",
+        help_description="管理 Memory：status/list/show/forget/clear/export",
         completion_description="查看和管理 Memory",
         accepts_arguments=True,
         subcommands=MEMORY_SUBCOMMANDS,

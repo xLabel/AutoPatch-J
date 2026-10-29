@@ -1,34 +1,44 @@
+"""默认隔离真实网络；真实模型用例须显式开关，并排在确定性测试之后。"""
+
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
-from typing import Any
-from unittest.mock import MagicMock
-from urllib.parse import urlsplit
+from collections.abc import Iterator
+from collections.abc import Sequence
+from typing import Protocol
+from unittest import mock
+from urllib import parse
 
+from _pytest import terminal as pytest_terminal
+import openai
+from pydantic_ai import models
 import pytest
 
-from autopatch_j.config import AppConfig, GlobalConfig
-from autopatch_j.llm import transport as llm_transport
-from autopatch_j.llm.factory import build_default_llm_client
-
+from autopatch_j import config as autopatch_j_config
+from autopatch_j.llm import context_window
+from autopatch_j.llm import factory
+from autopatch_j.llm import runtime
+from tests import sdk_fakes
 
 LIVE_LLM_MARKER = "live_llm"
 
 
-class StrictFakeLLM:
-    """普通测试的默认 LLM：允许组装对象，但拒绝任何未声明的模型调用。"""
+class MarkedItem(Protocol):
+    """分层排序只依赖 marker 查询，不依赖 pytest item 的其他能力。"""
 
-    model = "LLM Not Configured"
-
-    def chat(self, *_args: Any, **_kwargs: Any) -> None:
-        raise AssertionError("普通测试发生了未声明的 LLM 调用；请为该测试注入明确的 fake 响应")
+    def get_closest_marker(self, name: str) -> object | None: ...
 
 
-def _partition_live_items(items: Sequence[Any]) -> tuple[list[Any], list[Any]]:
-    regular: list[Any] = []
-    live: list[Any] = []
+def _partition_live_items[ItemT: MarkedItem](
+    items: Sequence[ItemT],
+) -> tuple[list[ItemT], list[ItemT]]:
+    regular: list[ItemT] = []
+    live: list[ItemT] = []
     for item in items:
-        target = live if item.get_closest_marker(LIVE_LLM_MARKER) is not None else regular
+        target = (
+            live
+            if item.get_closest_marker(LIVE_LLM_MARKER) is not None
+            else regular
+        )
         target.append(item)
     return regular, live
 
@@ -41,7 +51,7 @@ def _live_llm_block_reason(*, enabled: bool, tests_failed: int) -> str | None:
     return None
 
 
-def _live_llm_config_error(config: AppConfig) -> str | None:
+def _live_llm_config_error(config: autopatch_j_config.AppConfig) -> str | None:
     if not config.is_llm_ready():
         return config.get_missing_llm_message()
     try:
@@ -53,7 +63,7 @@ def _live_llm_config_error(config: AppConfig) -> str | None:
 
 def _safe_endpoint_label(base_url: str) -> str:
     candidate = base_url if "://" in base_url else f"//{base_url}"
-    parsed = urlsplit(candidate)
+    parsed = parse.urlsplit(candidate)
     if parsed.netloc:
         authority = parsed.netloc.rsplit("@", 1)[-1]
         return f"{parsed.scheme}://{authority}" if parsed.scheme else authority
@@ -71,7 +81,9 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     regular, live = _partition_live_items(items)
     items[:] = [*regular, *live]
     setattr(config, "_autopatch_live_llm_count", len(live))
@@ -103,7 +115,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
 
 def pytest_terminal_summary(
-    terminalreporter: Any,
+    terminalreporter: pytest_terminal.TerminalReporter,
     exitstatus: int,
     config: pytest.Config,
 ) -> None:
@@ -115,51 +127,66 @@ def pytest_terminal_summary(
     enabled = config.getoption("run_live_llm")
     started = getattr(config, "_autopatch_live_llm_started", False)
     if not enabled:
-        status = (
-            f"未运行（{count} 个 case；需要明确同意并使用 --run-live-llm）"
-        )
+        status = f"未运行（{count} 个 case；需要明确同意并使用 --run-live-llm）"
     elif not started:
         status = f"未运行（{count} 个 case；先行测试未通过）"
-    elif terminalreporter.stats.get("failed") or terminalreporter.stats.get("error"):
+    elif terminalreporter.stats.get("failed") or terminalreporter.stats.get(
+        "error"
+    ):
         status = f"运行未完成（{count} 个 case；请查看首个失败）"
     else:
         status = f"已完成（{count} 个 case）"
     terminalreporter.write_sep("-", f"真实 LLM 集成测试：{status}")
 
 
-@pytest.fixture(autouse=True)
-def _block_real_openai_client(
+@pytest.fixture(autouse=True, name="_block_real_openai_client")
+def make__block_real_openai_client(
     request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     if request.node.get_closest_marker(LIVE_LLM_MARKER) is not None:
         return
 
-    def blocked_client(*_args: Any, **_kwargs: Any) -> None:
+    def blocked_client(*_args: object, **_kwargs: object) -> None:
         raise AssertionError(
             "普通测试禁止创建真实 OpenAI client；请注入 fake/mock。"
-            "真实 LLM 集成测试必须标记 live_llm 并使用 --run-live-llm。"
+            "真实 LLM 集成测试必须标记 live_llm 并使用 --r"
+            "un-live-llm。"
         )
 
-    monkeypatch.setattr(llm_transport.openai, "OpenAI", blocked_client)
+    monkeypatch.setattr(openai, "AsyncOpenAI", blocked_client)
+    monkeypatch.setattr(openai, "OpenAI", blocked_client)
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
 
 
-@pytest.fixture
-def mock_openai_sdk(
+@pytest.fixture(name="mock_openai_sdk")
+def make_mock_openai_sdk(
     monkeypatch: pytest.MonkeyPatch,
-) -> MagicMock:
-    client = MagicMock()
-    monkeypatch.setattr(llm_transport.openai, "OpenAI", lambda **_kwargs: client)
+) -> mock.MagicMock:
+    client = mock.MagicMock()
+    monkeypatch.setattr(openai, "OpenAI", lambda **_kwargs: client)
     return client
 
 
-@pytest.fixture
-def fake_llm_factory() -> Callable[[], StrictFakeLLM]:
-    return StrictFakeLLM
+@pytest.fixture(name="fake_llm_factory")
+def make_fake_llm_factory():
+
+    return lambda: runtime.ModelRuntime(
+        None, context_window.resolve_context_profile(model="deepseek-flash")
+    )
 
 
-@pytest.fixture(scope="session")
-def live_llm_client(request: pytest.FixtureRequest) -> Iterator[Any]:
+@pytest.fixture(name="sdk_scenario")
+def make_sdk_scenario(monkeypatch):
+
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
+    return sdk_fakes.ScriptedModel
+
+
+@pytest.fixture(name="live_llm_client")
+def make_live_llm_client(
+    request: pytest.FixtureRequest,
+) -> Iterator[runtime.ModelRuntime]:
     reason = _live_llm_block_reason(
         enabled=request.config.getoption("run_live_llm"),
         tests_failed=request.session.testsfailed,
@@ -167,25 +194,29 @@ def live_llm_client(request: pytest.FixtureRequest) -> Iterator[Any]:
     if reason is not None:
         pytest.skip(reason)
 
-    error = _live_llm_config_error(GlobalConfig)
+    error = _live_llm_config_error(autopatch_j_config.GLOBAL_CONFIG)
     if error is not None:
         pytest.fail(f"真实 LLM 集成测试配置检查失败：{error}", pytrace=False)
 
+    endpoint = _safe_endpoint_label(
+        autopatch_j_config.GLOBAL_CONFIG.llm_base_url
+    )
     terminal = request.config.pluginmanager.get_plugin("terminalreporter")
     if terminal is not None:
         terminal.write_line(
             "真实 LLM 集成测试配置："
-            f"model={GlobalConfig.llm_model}, "
-            f"endpoint={_safe_endpoint_label(GlobalConfig.llm_base_url)}"
+            f"model={autopatch_j_config.GLOBAL_CONFIG.llm_model}"
+            f", "
+            f"endpoint={endpoint}"
         )
 
-    llm = build_default_llm_client()
+    llm = factory.build_model_runtime()
     if llm is None:
-        pytest.fail("真实 LLM 集成测试配置检查失败：LLM client 未创建", pytrace=False)
+        pytest.fail(
+            "真实 LLM 集成测试配置检查失败：LLM client 未创建", pytrace=False
+        )
 
     try:
         yield llm
     finally:
-        close = getattr(llm.client, "close", None)
-        if callable(close):
-            close()
+        llm.close()

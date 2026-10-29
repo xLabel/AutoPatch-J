@@ -1,15 +1,18 @@
+"""替代 Tree-sitter 对象验证语法结果语义，不声称执行 Java 编译。"""
+
 from __future__ import annotations
 
-import sys
+import pathlib
 import types
-from pathlib import Path
 
 import pytest
 
-from autopatch_j.core.patching import PatchQualityVerifier
+from autopatch_j.core.patching import verification
 
 
-def test_java_syntax_validator_returns_ok_when_tree_sitter_accepts_code(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_java_syntax_validator_returns_ok_when_tree_sitter_accepts_code(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeNode:
         is_error = False
         is_missing = False
@@ -17,26 +20,36 @@ def test_java_syntax_validator_returns_ok_when_tree_sitter_accepts_code(monkeypa
         children = []
 
     class FakeLanguage:
-        def __init__(self, _language) -> None:
+        def __init__(self, unused_language) -> None:
             pass
 
     class FakeParser:
-        def __init__(self, _language: FakeLanguage) -> None:
+        def __init__(self, unused_language: FakeLanguage) -> None:
             pass
 
-        def parse(self, _content: bytes):
+        def parse(self, unused_content: bytes):
             return types.SimpleNamespace(root_node=FakeNode())
 
-    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
-    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
+    monkeypatch.setattr(
+        verification,
+        "tree_sitter",
+        types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser),
+    )
+    monkeypatch.setattr(
+        verification,
+        "tree_sitter_java",
+        types.SimpleNamespace(language=object),
+    )
 
-    validator = PatchQualityVerifier(Path("."), None)
+    validator = verification.PatchQualityVerifier(pathlib.Path("."), None)
     result = validator.verify_syntax("Demo.java", "class Demo {}")
 
     assert result.status == "ok"
 
 
-def test_java_syntax_validator_returns_error_when_tree_has_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_java_syntax_validator_returns_error_when_tree_has_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeNode:
         is_error = True
         is_missing = False
@@ -45,37 +58,44 @@ def test_java_syntax_validator_returns_error_when_tree_has_errors(monkeypatch: p
         type = "ERROR"
 
     class FakeLanguage:
-        def __init__(self, _language) -> None:
+        def __init__(self, unused_language) -> None:
             pass
 
     class FakeParser:
-        def __init__(self, _language: FakeLanguage) -> None:
+        def __init__(self, unused_language: FakeLanguage) -> None:
             pass
 
-        def parse(self, _content: bytes):
+        def parse(self, unused_content: bytes):
             return types.SimpleNamespace(root_node=FakeNode())
 
-    monkeypatch.setitem(sys.modules, "tree_sitter", types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser))
-    monkeypatch.setitem(sys.modules, "tree_sitter_java", types.SimpleNamespace(language=lambda: object()))
+    monkeypatch.setattr(
+        verification,
+        "tree_sitter",
+        types.SimpleNamespace(Language=FakeLanguage, Parser=FakeParser),
+    )
+    monkeypatch.setattr(
+        verification,
+        "tree_sitter_java",
+        types.SimpleNamespace(language=object),
+    )
 
-    validator = PatchQualityVerifier(Path("."), None)
+    validator = verification.PatchQualityVerifier(pathlib.Path("."), None)
     result = validator.verify_syntax("Demo.java", "class Demo {")
 
     assert result.status == "error"
     assert result.errors
 
 
-def test_java_syntax_validator_returns_unavailable_when_dependency_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    original_import = __import__
+def test_java_syntax_validator_returns_unavailable_when_dependency_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        verification,
+        "tree_sitter_import_error",
+        ImportError("missing dependency: tree_sitter"),
+    )
 
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name in {"tree_sitter", "tree_sitter_java"}:
-            raise ImportError(f"missing dependency: {name}")
-        return original_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr("builtins.__import__", fake_import)
-
-    validator = PatchQualityVerifier(Path("."), None)
+    validator = verification.PatchQualityVerifier(pathlib.Path("."), None)
     result = validator.verify_syntax("Demo.java", "class Demo {}")
 
     assert result.status == "unavailable"

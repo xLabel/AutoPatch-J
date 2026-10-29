@@ -1,4 +1,4 @@
-"""AutoPatch-J package."""
+"""面向 Java 仓库的受控代码修复 Agent。"""
 
 __all__ = ["__version__"]
 

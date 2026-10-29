@@ -1,19 +1,21 @@
+"""将 SDK 流式回调转换为终端展示，保留业务观察及结束状态。"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable
+import dataclasses
+from typing import Callable
 
-from autopatch_j.agent.react_runner import AgentRunResult
-from autopatch_j.cli.render import CliRenderer
-from autopatch_j.core.chat_filter import ChatFilter
-from autopatch_j.core.domain import IntentType
-from autopatch_j.core.review import ReviewWorkspaceManager
+from autopatch_j.agent import result
+from autopatch_j.cli import render
+from autopatch_j.core import chat_filter as core_chat_filter
+from autopatch_j.core.domain import intent
+from autopatch_j.core.review import workspace
+from autopatch_j.tools import contract
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class ReActDisplayPolicy:
-    """
-    ReAct 过程在 CLI 中的展示策略。
+    """ReAct 过程在 CLI 中的展示策略。
 
     debug 模式下展示完整思考链和工具输出；普通模式下折叠为状态提示，避免 CLI 噪音过大。
     """
@@ -23,32 +25,38 @@ class ReActDisplayPolicy:
 
     @property
     def compact_reasoning(self) -> bool:
+        """是否将推理事件折叠为状态提示。"""
         return not self.debug_mode
 
     @property
     def compact_observation(self) -> bool:
+        """是否将工具观察折叠为摘要。"""
         return self.force_compact_observation or not self.debug_mode
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class PresentedAgentResult:
-    """Request result after CLI display filtering, with the original trace preserved."""
+    """展示过滤后的回答、业务观察和实际结束状态。"""
 
     raw_answer: str
     display_answer: str
-    trace_messages: list[dict[str, Any]]
+    observations: tuple[contract.ToolExecutionResult, ...]
+    status: result.RunStatus = result.RunStatus.COMPLETED
 
 
 class _ReasoningRenderState:
     """单次 ReAct 调用中的 reasoning 展示状态。"""
 
-    def __init__(self, renderer: CliRenderer, policy: ReActDisplayPolicy) -> None:
+    def __init__(
+        self, renderer: render.CliRenderer, policy: ReActDisplayPolicy
+    ) -> None:
         self.renderer = renderer
         self.policy = policy
         self.in_reasoning = False
         self.visible = False
 
     def on_reasoning(self, token: str) -> None:
+        """按展示策略输出推理或一次折叠提示，不改变运行状态。"""
         if self.policy.compact_reasoning:
             if not self.in_reasoning:
                 self.in_reasoning = True
@@ -63,6 +71,7 @@ class _ReasoningRenderState:
         self.renderer.print_reasoning_text(token)
 
     def finish_if_visible(self) -> None:
+        """仅在推理提示已经显示时补充换行并复位。"""
         if not self.visible:
             return
         self.renderer.finish_reasoning_status()
@@ -71,14 +80,15 @@ class _ReasoningRenderState:
 
 
 class _AgentStreamExecution:
-    """
-    单次 Agent 调用期间的流式渲染状态。
+    """单次 Agent 调用期间的流式渲染状态。
 
     该类只在 AgentStreamPresenter 内部使用，负责把 token、reasoning、
     tool start 和 observation 事件转成 renderer 调用。
     """
 
-    def __init__(self, presenter: AgentStreamPresenter, policy: ReActDisplayPolicy) -> None:
+    def __init__(
+        self, presenter: AgentStreamPresenter, policy: ReActDisplayPolicy
+    ) -> None:
         self.presenter = presenter
         self.renderer = presenter.renderer
         self.policy = policy
@@ -88,33 +98,39 @@ class _AgentStreamExecution:
         self.buffered_answer_parts: list[str] = []
 
     def on_token(self, token: str) -> None:
+        """缓存答案事件，待完整结束后再决定是否展示。"""
         self.finish_reasoning_status_if_visible()
         self.buffered_answer_parts.append(token)
 
     def on_reasoning(self, token: str) -> None:
+        """按展示策略输出推理或一次折叠提示，不改变运行状态。"""
         self.reasoning.on_reasoning(token)
 
     def on_tool_start(self, tool_name: str) -> None:
+        """收束推理提示后展示工具开始，不代表工具成功。"""
         self.finish_reasoning_status_if_visible()
         self.current_tool_name = tool_name
         self.buffered_answer_parts.clear()
         self.renderer.print_tool_start(tool_name, caller="LLM")
 
     def on_observation(self, message: str, summary: str | None = None) -> None:
+        """按折叠策略显示业务观察或其摘要。"""
         self.finish_reasoning_status_if_visible()
         if self.policy.compact_observation:
-            fallback = summary if summary else f"已执行工具: {self.current_tool_name}"
+            fallback = (
+                summary if summary else f"已执行工具: {self.current_tool_name}"
+            )
             self.renderer.print_agent_text(fallback)
             return
         self.renderer.print_agent_text(message)
 
     def finish_reasoning_status_if_visible(self) -> None:
+        """收束本轮已经显示的推理提示。"""
         self.reasoning.finish_if_visible()
 
 
 class AgentStreamPresenter:
-    """
-    Agent 流式事件到 CLI 输出的展示器。
+    """Agent 流式事件到 CLI 输出的展示器。
 
     职责边界：
     1. 把 LLM token、reasoning、Tool Call 和 observation 转换为终端展示。
@@ -124,10 +140,9 @@ class AgentStreamPresenter:
 
     def __init__(
         self,
-        renderer: CliRenderer,
-        workspace_manager: ReviewWorkspaceManager | None,
-        chat_filter: ChatFilter | None,
-        agent: Any | None,
+        renderer: render.CliRenderer,
+        workspace_manager: workspace.ReviewWorkspaceManager | None,
+        chat_filter: core_chat_filter.ChatFilter | None,
         describe_current_scope_paths: Callable[[], list[str]],
         build_static_scan_summary: Callable[[], str],
         build_local_no_issue_summary: Callable[[], str],
@@ -136,7 +151,6 @@ class AgentStreamPresenter:
         self.renderer = renderer
         self.workspace_manager = workspace_manager
         self.chat_filter = chat_filter
-        self.agent = agent
         self._describe_current_scope_paths = describe_current_scope_paths
         self._build_static_scan_summary = build_static_scan_summary
         self._build_local_no_issue_summary = build_local_no_issue_summary
@@ -145,20 +159,38 @@ class AgentStreamPresenter:
     def run(
         self,
         prompt: str,
-        agent_call: Callable[..., AgentRunResult],
+        agent_call: Callable[..., result.AgentRunResult],
         scope_paths: list[str] | None = None,
         render_no_issue_panel: bool = False,
         compact_observation: bool = False,
-        answer_intent: IntentType | None = None,
+        answer_intent: intent.IntentType | None = None,
         raw_user_text: str | None = None,
         show_chat_anchors: bool = False,
         plain_answer: bool = False,
         suppress_answer_output: bool = False,
     ) -> PresentedAgentResult:
-        if self.agent is None or self.workspace_manager is None or self.chat_filter is None:
+        """展示过程与结束状态，答案隐藏不隐藏失败、取消或受限提示。
+
+        Args:
+            prompt: 本轮用户输入。
+            agent_call: 接受输入和流式回调的任务入口。
+            scope_paths: 结果面板使用的范围，省略时从工作台获取。
+            render_no_issue_panel: 仅正常完成时显示未发现问题面板。
+            compact_observation: 强制折叠工具观察。
+            answer_intent: 决定答案过滤和待审期间的展示许可。
+            raw_user_text: 传给答案过滤器的用户原文。
+            show_chat_anchors: 显示问答标记。
+            plain_answer: 使用纯文本渲染答案。
+            suppress_answer_output: 隐藏最终答案，保留过程和非完成状态。
+
+        Returns:
+            实际结束状态、原始答案、展示答案及业务观察，不提交草案。
+        """
+        if self.workspace_manager is None or self.chat_filter is None:
             self.renderer.print_error("系统未初始化，请先执行 /init")
-            return PresentedAgentResult(raw_answer="", display_answer="", trace_messages=[])
-        agent = self.agent
+            return PresentedAgentResult(
+                raw_answer="", display_answer="", observations=()
+            )
         workspace_manager = self.workspace_manager
         chat_filter = self.chat_filter
 
@@ -168,13 +200,6 @@ class AgentStreamPresenter:
         )
 
         execution = _AgentStreamExecution(self, policy)
-        if policy.debug_mode:
-            self._render_memory_debug_context(
-                agent=agent,
-                answer_intent=answer_intent,
-                user_text=raw_user_text or prompt,
-            )
-
         try:
             run_result = agent_call(
                 prompt,
@@ -185,14 +210,19 @@ class AgentStreamPresenter:
             )
         except Exception:
             execution.finish_reasoning_status_if_visible()
-            if policy.debug_mode:
-                self._render_llm_debug_context(agent)
+            self.renderer.print_error(
+                "本轮未完成；已显示的过程不代表工具结果或补丁已获确认。"
+            )
             raise
         execution.finish_reasoning_status_if_visible()
-        if policy.debug_mode:
-            self._render_llm_debug_context(agent)
 
-        if render_no_issue_panel:
+        if run_result.status is not result.RunStatus.COMPLETED:
+            self.renderer.print_error(run_result.final_answer)
+
+        if (
+            render_no_issue_panel
+            and run_result.status is result.RunStatus.COMPLETED
+        ):
             self.renderer.print_no_issue_panel(
                 scope_paths=scope_paths or self._describe_current_scope_paths(),
                 scanner_summary=self._build_static_scan_summary(),
@@ -201,30 +231,40 @@ class AgentStreamPresenter:
             return PresentedAgentResult(
                 raw_answer=run_result.final_answer,
                 display_answer="",
-                trace_messages=run_result.trace_messages,
+                observations=run_result.observations,
+                status=run_result.status,
             )
 
         if suppress_answer_output:
             return PresentedAgentResult(
                 raw_answer=run_result.final_answer,
                 display_answer="",
-                trace_messages=run_result.trace_messages,
+                observations=run_result.observations,
+                status=run_result.status,
             )
 
         has_pending_patches = workspace_manager.load().has_pending_patch()
         answer_allowed_with_pending_patch = {
-            IntentType.PATCH_EXPLAIN,
-            IntentType.CODE_EXPLAIN,
-            IntentType.GENERAL_CHAT,
+            intent.IntentType.PATCH_EXPLAIN,
+            intent.IntentType.CODE_EXPLAIN,
+            intent.IntentType.GENERAL_CHAT,
         }
-        if has_pending_patches and answer_intent not in answer_allowed_with_pending_patch:
+        if (
+            has_pending_patches
+            and answer_intent not in answer_allowed_with_pending_patch
+        ):
             return PresentedAgentResult(
                 raw_answer=run_result.final_answer,
                 display_answer="",
-                trace_messages=run_result.trace_messages,
+                observations=run_result.observations,
+                status=run_result.status,
             )
 
-        answer = "".join(execution.buffered_answer_parts) or run_result.final_answer
+        answer = run_result.final_answer
+        if run_result.status is result.RunStatus.COMPLETED:
+            answer = "".join(execution.buffered_answer_parts) or answer
+        else:
+            answer = ""
         rendered_answer = (
             chat_filter.build_display_answer(
                 user_text=raw_user_text or "",
@@ -245,42 +285,6 @@ class AgentStreamPresenter:
         return PresentedAgentResult(
             raw_answer=run_result.final_answer,
             display_answer=rendered_answer,
-            trace_messages=run_result.trace_messages,
+            observations=run_result.observations,
+            status=run_result.status,
         )
-
-    def _render_memory_debug_context(self, agent: Any, answer_intent: IntentType | None, user_text: str) -> None:
-        if answer_intent is None:
-            return
-        session = getattr(agent, "session", None)
-        if session is None or not hasattr(session, "build_memory_debug_summary"):
-            return
-        summary = session.build_memory_debug_summary(answer_intent, user_text)
-        if summary:
-            self.renderer.print_agent_text(summary)
-
-    def _render_llm_debug_context(self, agent: Any) -> None:
-        llm = getattr(agent, "llm", None)
-        diagnostics = getattr(llm, "diagnostics", None)
-        if not diagnostics:
-            return
-
-        diagnostic = diagnostics[-1]
-        purpose = getattr(diagnostic.purpose, "name", str(diagnostic.purpose)).lower()
-        reasoning = getattr(diagnostic.reasoning, "name", str(diagnostic.reasoning)).lower()
-        stream = "on" if diagnostic.stream else "off"
-        timeout = (
-            f"{diagnostic.timeout_seconds}s"
-            if diagnostic.timeout_seconds is not None
-            else "none"
-        )
-        detail = (
-            f"LLM 调用诊断：purpose={purpose}, stream={stream}, "
-            f"reasoning={reasoning}, status={diagnostic.status}, "
-            f"max_tokens={getattr(diagnostic, 'max_tokens', None)}, "
-            f"timeout={timeout}, "
-            f"sdk_retries={getattr(diagnostic, 'sdk_retries_taken', None)}/"
-            f"{getattr(diagnostic, 'sdk_max_retries', 2)}"
-        )
-        if diagnostic.error:
-            detail += f", error={diagnostic.error}"
-        self.renderer.print_agent_text(detail)

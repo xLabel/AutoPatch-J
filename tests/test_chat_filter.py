@@ -1,11 +1,13 @@
+"""以固定终端输出预期检查展示过滤，输入文本不来自模型。"""
+
 from __future__ import annotations
 
-from autopatch_j.core.chat_filter import ChatFilter
-from autopatch_j.core.domain import IntentType
+from autopatch_j.core import chat_filter
+from autopatch_j.core.domain import intent
 
 
 def test_chat_filter_basic_markdown_stripping() -> None:
-    service = ChatFilter()
+    service = chat_filter.ChatFilter()
     answer = (
         "## 常见解法\n"
         "1. 暴力枚举\n"
@@ -21,7 +23,7 @@ def test_chat_filter_basic_markdown_stripping() -> None:
     rendered = service.build_display_answer(
         user_text="leetcode 第1题的解法？",
         answer=answer,
-        intent=IntentType.GENERAL_CHAT,
+        intent=intent.IntentType.GENERAL_CHAT,
     )
 
     assert "##" not in rendered

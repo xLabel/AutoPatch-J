@@ -1,4 +1,1 @@
-from autopatch_j.agent.agent import Agent
-from autopatch_j.agent.react_runner import AgentRunResult
-
-__all__ = ["Agent", "AgentRunResult"]
+"""基于官方 Agent 的 Java 修复任务编排。"""

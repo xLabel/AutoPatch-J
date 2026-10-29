@@ -1,31 +1,27 @@
+"""Semgrep 原始结果的完整性校验及稳定 finding 身份构造。"""
+
 from __future__ import annotations
 
+from collections.abc import Mapping
+import dataclasses
 import hashlib
 import json
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+import pathlib
 
-from autopatch_j.core.finding import SourceRegion
-from autopatch_j.core.project import (
-    SourceReader,
-    UnsafeRepoPathError,
-    is_project_state_path,
-    resolve_repo_path,
-    to_repo_relative_path,
-)
-from autopatch_j.scanners.models import Finding, ScanResult
-
+from autopatch_j.core import finding as core_finding
+from autopatch_j.core.project import repo_path
+from autopatch_j.core.project import source_reader
+from autopatch_j.scanners import models
 
 _FINGERPRINT_VERSION = b"autopatch-j-finding-v1"
 _MAX_ERROR_SUMMARY_ITEMS = 3
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class _PreparedFinding:
     check_id: str
     path: str
-    region: SourceRegion
+    region: core_finding.SourceRegion
     severity: str
     message: str
     rule: str
@@ -36,29 +32,38 @@ class _PreparedFinding:
 
 def build_semgrep_scan_result(
     payload: dict[str, object],
-    repo_root: Path,
+    repo_root: pathlib.Path,
     scope: list[str],
     targets: list[str],
-) -> ScanResult:
-    missing_fields = [key for key in ("results", "errors") if key not in payload]
+) -> models.ScanResult:
+    """校验整次 Semgrep JSON；任一证据无效时拒绝部分成功。"""
+    missing_fields = [
+        key for key in ("results", "errors") if key not in payload
+    ]
     if missing_fields:
         return _error_result(
             scope,
             targets,
-            f"Semgrep payload 缺少必需字段：{', '.join(missing_fields)}。",
+            f"Semgrep payload 缺少必需字段：{", ".join(missing_fields)}。",
         )
 
     raw_errors = payload["errors"]
     if not isinstance(raw_errors, list):
-        return _error_result(scope, targets, "Semgrep errors 字段结构不符合预期。")
+        return _error_result(
+            scope, targets, "Semgrep errors 字段结构不符合预期。"
+        )
     if raw_errors:
-        return _error_result(scope, targets, _summarize_semgrep_errors(raw_errors))
+        return _error_result(
+            scope, targets, _summarize_semgrep_errors(raw_errors)
+        )
 
     raw_results = payload["results"]
     if not isinstance(raw_results, list):
-        return _error_result(scope, targets, "Semgrep results 字段结构不符合预期。")
+        return _error_result(
+            scope, targets, "Semgrep results 字段结构不符合预期。"
+        )
 
-    code_fetcher = SourceReader(repo_root)
+    code_fetcher = source_reader.SourceReader(repo_root)
     prepared: list[_PreparedFinding] = []
     try:
         for index, item in enumerate(raw_results, start=1):
@@ -66,11 +71,13 @@ def build_semgrep_scan_result(
                 raise ValueError(f"第 {index} 个 result 不是 JSON object。")
             prepared.append(_prepare_finding(item, repo_root, code_fetcher))
     except (OSError, TypeError, UnicodeError, ValueError) as exc:
-        return _error_result(scope, targets, f"Semgrep finding 证据不完整：{exc}")
+        return _error_result(
+            scope, targets, f"Semgrep finding 证据不完整：{exc}"
+        )
 
     _assign_fingerprints(prepared)
     findings = [
-        Finding(
+        models.Finding(
             fingerprint=item.fingerprint,
             check_id=item.check_id,
             path=item.path,
@@ -82,7 +89,7 @@ def build_semgrep_scan_result(
         )
         for item in prepared
     ]
-    return ScanResult(
+    return models.ScanResult(
         engine="semgrep",
         scope=scope,
         targets=targets,
@@ -93,19 +100,22 @@ def build_semgrep_scan_result(
 
 
 def _prepare_finding(
-    item: dict[str, Any],
-    repo_root: Path,
-    code_fetcher: SourceReader,
+    item: Mapping[str, object],
+    repo_root: pathlib.Path,
+    code_fetcher: source_reader.SourceReader,
 ) -> _PreparedFinding:
+    """校验单个 Semgrep finding 的路径、区域与当前源码字节证据。"""
     check_id = normalize_check_id(_required_text(item, "check_id"))
     if not check_id:
         raise ValueError("check_id 不能为空。")
 
-    finding_path, source_path = normalize_result_path(repo_root, _required_text(item, "path"))
+    finding_path, source_path = normalize_result_path(
+        repo_root, _required_text(item, "path")
+    )
     if not source_path.is_file():
         raise ValueError(f"finding path 不是仓库内文件：{finding_path}")
 
-    region = SourceRegion(
+    region = core_finding.SourceRegion(
         start_line=_required_nested_int(item, "start", "line"),
         start_column=_required_nested_int(item, "start", "col"),
         end_line=_required_nested_int(item, "end", "line"),
@@ -148,6 +158,7 @@ def _prepare_finding(
 
 
 def _assign_fingerprints(findings: list[_PreparedFinding]) -> None:
+    """按证据和源码位置分配稳定指纹，不依赖结果数组顺序。"""
     groups: dict[str, list[_PreparedFinding]] = {}
     for finding in findings:
         groups.setdefault(finding.base_hash, []).append(finding)
@@ -170,6 +181,7 @@ def _build_base_hash(
     path: str,
     matched_bytes: bytes,
 ) -> str:
+    """对版本、引擎、规则、路径及匹配 bytes 构造证据摘要。"""
     digest = hashlib.sha256()
     for part in (
         _FINGERPRINT_VERSION,
@@ -183,7 +195,10 @@ def _build_base_hash(
     return digest.hexdigest()
 
 
-def _validate_region(region: SourceRegion, source_bytes: bytes) -> None:
+def _validate_region(
+    region: core_finding.SourceRegion, source_bytes: bytes
+) -> None:
+    """校验扫描坐标与实际源码 bytes 一致，证据缺失即拒绝。"""
     if region.end_offset <= region.start_offset:
         raise ValueError("finding region 必须包含非空源码证据。")
     if region.end_offset > len(source_bytes):
@@ -191,7 +206,10 @@ def _validate_region(region: SourceRegion, source_bytes: bytes) -> None:
 
     actual_start_line = source_bytes.count(b"\n", 0, region.start_offset) + 1
     actual_end_line = source_bytes.count(b"\n", 0, region.end_offset) + 1
-    if region.start_line != actual_start_line or region.end_line != actual_end_line:
+    if (
+        region.start_line != actual_start_line
+        or region.end_line != actual_end_line
+    ):
         raise ValueError("finding region 的行号与字节偏移不一致。")
 
     start_line_offset = source_bytes.rfind(b"\n", 0, region.start_offset) + 1
@@ -218,8 +236,10 @@ def _normalize_line_endings(content: bytes) -> bytes:
     return content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
-def _error_result(scope: list[str], targets: list[str], message: str) -> ScanResult:
-    return ScanResult(
+def _error_result(
+    scope: list[str], targets: list[str], message: str
+) -> models.ScanResult:
+    return models.ScanResult(
         engine="semgrep",
         scope=scope,
         targets=targets,
@@ -230,9 +250,15 @@ def _error_result(scope: list[str], targets: list[str], message: str) -> ScanRes
 
 
 def _summarize_semgrep_errors(errors: list[object]) -> str:
-    rendered = [_render_error(error) for error in errors[:_MAX_ERROR_SUMMARY_ITEMS]]
-    suffix = f"；另有 {len(errors) - len(rendered)} 条错误" if len(errors) > len(rendered) else ""
-    return f"Semgrep 返回不完整扫描结果：{'；'.join(rendered)}{suffix}"
+    rendered = [
+        _render_error(error) for error in errors[:_MAX_ERROR_SUMMARY_ITEMS]
+    ]
+    suffix = (
+        f"；另有 {len(errors) - len(rendered)} 条错误"
+        if len(errors) > len(rendered)
+        else ""
+    )
+    return f"Semgrep 返回不完整扫描结果：{"；".join(rendered)}{suffix}"
 
 
 def _render_error(error: object) -> str:
@@ -246,6 +272,7 @@ def _render_error(error: object) -> str:
 
 
 def extract_rule(extra: dict[str, object]) -> str:
+    """从可用元数据中提取 CWE 或 OWASP 规则说明。"""
     metadata = extra.get("metadata", {})
     if not isinstance(metadata, dict):
         return ""
@@ -259,6 +286,7 @@ def extract_rule(extra: dict[str, object]) -> str:
 
 
 def normalize_check_id(raw_check_id: str) -> str:
+    """去除扫描器附加路径前缀，保留实际规则 ID。"""
     normalized = raw_check_id.strip()
     for marker in ("autopatch-j.",):
         marker_index = normalized.find(marker)
@@ -267,33 +295,38 @@ def normalize_check_id(raw_check_id: str) -> str:
     return normalized
 
 
-def normalize_result_path(repo_root: Path, raw_path: str) -> tuple[str, Path]:
+def normalize_result_path(
+    repo_root: pathlib.Path, raw_path: str
+) -> tuple[str, pathlib.Path]:
+    """解析扫描结果真实路径并拒绝越界或项目状态目录。"""
     path_text = raw_path.replace("\\", "/").strip()
     if not path_text or "\x00" in path_text:
         raise ValueError("finding path 为空或包含非法字符。")
-    candidate = Path(path_text)
+    candidate = pathlib.Path(path_text)
     try:
         if candidate.is_absolute():
-            normalized = to_repo_relative_path(repo_root, candidate)
+            normalized = repo_path.to_repo_relative_path(repo_root, candidate)
             resolved = candidate.resolve()
         else:
-            resolved = resolve_repo_path(repo_root, path_text)
-            normalized = to_repo_relative_path(repo_root, resolved)
-    except UnsafeRepoPathError as exc:
+            resolved = repo_path.resolve_repo_path(repo_root, path_text)
+            normalized = repo_path.to_repo_relative_path(repo_root, resolved)
+    except repo_path.UnsafeRepoPathError as exc:
         raise ValueError(f"finding path 超出仓库范围：{raw_path}") from exc
-    if is_project_state_path(normalized):
+    if repo_path.is_project_state_path(normalized):
         raise ValueError(f"finding path 不属于源码范围：{raw_path}")
     return normalized, resolved
 
 
-def _required_text(payload: dict[str, Any], key: str) -> str:
+def _required_text(payload: Mapping[str, object], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} 缺失或不是非空字符串。")
     return value.strip()
 
 
-def _required_nested_int(payload: dict[str, Any], parent: str, key: str) -> int:
+def _required_nested_int(
+    payload: Mapping[str, object], parent: str, key: str
+) -> int:
     nested = payload.get(parent)
     if not isinstance(nested, dict):
         raise ValueError(f"{parent} 缺失或不是 JSON object。")

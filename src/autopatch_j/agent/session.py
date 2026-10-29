@@ -1,112 +1,107 @@
+"""请求共享业务依赖、焦点、取证缓存和未提交的草案。"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
-import re
-from typing import TYPE_CHECKING, Any
+import dataclasses
+import pathlib
+from typing import TYPE_CHECKING
 
-from autopatch_j.core.domain import IntentType
-from autopatch_j.core.memory.errors import MemoryStorageError
-from autopatch_j.llm.options import LLMCallDiagnostic
-from autopatch_j.core.project import (
-    UnsafeRepoPathError,
-    is_project_state_path,
-    normalize_repo_path,
-    resolve_repo_path,
-    to_repo_relative_path,
-)
+from autopatch_j.core.domain import audit
+from autopatch_j.core.domain import workspace as domain_workspace
+from autopatch_j.core.project import repo_path
 
 if TYPE_CHECKING:
-    from autopatch_j.core.review import ProjectArtifactStore
-    from autopatch_j.core.project import SourceReader
-    from autopatch_j.core.memory import MemoryManager
-    from autopatch_j.core.memory.models import MemoryRequestState
-    from autopatch_j.core.patching import SearchReplacePatchDraft, SearchReplacePatchEngine
-    from autopatch_j.core.patching import PatchQualityVerifier
-    from autopatch_j.core.project import SymbolIndex
-    from autopatch_j.core.review import ReviewWorkspaceManager
-    from autopatch_j.tools.contract import ToolExecutionResult
+    from autopatch_j.core.patching import search_replace
+    from autopatch_j.core.patching import types
+    from autopatch_j.core.patching import verification
+    from autopatch_j.core.project import source_reader
+    from autopatch_j.core.project import symbol_index
+    from autopatch_j.core.review import artifacts
+    from autopatch_j.core.review import workspace
+    from autopatch_j.tools import contract
 
 
-ORDINARY_MEMORY_INTENTS = {IntentType.CODE_EXPLAIN, IntentType.GENERAL_CHAT}
-_PATCH_CONSTRAINT_RE = re.compile(
-    r"(?:不要|禁止|避免|必须|不能|别用|改成|改为|请用|"
-    r"\bdo not\b|\bdon't\b|\bavoid\b|\bmust\b|\binstead\b)",
-    re.IGNORECASE,
-)
-MAX_RUNTIME_PATCH_CONSTRAINT_CHARS = 1_000
-
-
-@dataclass
+@dataclasses.dataclass
 class AgentSession:
-    """
-    Agent 与 Tool 共享的运行上下文。
+    """Agent 与 Tool 共享的运行上下文。
 
     这里保存的是一次 CLI 会话内需要共享的执行依赖和短期状态。长期状态
     由专门的 core service 负责，例如 workspace 由 ReviewWorkspaceManager 管理，
-    普通问答记忆由 MemoryManager 管理。
+    普通历史和项目笔记分别使用官方 conversation 与 memory store。
     """
 
-    repo_root: Path
-    artifact_manager: ProjectArtifactStore
-    workspace_manager: ReviewWorkspaceManager
-    symbol_indexer: SymbolIndex
-    patch_engine: SearchReplacePatchEngine
-    code_fetcher: SourceReader
-    patch_verifier: PatchQualityVerifier | None = None
-    memory_manager: MemoryManager | None = None
-    memory_thread_id: str | None = None
-    memory_request_state: MemoryRequestState | None = None
+    repo_root: pathlib.Path
+    artifact_manager: artifacts.ProjectArtifactStore
+    workspace_manager: workspace.ReviewWorkspaceManager
+    symbol_indexer: symbol_index.SymbolIndex
+    patch_engine: search_replace.SearchReplacePatchEngine
+    code_fetcher: source_reader.SourceReader
+    patch_verifier: verification.PatchQualityVerifier | None = None
 
-    focus_paths: list[str] = field(default_factory=list)
-    source_read_cache: dict[tuple[str, str, int | None], ToolExecutionResult] = field(default_factory=dict)
+    current_finding: audit.FindingTask | None = None
+    current_review_item: domain_workspace.ReviewPatchItem | None = None
+    focus_paths: list[str] = dataclasses.field(default_factory=list)
+    source_read_cache: dict[
+        tuple[str, str, int | None], contract.ToolExecutionResult
+    ] = dataclasses.field(default_factory=dict)
     patch_source_hint: str | None = None
-    proposed_patch_draft: SearchReplacePatchDraft | None = None
-    revised_patch_draft: SearchReplacePatchDraft | None = None
+    proposed_patch_draft: types.SearchReplacePatchDraft | None = None
+    revised_patch_draft: types.SearchReplacePatchDraft | None = None
+    notices: list[str] = dataclasses.field(default_factory=list)
+    observations: list[contract.ToolExecutionResult] = dataclasses.field(
+        default_factory=list
+    )
     code_explain_allow_symbol_search: bool = True
-    runtime_patch_constraints: dict[str, list[str]] = field(default_factory=dict)
+    runtime_patch_constraints: dict[str, list[str]] = dataclasses.field(
+        default_factory=dict
+    )
 
     def set_focus_paths(self, paths: list[str] | None) -> None:
+        """只保存安全的仓库内源码焦点，过滤状态目录与越界目标。"""
         normalized: list[str] = []
         for path in paths or []:
             try:
-                clean = to_repo_relative_path(self.repo_root, resolve_repo_path(self.repo_root, path))
-            except UnsafeRepoPathError:
+                clean = repo_path.to_repo_relative_path(
+                    self.repo_root,
+                    repo_path.resolve_repo_path(self.repo_root, path),
+                )
+            except repo_path.UnsafeRepoPathError:
                 continue
-            if clean and not is_project_state_path(clean) and clean not in normalized:
+            if (
+                clean
+                and not repo_path.is_project_state_path(clean)
+                and clean not in normalized
+            ):
                 normalized.append(clean)
         self.focus_paths = normalized
 
     def is_focus_locked(self) -> bool:
+        """当前请求是否限定为明确的文件集合。"""
         return bool(self.focus_paths)
 
     def is_path_in_focus(self, path: str) -> bool:
+        """核对真实源码路径是否安全且属于本次焦点。"""
         try:
-            safe_path = to_repo_relative_path(self.repo_root, resolve_repo_path(self.repo_root, path))
-        except UnsafeRepoPathError:
+            safe_path = repo_path.to_repo_relative_path(
+                self.repo_root,
+                repo_path.resolve_repo_path(self.repo_root, path),
+            )
+        except repo_path.UnsafeRepoPathError:
             return False
-        if is_project_state_path(safe_path):
+        if repo_path.is_project_state_path(safe_path):
             return False
         if not self.focus_paths:
             return True
         return safe_path in self.focus_paths
 
     def normalize_repo_path(self, path: str) -> str:
-        return normalize_repo_path(path)
+        """统一请求内路径表示；实际准入仍须检查真实目标。"""
+        return repo_path.normalize_repo_path(path)
 
-    def bind_memory_thread(self, thread_id: str) -> None:
-        self.memory_thread_id = thread_id
-
-    def clear_memory_thread(self) -> None:
-        self.memory_thread_id = None
-
-    def bind_memory_request(self, state: MemoryRequestState) -> None:
-        self.memory_request_state = state
-
-    def clear_memory_request(self) -> None:
-        self.memory_request_state = None
-
-    def fetch_cached_source_read(self, tool_name: str, path: str, line: int | None) -> ToolExecutionResult | None:
+    def fetch_cached_source_read(
+        self, tool_name: str, path: str, line: int | None
+    ) -> contract.ToolExecutionResult | None:
+        """按工具、路径和行号读取本次请求缓存，不跨请求复用。"""
         key = (tool_name, self.normalize_repo_path(path), line)
         return self.source_read_cache.get(key)
 
@@ -115,42 +110,61 @@ class AgentSession:
         tool_name: str,
         path: str,
         line: int | None,
-        result: ToolExecutionResult,
+        result: contract.ToolExecutionResult,
     ) -> None:
+        """按工具语义保存本次源码观察，不作为可写源码证明。"""
         key = (tool_name, self.normalize_repo_path(path), line)
         self.source_read_cache[key] = result
 
-    def set_proposed_patch_draft(self, draft: SearchReplacePatchDraft) -> None:
+    def set_proposed_patch_draft(
+        self, draft: types.SearchReplacePatchDraft
+    ) -> None:
+        """暂存新草案，不改变审核队列或磁盘源码。"""
         self.proposed_patch_draft = draft
 
     def clear_proposed_patch_draft(self) -> None:
+        """撤销本次尚未入队的新草案。"""
         self.proposed_patch_draft = None
 
-    def pop_proposed_patch_draft(self) -> SearchReplacePatchDraft | None:
+    def pop_proposed_patch_draft(self) -> types.SearchReplacePatchDraft | None:
+        """取出并清除暂存新草案，向 workflow 移交提交责任。"""
         draft = self.proposed_patch_draft
         self.proposed_patch_draft = None
         return draft
 
-    def set_revised_patch_draft(self, draft: SearchReplacePatchDraft) -> None:
+    def set_revised_patch_draft(
+        self, draft: types.SearchReplacePatchDraft
+    ) -> None:
+        """暂存当前审核项的修订，不替换现有队列。"""
         self.revised_patch_draft = draft
 
-    def pop_revised_patch_draft(self) -> SearchReplacePatchDraft | None:
+    def pop_revised_patch_draft(self) -> types.SearchReplacePatchDraft | None:
+        """取出并清除修订草案，等待审核项绑定校验。"""
         draft = self.revised_patch_draft
         self.revised_patch_draft = None
         return draft
 
-    def record_runtime_patch_constraint(self, review_item_id: str, user_text: str) -> None:
-        text = " ".join(user_text.split())[:MAX_RUNTIME_PATCH_CONSTRAINT_CHARS]
-        if not text or not _PATCH_CONSTRAINT_RE.search(text):
+    def record_runtime_patch_constraint(
+        self, review_item_id: str, user_text: str
+    ) -> None:
+        """保存绑定当前审核项的用户原文要求，不提炼为长期偏好。"""
+        text = user_text.strip()
+        if not text:
             return
-        constraints = self.runtime_patch_constraints.setdefault(review_item_id, [])
+        constraints = self.runtime_patch_constraints.setdefault(
+            review_item_id, []
+        )
         if text not in constraints:
             constraints.append(text)
 
     def clear_runtime_patch_constraints(self, review_item_id: str) -> None:
+        """清理指定审核项的临时要求，不影响同文件其他审核项。"""
         self.runtime_patch_constraints.pop(review_item_id, None)
 
-    def build_runtime_patch_constraint_context(self, review_item_id: str) -> str:
+    def build_runtime_patch_constraint_context(
+        self, review_item_id: str
+    ) -> str:
+        """将当前审核项的临时原文要求重新投影到本轮请求。"""
         if not self.runtime_patch_constraints:
             return ""
         constraints = self.runtime_patch_constraints.get(review_item_id, ())
@@ -163,65 +177,12 @@ class AgentSession:
         lines.extend(f"- {item}" for item in constraints)
         return "\n".join(lines)
 
-    def build_thread_history(
-        self,
-        intent: IntentType,
-        *,
-        max_tokens: int,
-    ) -> list[dict[str, Any]]:
-        if self.memory_manager is None or intent not in ORDINARY_MEMORY_INTENTS:
-            return []
-        build_history = getattr(self.memory_manager, "build_thread_history", None)
-        if build_history is None:
-            return []
-        try:
-            if self.memory_thread_id is None:
-                history = build_history(max_tokens=max_tokens)
-            else:
-                history = build_history(
-                    thread_id=self.memory_thread_id,
-                    max_tokens=max_tokens,
-                )
-        except MemoryStorageError:
-            return []
-        return [dict(message) for message in history]
-
-    def build_memory_debug_summary(
-        self,
-        intent: IntentType,
-        current_user_text: str = "",
-    ) -> str:
-        del current_user_text
-        if intent not in ORDINARY_MEMORY_INTENTS:
-            return ""
-        lines: list[str] = []
-        manager = self.memory_manager
-        fetch_diagnostic = getattr(manager, "latest_diagnostic", None)
-        diagnostic = fetch_diagnostic() if callable(fetch_diagnostic) else None
-        if isinstance(diagnostic, LLMCallDiagnostic):
-            purpose = getattr(diagnostic.purpose, "name", str(diagnostic.purpose)).lower()
-            reasoning = getattr(
-                diagnostic.reasoning,
-                "name",
-                str(diagnostic.reasoning),
-            ).lower()
-            stream = "on" if diagnostic.stream else "off"
-            detail = (
-                f"Memory LLM diagnostic: purpose={purpose}, stream={stream}, "
-                f"reasoning={reasoning}, status={diagnostic.status}, "
-                f"timeout={diagnostic.timeout_seconds}s, "
-                f"sdk_retries={diagnostic.sdk_retries_taken}/"
-                f"{diagnostic.sdk_max_retries}"
-            )
-            if diagnostic.error:
-                detail += f", error={diagnostic.error}"
-            lines.append(detail)
-        return "\n".join(lines)
-
     def clear_request_cache(self) -> None:
+        """清除本次取证缓存，下一请求须重新读取。"""
         self.source_read_cache.clear()
 
     def clear_cache(self) -> None:
+        """清除临时草案、局部约束和取证缓存，保留持久会话与笔记。"""
         self.clear_request_cache()
         self.patch_source_hint = None
         self.proposed_patch_draft = None

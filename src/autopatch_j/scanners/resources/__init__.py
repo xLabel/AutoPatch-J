@@ -1,1 +1,1 @@
-"""Scanner packaged resources."""
+"""扫描器随包资源。"""

@@ -1,116 +1,88 @@
+"""人工决定、当前补丁解释与修订的交互协调。"""
+
 from __future__ import annotations
 
-from autopatch_j.cli.workflow_dependencies import WorkflowDependencies
-from autopatch_j.cli.workflows.memory_turn import run_durable_memory_turn
-from autopatch_j.core.domain import (
-    IntentType,
-    PatchDraftSnapshot,
-    PatchReviewStatus,
-    ReviewPatchItem,
-    ReviewWorkspace,
-)
-from autopatch_j.core.finding import SourceRegion
-from autopatch_j.core.patching import SyntaxCheckResult
-from autopatch_j.core.patching.types import normalize_patch_path
+import functools
 
-
-def _finding_evidence_keys(current_item: ReviewPatchItem) -> list[str]:
-    scan_id = current_item.draft.source_scan_id
-    if not scan_id:
-        return []
-    return [f"{scan_id}:{finding_id}" for finding_id in current_item.finding_ids]
+from autopatch_j.agent import result
+from autopatch_j.cli import workflow_dependencies
+from autopatch_j.core.domain import intent
+from autopatch_j.core.domain import workspace
 
 
 class PatchReviewWorkflow:
-    """
-    待确认补丁工作流。
+    """待确认补丁工作流。
 
     负责 pending patch 期间的 apply、discard、abort、patch_explain 和
     patch_revise。它不反向调用主路由；无法消费的普通文本由 UserInputRouter 再分类。
     """
 
-    def __init__(self, services: WorkflowDependencies) -> None:
+    def __init__(
+        self, services: workflow_dependencies.WorkflowDependencies
+    ) -> None:
         self.services = services
 
-    def handle_review_action(self, user_input: str, current_item: ReviewPatchItem) -> bool:
+    def handle_review_action(
+        self, user_input: str, current_item: workspace.ReviewPatchItem
+    ) -> bool:
+        """消费 apply/discard/abort；返回是否已经处理该输入。"""
         runtime = self.services.runtime
         current_draft = current_item.draft.to_patch_draft()
         normalized = user_input.lower()
 
         if normalized == "apply":
-            apply_result = self.services.command_handlers.handle_apply(current_draft)
+            apply_result = self.services.command_handlers.handle_apply(
+                current_draft
+            )
             if not apply_result.applied:
                 return True
-            assert apply_result.source_region is not None
-            assert apply_result.changed_region is not None
-            rebased_count = 0
-            stale_count = 0
-            with runtime.workspace_manager.edit() as workspace:
-                workspace.mark_current_patch_applied()
-                rebased_count, stale_count = self._rebase_pending_same_file_patches(
-                    workspace=workspace,
-                    file_path=current_draft.file_path,
-                    source_region=apply_result.source_region,
-                    changed_region=apply_result.changed_region,
-                )
-                if not workspace.has_pending_patch():
-                    self.services.renderer.print_agent_text("补丁队列已清空")
-            runtime.agent.session.clear_runtime_patch_constraints(current_item.item_id)
-            if rebased_count or stale_count:
-                self.services.renderer.print_agent_text(
-                    f"已重定位 {rebased_count} 个同文件待审补丁；"
-                    f"{stale_count} 个补丁需重新扫描。"
-                )
+            runtime.agent.session.clear_runtime_patch_constraints(
+                current_item.item_id
+            )
             return True
 
         if normalized == "discard":
             self.services.command_handlers.handle_discard()
-            with runtime.workspace_manager.edit() as workspace:
-                workspace.mark_current_patch_discarded()
-                if not workspace.has_pending_patch():
-                    self.services.renderer.print_agent_text("补丁队列已清空")
-            runtime.agent.session.clear_runtime_patch_constraints(current_item.item_id)
+            if runtime.review_service.discard():
+                self.services.renderer.print_agent_text("补丁队列已清空")
+            runtime.agent.session.clear_runtime_patch_constraints(
+                current_item.item_id
+            )
             return True
 
         if normalized == "abort":
-            runtime.workspace_manager.clear()
+            runtime.review_service.abort()
             runtime.agent.reset_history()
-            self.services.renderer.print_agent_text("已中止审核流程，丢弃所有剩余补丁草案。")
+            self.services.renderer.print_agent_text(
+                "已中止审核流程，丢弃所有剩余补丁草案。"
+            )
             return True
 
         return False
 
     def handle_patch_explain(self, text: str) -> None:
+        """围绕当前审核项准备范围与只读说明。"""
         runtime = self.services.runtime
         current_item = runtime.workspace_manager.load().current_patch()
         if current_item is None:
             self.services.renderer.print_error("当前没有待确认补丁")
             return
 
-        focus_paths = self.services.summary_provider.fetch_review_scope_paths(current_item)
+        focus_paths = self.services.summary_provider.fetch_review_scope_paths(
+            current_item
+        )
         runtime.agent.session.set_focus_paths(focus_paths)
-        run_durable_memory_turn(
-            manager=runtime.memory_manager,
-            session=runtime.agent.session,
-            intent=IntentType.PATCH_EXPLAIN,
-            user_text=text,
-            scope_paths=[current_item.file_path],
-            evidence_keys=_finding_evidence_keys(current_item),
-            run=lambda: self.services.agent_runner.run(
-                prompt=text,
-                agent_call=lambda p, **kwargs: runtime.agent.perform_patch_explain(
-                    raw_user_text=text,
-                    current_item=current_item,
-                    **kwargs,
-                ),
-                answer_intent=IntentType.PATCH_EXPLAIN,
-                raw_user_text=text,
+        self.services.agent_runner.run(
+            prompt=text,
+            agent_call=functools.partial(
+                runtime.agent.perform_patch_explain, current_item=current_item
             ),
-            assistant_text=lambda result: result.display_answer,
-            on_degraded=self.services.renderer.print_agent_text,
+            answer_intent=intent.IntentType.PATCH_EXPLAIN,
+            raw_user_text=text,
         )
 
     def handle_patch_revise(self, text: str) -> None:
+        """仅替换当前绑定通过的修订，其他队列项保持不变。"""
         runtime = self.services.runtime
         current_item = runtime.workspace_manager.load().current_patch()
         if current_item is None:
@@ -125,22 +97,37 @@ class PatchReviewWorkflow:
         runtime.agent.session.set_focus_paths([current_item.file_path])
         runtime.agent.session.revised_patch_draft = None
 
-        def run_revision() -> str:
-            self.services.agent_runner.run(
+        def run_revision(
+            current_item: workspace.ReviewPatchItem = current_item,
+        ) -> str:
+            """依据实际结束状态消费暂存修订，绑定通过才替换持久草案。
+
+            失败或没有有效修订时保留原草案；返回已经向用户展示的摘要。
+            """
+            response = self.services.agent_runner.run(
                 prompt=text,
-                agent_call=lambda p, **kwargs: runtime.agent.perform_patch_revise(
-                    raw_user_text=text,
+                agent_call=functools.partial(
+                    runtime.agent.perform_patch_revise,
                     current_item=current_item,
-                    **kwargs,
                 ),
                 suppress_answer_output=True,
             )
+            if response.status not in {
+                result.RunStatus.COMPLETED,
+                result.RunStatus.LIMITED,
+            }:
+                runtime.agent.session.revised_patch_draft = None
+                summary = "修订未完成，当前补丁保持不变。"
+                self.services.renderer.print_error(summary)
+                return summary
             revised_patch = runtime.agent.session.pop_revised_patch_draft()
             if revised_patch is None:
                 summary = "未生成修订补丁，当前补丁保持不变。"
                 self.services.renderer.print_agent_text(summary)
                 return summary
-            if not runtime.workspace_manager.replace_current_patch(revised_patch):
+            if not runtime.workspace_manager.replace_current_patch(
+                revised_patch
+            ):
                 summary = "修订补丁未应用：当前 finding binding 校验失败，原补丁保持不变。"
                 self.services.renderer.print_error(summary)
                 return summary
@@ -148,87 +135,4 @@ class PatchReviewWorkflow:
             self.services.renderer.print_agent_text(summary)
             return summary
 
-        run_durable_memory_turn(
-            manager=runtime.memory_manager,
-            session=runtime.agent.session,
-            intent=IntentType.PATCH_REVISE,
-            user_text=text,
-            scope_paths=[current_item.file_path],
-            evidence_keys=_finding_evidence_keys(current_item),
-            run=run_revision,
-            assistant_text=str,
-            on_degraded=self.services.renderer.print_agent_text,
-        )
-
-    def _rebase_pending_same_file_patches(
-        self,
-        *,
-        workspace: ReviewWorkspace,
-        file_path: str,
-        source_region: SourceRegion,
-        changed_region: SourceRegion,
-    ) -> tuple[int, int]:
-        runtime = self.services.runtime
-        rebased_count = 0
-        stale_count = 0
-        normalized_file_path = normalize_patch_path(file_path)
-        for item in workspace.patch_items:
-            if item.status is not PatchReviewStatus.PENDING:
-                continue
-            if normalize_patch_path(item.file_path) != normalized_file_path:
-                continue
-            if item.draft.error_code == "STALE_DRAFT":
-                continue
-            try:
-                result = runtime.patch_engine.rebase_draft(
-                    item.draft.to_patch_draft(),
-                    source_region,
-                    changed_region,
-                )
-                if not result.rebased:
-                    item.draft.error_code = result.error_code
-                    item.draft.message = result.message
-                    stale_count += 1
-                    continue
-                assert result.build_result is not None
-                validation = self._verify_rebased_syntax(
-                    item.file_path,
-                    result.build_result.updated_source,
-                )
-                message = (
-                    result.message
-                    if validation.status in {"ok", "skipped"}
-                    else validation.message
-                )
-                item.draft = PatchDraftSnapshot(
-                    file_path=item.draft.file_path,
-                    old_string=item.draft.old_string,
-                    new_string=item.draft.new_string,
-                    diff=result.build_result.diff,
-                    match_region=result.build_result.match_region,
-                    message=message,
-                    validation_status=validation.status,
-                    validation_message=validation.message,
-                    validation_errors=list(validation.errors),
-                    rationale=item.draft.rationale,
-                    source_hint=item.draft.source_hint,
-                    associated_finding_id=item.draft.associated_finding_id,
-                    source_scan_id=item.draft.source_scan_id,
-                    target_finding=result.rebased_target_finding,
-                    error_code=None,
-                )
-                rebased_count += 1
-            except Exception as exc:
-                item.draft.error_code = "STALE_DRAFT"
-                item.draft.message = (
-                    "待审补丁已失效：重定位发生异常："
-                    f"{exc}。请 discard，或 abort 后重新扫描。"
-                )
-                stale_count += 1
-        return rebased_count, stale_count
-
-    def _verify_rebased_syntax(self, file_path: str, updated_source: str) -> SyntaxCheckResult:
-        verifier = self.services.runtime.patch_verifier
-        if verifier is None:
-            return SyntaxCheckResult(status="unavailable", message="未配置补丁语法校验器。")
-        return verifier.verify_syntax(file_path, updated_source)
+        run_revision()

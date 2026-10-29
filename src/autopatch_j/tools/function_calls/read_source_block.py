@@ -1,52 +1,68 @@
+"""读取目标行所在 Java 语法块，复用请求内缓存。"""
+
 from __future__ import annotations
 
 from typing import Annotated
 
-from autopatch_j.tools.contract import (
-    ToolArg,
-    ToolExecutionResult,
-    function_tool,
-)
-from autopatch_j.tools.function_calls._source_reading_base import SourceReadToolBase
-from autopatch_j.tools.names import FunctionToolName
+import pydantic
+
+from autopatch_j.tools import contract
+from autopatch_j.tools import names
+from autopatch_j.tools.function_calls import _source_reading_base
 
 
-class ReadSourceBlockTool(SourceReadToolBase):
+class ReadSourceBlockTool(_source_reading_base.SourceReadToolBase):
     """读取指定行所在的 Java 方法、构造器或类型代码块。"""
 
-    @function_tool(
-        name=FunctionToolName.READ_SOURCE_BLOCK,
-        description=(
-            "读取指定行所在的 Java 方法、构造器、类、接口、record 或 enum 完整代码块。"
-            "适合接在 search_symbols 的 path:line 结果之后，或在修改整个方法/类前确认 old_string。"
-        ),
-    )
+    name = names.FunctionToolName.READ_SOURCE_BLOCK.value
+
     def execute(
         self,
-        path: Annotated[str, ToolArg("仓库内 Java 文件相对路径。")],
-        line: Annotated[int, ToolArg("1-based 行号；可以是声明行，也可以是方法体内部行。")],
-    ) -> ToolExecutionResult:
+        path: Annotated[
+            str,
+            pydantic.Field(
+                description="仓库内 Java 文件相对路径。", strict=True
+            ),
+        ],
+        line: Annotated[
+            int,
+            pydantic.Field(
+                description="1-based 行号；可以是声明行，也可以是方法体内部行。",
+                strict=True,
+            ),
+        ],
+    ) -> contract.ToolExecutionResult:
+        """读取指定行所在的 Java 方法、构造器或类型代码块。
+
+        Returns:
+            目标位置所属 Java 语法块或明确标记的行窗降级结果。
+        """
         normalized_line = self._normalize_positive_line(line)
-        if isinstance(normalized_line, ToolExecutionResult):
+        if isinstance(normalized_line, contract.ToolExecutionResult):
             return normalized_line
-
         target = self._prepare_target(path)
-        if isinstance(target, ToolExecutionResult):
+        if isinstance(target, contract.ToolExecutionResult):
             return target
-
-        cached_result = self._fetch_cached(target.context, target.path, line=normalized_line)
+        cached_result = self._fetch_cached(
+            target.context, target.path, line=normalized_line
+        )
         if cached_result is not None:
             return cached_result
-
-        code = target.context.code_fetcher.fetch_block_source(target.path, normalized_line)
+        code = target.context.code_fetcher.fetch_block_source(
+            target.path, normalized_line
+        )
         error = self._error_if_source_failed(code, target.path)
         if error is not None:
             return error
-
-        result = ToolExecutionResult(
+        result = contract.ToolExecutionResult(
             status="ok",
-            message=f"已成功加载源代码块 [路径: {target.path}, 行: {normalized_line}]:\n\n```java\n{code}\n```",
+            message=f"已成功加载源代码块 [路径: {target.path}"
+            f", 行: {normalized_line}"
+            f"]:\n\n```java\n{code}"
+            f"\n```",
             summary=f"已读取源代码块: {target.path}:{normalized_line}",
         )
-        self._persist_cached(target.context, target.path, line=normalized_line, result=result)
+        self._persist_cached(
+            target.context, target.path, line=normalized_line, result=result
+        )
         return result

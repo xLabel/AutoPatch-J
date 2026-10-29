@@ -1,15 +1,15 @@
 # AutoPatch-J 上手与操作手册
 
-这里集中说明 AutoPatch-J 的安装、配置和日常操作。项目定位见 [README](../README.md)，补丁应用和验证的完整规则见 [Patch Safety 规格](../openspec/specs/patch-safety/spec.md)。
+这里集中说明 AutoPatch-J 的安装、配置和日常操作。项目定位见 [README](../README.md)，行为契约和代码依据统一见 [SPEC](SPEC.md)。
 
 ## 1. 环境要求
 
-- Python `3.10+`
+- Python `3.14+`
 - 待检查的 Java 仓库
 - OpenAI 兼容的 LLM API
 - 安装 Python 依赖和 managed Semgrep runtime 所需的网络环境
 
-目前实际使用的扫描器是 Semgrep。PMD、SpotBugs 和 Checkstyle 会出现在扫描器列表中，但尚未接入扫描流程。
+目前实际使用的扫描器是 Semgrep，`/scanner` 仅显示已经实现的扫描器。其他接入方向见 README 展望。
 
 ## 2. 安装
 
@@ -20,7 +20,7 @@ macOS / Linux：
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
+python -m pip install -c constraints.txt -e .
 ```
 
 Windows PowerShell：
@@ -28,7 +28,7 @@ Windows PowerShell：
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e .
+python -m pip install -c constraints.txt -e .
 ```
 
 安装完成后可以运行 `autopatch-j`，也可以使用 `python -m autopatch_j`。
@@ -42,7 +42,7 @@ macOS / Linux：
 ```bash
 export AUTOPATCH_LLM_API_KEY="your-api-key"
 export AUTOPATCH_LLM_BASE_URL="https://api.deepseek.com"
-export AUTOPATCH_LLM_MODEL="deepseek-v4-flash"
+export AUTOPATCH_LLM_MODEL="deepseek-flash"
 ```
 
 Windows PowerShell：
@@ -50,27 +50,12 @@ Windows PowerShell：
 ```powershell
 $env:AUTOPATCH_LLM_API_KEY="your-api-key"
 $env:AUTOPATCH_LLM_BASE_URL="https://api.deepseek.com"
-$env:AUTOPATCH_LLM_MODEL="deepseek-v4-flash"
+$env:AUTOPATCH_LLM_MODEL="deepseek-flash"
 ```
 
-可用配置：
+完整环境变量、默认值和校验规则见 [SPEC 配置](SPEC.md#61-配置与协议)。`AUTOPATCH_DEBUG=true` 开启调试，`AUTOPATCH_AUDIT_BATCH_LIMIT` 控制每轮 finding 数量。
 
-| 环境变量 | 默认值 | 说明 |
-|---|---|---|
-| `AUTOPATCH_LLM_API_KEY` | 空 | LLM API Key，必须设置 |
-| `AUTOPATCH_LLM_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容接口地址，末尾的 `/` 会被移除 |
-| `AUTOPATCH_LLM_MODEL` | `deepseek-v4-flash` | 供应商使用的 LLM 标识 |
-| `AUTOPATCH_LLM_REASONING_EFFORT` | 空 | 可选值由 LLM 供应商决定 |
-| `AUTOPATCH_LLM_EXTRA_BODY` | `{}` | 供应商扩展参数，必须是 JSON object 字符串 |
-| `AUTOPATCH_LLM_STREAM_DIALECT` | `standard` | 可选 `standard` 或 `bailian-dsml` |
-| `AUTOPATCH_DEBUG` | `false` | 设为 `true` 后显示调试信息和有界 RAW provider 错误 |
-| `AUTOPATCH_AUDIT_BATCH_LIMIT` | `4` | 每轮 audit 最多处理的 finding 数量；非法值或非正整数按 `4` 处理 |
-
-如果供应商要求额外的请求字段，可以通过 `AUTOPATCH_LLM_EXTRA_BODY` 传入：
-
-```bash
-export AUTOPATCH_LLM_EXTRA_BODY='{"thinking":{"type":"enabled"}}'
-```
+使用内置 `deepseek-flash` 或 `deepseek-v4-pro` 时，应用已经定义 context profile，不接受容量覆盖。使用其他模型时，必须根据实际模型能力同时设置正整数 `AUTOPATCH_LLM_CONTEXT_WINDOW` 与 `AUTOPATCH_LLM_MAX_OUTPUT_TOKENS`，且为输入保留安全余量；缺失或不合法会报告配置错误。应用只支持标准 Chat Completions function-call 协议，协议、流解析和 reasoning 回传由 Pydantic AI 与原生 SDK 处理，请求策略按任务用途固定。
 
 ## 4. 在 Java 仓库中启动
 
@@ -146,7 +131,7 @@ Agent 会为当前 finding 准备候选补丁。CLI 展示目标文件、diff、
 这个修改会影响哪些调用方？
 ```
 
-解释和修订都只针对当前 finding。修订补丁仍需命中原来的位置，也不能切换到同一文件中的其他 finding。校验失败时，当前补丁保持不变。
+补丁解释围绕当前待审项，修订只能替换当前文件和 finding，仍须与当前绑定区域相交，不能切换到同文件其他 finding。绑定校验失败时原补丁不变；语法检查结果会随预览显示，不等于目标项目编译或测试通过。
 
 如果同一文件还有其他待审补丁，前一个补丁可能会改变它们的位置。系统会更新不重叠补丁的位置；无法重新定位的补丁会显示 `STALE_DRAFT`。这类补丁不能继续 apply 或 revise，可以选择 `discard`，也可以 `abort` 后按当前源码重新扫描。
 
@@ -167,7 +152,7 @@ Agent 会为当前 finding 准备候选补丁。CLI 展示目标文件、diff、
 为什么这里适合使用不可变对象？
 ```
 
-这两类请求可以使用项目级 Memory。代码审计、补丁解释和补丁修订不读取普通对话 Memory，具体设计见 [Agent Memory v2 设计说明](memory_design.md)。
+普通问答和代码解释会保存完整 SDK 会话，重启后可继续。代码审计、零 finding 复核、补丁解释与修订使用独立历史；各任务可读取本项目长期笔记。需要记住已确认的长期偏好或决定时，可以明确要求 Agent 写入笔记。详见 [会话与 Memory 规格](SPEC.md#7-项目-memory)。
 
 ## 8. CLI 命令
 
@@ -177,24 +162,25 @@ Agent 会为当前 finding 准备候选补丁。CLI 展示目标文件、diff、
 | `/status` | 查看项目状态和运行诊断 |
 | `/scanner` | 查看扫描器状态 |
 | `/reindex` | 重建 Java 符号索引 |
-| `/reset` | 重置工作台；保留 Memory、Memory 导出和 CLI history |
-| `/new` | 结束当前工作状态并创建新的普通对话 thread |
+| `/reset` | 重置扫描、索引与审核工作台；保留会话、笔记、导出和终端历史 |
+| `/new` | 归档当前普通会话、开启空会话，清理待审草案并保留笔记 |
 | `/memory ...` | 查看和管理项目级 Memory |
 | `/help` | 显示命令和交互关键字 |
-| `/quit` | 退出 CLI；退出前执行 Memory 收尾 |
+| `/quit` | 关闭模型客户端及运行资源后退出 |
 
 ### Memory 子命令
 
 | 命令 | 作用 |
 |---|---|
-| `/memory status` | 查看 Memory 健康状态、任务和错误 |
-| `/memory list` | 列出当前可用的 Memory |
-| `/memory show <id>` | 查看一条 Memory 及其来源 |
-| `/memory forget <id>` | 忘记派生 Memory；保留原始 turn |
-| `/memory clear --confirm` | 清空 thread、turn、派生 Memory 和 job，并创建新 thread；保留现有导出和 CLI history |
-| `/memory export` | 创建新的 RAW JSON 快照，不覆盖旧文件 |
+| `/memory status`、`list` | 读取当前项目笔记文件列表 |
+| `/memory show [path]` | 查看笔记内容，默认 MEMORY.md |
+| `/memory forget <path>` | 删除笔记文件；MEMORY.md 受保护，使用明确自然语言修订或 clear |
+| `/memory clear --confirm` | 清空项目笔记，保留普通会话、导出和终端历史 |
+| `/memory export` | 创建现有笔记的 JSON 导出，不覆盖旧文件 |
 
-Memory 可能包含未脱敏的用户原文和 LLM 服务返回的诊断。查看或分享导出文件前，应先检查其中是否有敏感信息。
+普通会话保存在 `.autopatch-j/conversations.sqlite3`，长期笔记保存在 `.autopatch-j/memory.sqlite3`。删除笔记不会擦除普通会话中的旧内容；如需开始独立对话，使用 `/new`。导出仅含 notebook 文件，不是完整对话或 RAW 审计记录。
+
+旧 memory.db、memory_summary.md 不再作为输入，也不会自动迁移或删除；如有需要可自行备份查看。项目不再生成 Markdown 审阅投影，也没有后台 Memory 提取任务。
 
 ## 9. 常见问题
 
@@ -220,24 +206,30 @@ AutoPatch-J 不读取 `.env`。请把变量设置到启动 CLI 的 shell 或系�
 
 ### 当前补丁显示 `STALE_DRAFT`
 
-这表示当前源码已经无法和补丁保存的位置可靠对应。选择 `discard` 丢弃当前项，或者 `abort` 后重新扫描；不要继续应用这份草案。
+这表示当前源码已经无法和补丁保存的位置可靠对应，或上次应用的最终审核状态未能保存。选择 `discard` 丢弃当前项，或者 `abort` 后重新扫描；不要继续应用这份草案。
 
-### Memory 显示 degraded
+### 提示“源码已写入，但审核状态未保存”
 
-先用 `/memory status` 查看错误。`/memory show <id>` 和 `/memory export` 可以帮助排查；`/memory clear --confirm` 会删除全部 Memory 业务数据，确认不再需要这些数据后再执行。恢复规则见 [Memory 设计说明](memory_design.md)。
+源码修改已经生效，请先核对文件。程序保留了失效草案，重启后也会阻止重复应用；选择 `discard` 或 `abort` 后重新扫描。不会自动回滚、重试 apply 或继续复扫。若连写入前的阻断状态也无法保存，则不会写源码。
+
+### 笔记或普通会话存储不可用
+
+存储异常会明确提示。笔记加载失败时，主任务可继续，但本轮不能据此判断“没有项目笔记”；普通回答已经生成而保存失败时，回答仍显示，并提示会话未保存。并发冲突不会覆盖其他进程的修改。
+
+先保存需要保留的输出，并检查项目状态目录的权限和存储情况；不会自动迁移或重建损坏的数据库。`/memory clear --confirm` 只用于明确删除当前笔记，不承诺修复任意数据库损坏。
+
+### 模型响应不完整或请求达到上限
+
+异常 finish reason 或缺少流结束标记会使本轮失败，不会执行该响应工具或提交未完成草案。额度或循环限制产生的有效草案仍可进入人工审核；界面会区分任务受限和完整完成。必要上下文过大时缩小范围，或使用 `/new` 开始新普通会话。
 
 ## 10. 开发与测试
 
-安装测试依赖：
+开发安装、Python 规范和静态检查命令统一见 [Python 规范：安装与检查](PYTHON_STYLE.md#3-安装与检查)。仅运行测试时也可按 [AGENTS](../AGENTS.md#实现与验证) 安装测试依赖。
 
-```bash
-python -m pip install -e '.[test]'
-```
-
-运行完整测试：
+运行确定性完整回归：
 
 ```bash
 pytest -q
 ```
 
-行为变更应先补充对应的聚焦测试。修改核心工作流或多个模块后，再运行完整测试集。
+默认回归不调用真实 LLM。测试执行、真实 LLM 授权和开发协作规则统一见 [AGENTS](../AGENTS.md#实现与验证)，产品侧测试隔离契约见 [SPEC](SPEC.md#8-验证契约与能力限制)。

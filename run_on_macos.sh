@@ -4,7 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! command -v python3 >/dev/null 2>&1; then
-    echo "[ERROR] Python not found. Please install Python 3.10 or higher."
+    echo "[ERROR] Python not found. Please install Python 3.14 or higher."
+    exit 1
+fi
+
+if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 14))'; then
+    echo "[ERROR] Python 3.14 or higher is required."
     exit 1
 fi
 
@@ -13,8 +18,13 @@ if [ ! -d "$ROOT_DIR/.venv" ]; then
     python3 -m venv "$ROOT_DIR/.venv"
 fi
 
+if ! "$ROOT_DIR/.venv/bin/python" -c 'import sys; raise SystemExit(sys.version_info < (3, 14))'; then
+    echo "[ERROR] Existing .venv requires Python 3.14+. Recreate it with that interpreter."
+    exit 1
+fi
+
 echo "[DEPENDENCY] Syncing project dependencies from pyproject.toml..."
-"$ROOT_DIR/.venv/bin/python" -m pip install --quiet -e "$ROOT_DIR"
+"$ROOT_DIR/.venv/bin/python" -m pip install --quiet -c "$ROOT_DIR/constraints.txt" -e "$ROOT_DIR"
 
 if [ -z "${AUTOPATCH_LLM_API_KEY:-}" ]; then
     echo "[ERROR] AUTOPATCH_LLM_API_KEY is not set in your shell environment."
@@ -25,9 +35,9 @@ fi
 
 echo "[SCANNER] Ensuring managed Semgrep runtime..."
 "$ROOT_DIR/.venv/bin/python" - <<'PY'
-from autopatch_j.scanners.semgrep import install_managed_semgrep_runtime
+from autopatch_j.scanners.semgrep import runtime
 
-status, message = install_managed_semgrep_runtime()
+status, message = runtime.install_managed_semgrep_runtime()
 print(f"[{status.upper()}] {message}")
 raise SystemExit(0 if status == "ok" else 1)
 PY

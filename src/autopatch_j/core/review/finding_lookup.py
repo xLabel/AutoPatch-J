@@ -1,20 +1,22 @@
+"""活动 scan 与 F 句柄的解析，拒绝失效或跨文件绑定。"""
+
 from __future__ import annotations
 
+import dataclasses
+import pathlib
 import re
-from dataclasses import dataclass
-from pathlib import Path
 
-from autopatch_j.core.review.artifacts import ProjectArtifactStore
-from autopatch_j.core.review.workspace import ReviewWorkspaceManager
-from autopatch_j.scanners.models import Finding
+from autopatch_j.core.review import artifacts
+from autopatch_j.core.review import workspace as review_workspace
+from autopatch_j.scanners import models
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class FindingLookupResult:
     scan_id: str
     finding_id: str
     finding_index: int
-    finding: Finding
+    finding: models.Finding
 
 
 class FindingLookupError(ValueError):
@@ -24,10 +26,11 @@ class FindingLookupError(ValueError):
 
 
 def resolve_finding_handle(
-    artifact_store: ProjectArtifactStore,
-    workspace_manager: ReviewWorkspaceManager,
+    artifact_store: artifacts.ProjectArtifactStore,
+    workspace_manager: review_workspace.ReviewWorkspaceManager,
     finding_id: str,
 ) -> FindingLookupResult:
+    """从工作台活动 scan 解析 F 句柄，缺失证据抛出明确业务错误。"""
     normalized_finding_id, finding_index = parse_finding_handle(finding_id)
     scan_id = resolve_active_scan_id(artifact_store, workspace_manager)
     finding = artifact_store.get_finding_by_index(scan_id, finding_index)
@@ -45,7 +48,8 @@ def resolve_finding_handle(
 
 
 def parse_finding_handle(finding_id: str) -> tuple[str, int]:
-    match = re.fullmatch(r"[Ff]([1-9]\d*)", str(finding_id).strip())
+    """验证 F 加正整数的句柄，返回规范句柄与零基下标。"""
+    match = re.fullmatch(r"[Ff]([1-9]\d*)", finding_id.strip())
     if match is None:
         raise FindingLookupError(
             "INVALID_FINDING_HANDLE",
@@ -56,9 +60,10 @@ def parse_finding_handle(finding_id: str) -> tuple[str, int]:
 
 
 def resolve_active_scan_id(
-    artifact_store: ProjectArtifactStore,
-    workspace_manager: ReviewWorkspaceManager,
+    artifact_store: artifacts.ProjectArtifactStore,
+    workspace_manager: review_workspace.ReviewWorkspaceManager,
 ) -> str:
+    """优先选择工作台绑定 scan，不在绑定失效时回退到其他扫描。"""
     workspace = workspace_manager.load()
     if workspace.latest_scan_id:
         if artifact_store.load_scan_result(workspace.latest_scan_id) is None:
@@ -70,10 +75,12 @@ def resolve_active_scan_id(
 
     latest_scan = _latest_scan_file(artifact_store.findings_dir)
     if latest_scan is None:
-        raise FindingLookupError("NO_SCAN_ARTIFACT", "系统中未找到扫描记录，请先发起一次代码检查。")
+        raise FindingLookupError(
+            "NO_SCAN_ARTIFACT", "系统中未找到扫描记录，请先发起一次代码检查。"
+        )
     return latest_scan.stem
 
 
-def _latest_scan_file(findings_dir: Path) -> Path | None:
+def _latest_scan_file(findings_dir: pathlib.Path) -> pathlib.Path | None:
     scan_files = sorted(findings_dir.glob("scan-*.json"), reverse=True)
     return scan_files[0] if scan_files else None

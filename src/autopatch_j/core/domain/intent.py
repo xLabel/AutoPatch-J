@@ -1,9 +1,11 @@
+"""自然语言任务意图及审核会话路由枚举。"""
+
 from __future__ import annotations
 
-from enum import Enum
+import enum
 
 
-class IntentType(str, Enum):
+class IntentType(str, enum.Enum):
     """自然语言输入可进入的业务意图集合。"""
 
     CODE_AUDIT = "code_audit"
@@ -13,7 +15,7 @@ class IntentType(str, Enum):
     PATCH_REVISE = "patch_revise"
 
 
-class ConversationRoute(str, Enum):
+class ConversationRoute(str, enum.Enum):
     """pending review 场景下的会话路由结果。"""
 
     NEW_TASK = "new_task"

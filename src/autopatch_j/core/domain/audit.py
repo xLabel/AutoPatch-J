@@ -1,10 +1,12 @@
+"""finding 处理队列、有限重读和草案生成的业务状态。"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
+import dataclasses
+import enum
 
 
-class AuditFindingStatus(str, Enum):
+class AuditFindingStatus(str, enum.Enum):
     """审计 finding 在自动修复流程中的推进状态。"""
 
     PENDING = "pending"
@@ -12,7 +14,7 @@ class AuditFindingStatus(str, Enum):
     FAILED = "failed"
 
 
-class AuditAttemptOutcome(str, Enum):
+class AuditAttemptOutcome(str, enum.Enum):
     """单次 finding 修复尝试的归因结果。"""
 
     PATCH_READY = "patch_ready"
@@ -20,10 +22,9 @@ class AuditAttemptOutcome(str, Enum):
     NO_PATCH = "no_patch"
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class FindingTask:
-    """
-    扫描 finding 在本轮审计 workflow 中的待办项。
+    """扫描 finding 在本轮审计 workflow 中的待办项。
 
     它保存 F1/F2 这类逻辑句柄、重试次数和最后失败原因，不直接持久化到 workspace。
     """
@@ -41,13 +42,13 @@ class FindingTask:
     last_error_message: str | None = None
 
     def is_pending(self) -> bool:
+        """该 finding 是否仍等待本轮处理。"""
         return self.status is AuditFindingStatus.PENDING
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class FindingAttemptDecision:
-    """
-    一次 Agent 修复尝试后的流程决策。
+    """一次 Agent 修复尝试后的流程决策。
 
     FindingBacklog 根据工具消息推断该 finding 是否已产生补丁、是否可重试或应标记失败。
     """

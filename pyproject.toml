@@ -7,12 +7,16 @@ name = "autopatch-j"
 version = "0.1.0"
 description = "Minimal AI coding patch agent for Java repositories"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 authors = [
   { name = "weijianguan" }
 ]
 dependencies = [
-  "openai>=2.32.0,<3",
+  "pydantic-ai-slim[openai]==2.63.0",
+  "pydantic-ai-harness==0.63.0",
+  "openai==3.40.0",
+  "filelock==4.2.4",
+  "pydantic>=2,<3",
   "prompt_toolkit",
   "rich",
   "socksio",
@@ -25,9 +29,14 @@ test = [
     "pytest",
     "pytest-mock",
 ]
+dev = [
+    "black==26.10.1",
+    "pylint==4.1.3",
+    "pyrefly==1.4.0",
+]
 
 [project.scripts]
-autopatch-j = "autopatch_j.cli:main"
+autopatch-j = "autopatch_j.cli.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -41,3 +50,16 @@ testpaths = ["tests"]
 markers = [
   "live_llm: 仅在明确使用 --run-live-llm 时运行的真实 LLM 集成测试",
 ]
+
+[tool.black]
+required-version = "26.10.1"
+line-length = 80
+target-version = ["py314"]
+
+[tool.pyrefly]
+required-version = "==1.4.0"
+preset = "default"
+python-version = "3.14"
+project-includes = ["src", "tests"]
+search-path = ["src", "."]
+check-unannotated-defs = true

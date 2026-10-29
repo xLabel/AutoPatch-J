@@ -1,13 +1,12 @@
+"""只注入回调事件与内存 renderer，验证用户看到的文本和折叠状态。"""
+
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest import mock
 
-import pytest
-
-from autopatch_j.agent.react_runner import AgentRunResult
-from autopatch_j.cli.agent_stream_presenter import AgentStreamPresenter
-from autopatch_j.core.domain import IntentType
-from autopatch_j.llm.options import LLMCallDiagnostic, LLMCallPurpose, LLMReasoningMode
+from autopatch_j.agent import result
+from autopatch_j.cli import agent_stream_presenter
+from autopatch_j.core.domain import intent as domain_intent
 
 
 class _Workspace:
@@ -18,83 +17,39 @@ class _Workspace:
         return self._has_pending_patch
 
 
-class _WorkspaceManager:
-    def __init__(self, has_pending_patch: bool = False) -> None:
-        self.workspace = _Workspace(has_pending_patch)
-
-    def load(self) -> _Workspace:
-        return self.workspace
-
-
-class _ChatFilter:
-    def build_display_answer(self, user_text, answer, intent):
-        return answer
-
-
-class _Agent:
-    def __init__(self, session=None, llm=None) -> None:
-        self.messages = []
-        self.session = session
-        self.llm = llm
-
-
-class _Session:
-    def build_memory_debug_summary(self, intent, user_text):
-        return f"Memory 注入：{intent.value}:{user_text}"
-
-
-class _LlmWithDiagnostics:
-    diagnostics = [
-        LLMCallDiagnostic(
-            purpose=LLMCallPurpose.REACT,
-            stream=True,
-            reasoning=LLMReasoningMode.ENABLED,
-            max_tokens=None,
-            temperature=None,
-            status="ok",
-        )
-    ]
-
-
-class _LlmWithFailureDiagnostic:
-    diagnostics = [
-        LLMCallDiagnostic(
-            purpose=LLMCallPurpose.REACT,
-            stream=True,
-            reasoning=LLMReasoningMode.ENABLED,
-            max_tokens=None,
-            temperature=None,
-            status="error",
-            error="RuntimeError: RAW_PROVIDER_SENTINEL",
-        )
-    ]
-
-
-def _agent_result(answer: str = "") -> AgentRunResult:
-    return AgentRunResult(final_answer=answer, trace_messages=[])
+def _agent_result(answer: str = "") -> result.AgentRunResult:
+    return result.AgentRunResult(final_answer=answer, observations=())
 
 
 def _build_agent_stream_presenter(
     debug_mode: bool,
     has_pending_patch: bool = False,
-    agent=None,
-) -> AgentStreamPresenter:
-    return AgentStreamPresenter(
-        renderer=MagicMock(),
-        workspace_manager=_WorkspaceManager(has_pending_patch),
-        chat_filter=_ChatFilter(),
-        agent=agent or _Agent(),
+) -> tuple[agent_stream_presenter.AgentStreamPresenter, mock.MagicMock]:
+    renderer = mock.MagicMock()
+    stream = agent_stream_presenter.AgentStreamPresenter(
+        renderer=renderer,
+        workspace_manager=mock.MagicMock(
+            load=lambda: _Workspace(has_pending_patch)
+        ),
+        chat_filter=mock.MagicMock(
+            build_display_answer=lambda user_text, answer, intent: answer
+        ),
         describe_current_scope_paths=lambda: [],
         build_static_scan_summary=lambda: "",
         build_local_no_issue_summary=lambda: "",
         debug_mode=lambda: debug_mode,
     )
 
+    return stream, renderer
 
-def test_agent_stream_presenter_compacts_reasoning_and_observation_when_debug_is_off() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=False)
 
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+def test_stream_compacts_reasoning_and_observation_when_debug_is_off() -> None:
+    stream, renderer = _build_agent_stream_presenter(debug_mode=False)
+
+    def agent_call(
+        prompt, on_token, on_reasoning, on_observation, on_tool_start
+    ):
+        del prompt, on_token
         on_reasoning("reasoning one")
         on_reasoning("reasoning two")
         on_tool_start("read_source_file")
@@ -103,115 +58,135 @@ def test_agent_stream_presenter_compacts_reasoning_and_observation_when_debug_is
 
     stream.run(prompt="check", agent_call=agent_call)
 
-    stream.renderer.print_reasoning_status.assert_called_once_with(0)
-    stream.renderer.print_reasoning_text.assert_not_called()
-    stream.renderer.print_agent_text.assert_any_call("已读取源代码: Demo.java")
-    stream.renderer.print.assert_not_called()
+    renderer.print_reasoning_status.assert_called_once_with(0)
+    renderer.print_reasoning_text.assert_not_called()
+    renderer.print_agent_text.assert_any_call("已读取源代码: Demo.java")
 
 
-def test_agent_stream_presenter_expands_reasoning_and_observation_when_debug_is_on() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=True)
+def test_stream_expands_reasoning_and_observation_when_debug_is_on() -> None:
+    stream, renderer = _build_agent_stream_presenter(debug_mode=True)
 
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+    def agent_call(
+        prompt, on_token, on_reasoning, on_observation, on_tool_start
+    ):
+        del prompt, on_token, on_tool_start
         on_reasoning("full reasoning")
         on_observation("full observation", "compact summary")
         return _agent_result()
 
     stream.run(prompt="check", agent_call=agent_call)
 
-    stream.renderer.print_agent_text.assert_called_once_with("full observation")
-    stream.renderer.print_reasoning_text.assert_any_call("-- 深度思考中 --\n")
-    stream.renderer.print_reasoning_text.assert_any_call("full reasoning")
-    stream.renderer.print_reasoning_status.assert_not_called()
-    stream.renderer.print.assert_not_called()
+    renderer.print_agent_text.assert_called_once_with("full observation")
+    renderer.print_reasoning_text.assert_any_call("-- 深度思考中 --\n")
+    renderer.print_reasoning_text.assert_any_call("full reasoning")
+    renderer.print_reasoning_status.assert_not_called()
 
 
-def test_agent_stream_presenter_renders_patch_explain_answer_with_pending_patch() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=True)
+def test_stream_renders_patch_explain_answer_with_pending_patch() -> None:
+    stream, renderer = _build_agent_stream_presenter(
+        debug_mode=False, has_pending_patch=True
+    )
 
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+    def agent_call(
+        prompt, on_token, on_reasoning, on_observation, on_tool_start
+    ):
+        del prompt, on_token, on_reasoning, on_observation, on_tool_start
         return _agent_result("patch explanation")
 
     stream.run(
         prompt="explain",
         agent_call=agent_call,
-        answer_intent=IntentType.PATCH_EXPLAIN,
+        answer_intent=domain_intent.IntentType.PATCH_EXPLAIN,
     )
 
-    stream.renderer.print_agent_text.assert_called_once_with("patch explanation")
-    stream.renderer.print.assert_not_called()
+    renderer.print_agent_text.assert_called_once_with("patch explanation")
 
 
-def test_agent_stream_presenter_suppresses_audit_answer_with_pending_patch() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=True)
+def test_stream_suppresses_audit_answer_with_pending_patch() -> None:
+    stream, renderer = _build_agent_stream_presenter(
+        debug_mode=False, has_pending_patch=True
+    )
 
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+    def agent_call(
+        prompt, on_token, on_reasoning, on_observation, on_tool_start
+    ):
+        del prompt, on_token, on_reasoning, on_observation, on_tool_start
         return _agent_result("audit summary")
 
     stream.run(
         prompt="audit",
         agent_call=agent_call,
-        answer_intent=IntentType.CODE_AUDIT,
+        answer_intent=domain_intent.IntentType.CODE_AUDIT,
     )
 
-    stream.renderer.print_agent_text.assert_not_called()
-    stream.renderer.print.assert_not_called()
+    renderer.print_agent_text.assert_not_called()
 
 
-def test_agent_stream_presenter_respects_explicit_suppress_answer_output() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=False, has_pending_patch=False)
+def test_stream_respects_explicit_suppress_answer_output() -> None:
+    stream, renderer = _build_agent_stream_presenter(
+        debug_mode=False, has_pending_patch=False
+    )
 
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+    def agent_call(
+        prompt, on_token, on_reasoning, on_observation, on_tool_start
+    ):
+        del prompt, on_token, on_reasoning, on_observation, on_tool_start
         return _agent_result("hidden answer")
 
     stream.run(
         prompt="audit",
         agent_call=agent_call,
-        answer_intent=IntentType.PATCH_EXPLAIN,
+        answer_intent=domain_intent.IntentType.PATCH_EXPLAIN,
         suppress_answer_output=True,
     )
 
-    stream.renderer.print_agent_text.assert_not_called()
-    stream.renderer.print.assert_not_called()
+    renderer.print_agent_text.assert_not_called()
 
 
-def test_agent_stream_presenter_renders_buffered_answer_as_plain_agent_text() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=True)
+def test_stream_renders_buffered_answer_as_plain_agent_text() -> None:
+    stream, renderer = _build_agent_stream_presenter(debug_mode=True)
 
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+    def agent_call(
+        prompt, on_token, on_reasoning, on_observation, on_tool_start
+    ):
+        del prompt, on_reasoning, on_observation, on_tool_start
         on_token('**补丁已提交** `MessageDigest.getInstance("SHA-256")`')
         return _agent_result()
 
     stream.run(prompt="audit", agent_call=agent_call)
 
-    stream.renderer.print_agent_text.assert_called_once_with(
+    renderer.print_agent_text.assert_called_once_with(
         '**补丁已提交** `MessageDigest.getInstance("SHA-256")`',
     )
-    stream.renderer.print.assert_not_called()
 
 
-def test_agent_stream_presenter_renders_buffered_plain_answer_with_newline() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=True)
+def test_stream_renders_buffered_plain_answer_with_newline() -> None:
+    stream, renderer = _build_agent_stream_presenter(debug_mode=True)
 
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+    def agent_call(
+        prompt, on_token, on_reasoning, on_observation, on_tool_start
+    ):
+        del prompt, on_reasoning, on_observation, on_tool_start
         on_token("补丁解释完成")
         return _agent_result()
 
     stream.run(
         prompt="explain patch",
         agent_call=agent_call,
-        answer_intent=IntentType.PATCH_EXPLAIN,
+        answer_intent=domain_intent.IntentType.PATCH_EXPLAIN,
         plain_answer=True,
     )
 
-    stream.renderer.print_plain.assert_called_once_with("补丁解释完成")
-    stream.renderer.print.assert_not_called()
+    renderer.print_plain.assert_called_once_with("补丁解释完成")
 
 
-def test_agent_stream_presenter_drops_intermediate_answer_when_tool_call_starts() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=False)
+def test_stream_drops_intermediate_answer_when_tool_call_starts() -> None:
+    stream, renderer = _build_agent_stream_presenter(debug_mode=False)
 
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
+    def agent_call(
+        prompt, on_token, on_reasoning, on_observation, on_tool_start
+    ):
+        del prompt, on_reasoning
         on_token("**F1 处理完成。**")
         on_tool_start("get_finding_detail")
         on_observation("full finding detail", "已获取 finding 详情: F2")
@@ -219,56 +194,4 @@ def test_agent_stream_presenter_drops_intermediate_answer_when_tool_call_starts(
 
     stream.run(prompt="audit", agent_call=agent_call)
 
-    stream.renderer.print_agent_text.assert_called_once_with("已获取 finding 详情: F2")
-    stream.renderer.print.assert_not_called()
-
-
-def test_agent_stream_presenter_shows_memory_debug_summary_only_in_debug_mode() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=True, agent=_Agent(session=_Session()))
-
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
-        return _agent_result()
-
-    stream.run(
-        prompt="解释项目",
-        agent_call=agent_call,
-        answer_intent=IntentType.CODE_EXPLAIN,
-        raw_user_text="这个项目是干什么的",
-    )
-
-    stream.renderer.print_agent_text.assert_called_once_with("Memory 注入：code_explain:这个项目是干什么的")
-    stream.renderer.print.assert_not_called()
-
-
-def test_agent_stream_presenter_shows_llm_diagnostics_only_in_debug_mode() -> None:
-    stream = _build_agent_stream_presenter(debug_mode=True, agent=_Agent(llm=_LlmWithDiagnostics()))
-
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
-        return _agent_result()
-
-    stream.run(prompt="check", agent_call=agent_call)
-
-    stream.renderer.print_agent_text.assert_called_once_with(
-        "LLM 调用诊断：purpose=react, stream=on, reasoning=enabled, status=ok, "
-        "max_tokens=None, timeout=none, sdk_retries=None/2"
-    )
-    stream.renderer.print.assert_not_called()
-
-
-def test_agent_stream_presenter_shows_failed_llm_diagnostic_before_reraising() -> None:
-    stream = _build_agent_stream_presenter(
-        debug_mode=True,
-        agent=_Agent(llm=_LlmWithFailureDiagnostic()),
-    )
-
-    def agent_call(prompt, on_token, on_reasoning, on_observation, on_tool_start):
-        raise RuntimeError("RAW_PROVIDER_SENTINEL")
-
-    with pytest.raises(RuntimeError, match="RAW_PROVIDER_SENTINEL"):
-        stream.run(prompt="check", agent_call=agent_call)
-
-    stream.renderer.print_agent_text.assert_called_once_with(
-        "LLM 调用诊断：purpose=react, stream=on, reasoning=enabled, status=error, "
-        "max_tokens=None, timeout=none, sdk_retries=None/2, "
-        "error=RuntimeError: RAW_PROVIDER_SENTINEL"
-    )
+    renderer.print_agent_text.assert_called_once_with("已获取 finding 详情: F2")

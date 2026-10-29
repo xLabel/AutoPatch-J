@@ -1,19 +1,15 @@
+"""验证真实模型测试的授权、执行顺序和配置摘要脱敏边界。"""
+
 from __future__ import annotations
 
-from dataclasses import replace
-from types import SimpleNamespace
+import dataclasses
+import types
 
 import pytest
 
-from autopatch_j.config import GlobalConfig
-from autopatch_j.llm.factory import build_default_llm_client
-from conftest import (
-    LIVE_LLM_MARKER,
-    _live_llm_block_reason,
-    _live_llm_config_error,
-    _partition_live_items,
-    _safe_endpoint_label,
-)
+from autopatch_j import config as autopatch_j_config
+from autopatch_j.llm import factory
+from tests import conftest
 
 
 class FakeItem:
@@ -21,8 +17,8 @@ class FakeItem:
         self.is_live = is_live
 
     def get_closest_marker(self, name: str) -> object | None:
-        if self.is_live and name == LIVE_LLM_MARKER:
-            return SimpleNamespace(name=name)
+        if self.is_live and name == conftest.LIVE_LLM_MARKER:
+            return types.SimpleNamespace(name=name)
         return None
 
 
@@ -32,7 +28,9 @@ def test_live_items_are_partitioned_after_regular_items() -> None:
     second_live = FakeItem(is_live=True)
     second_regular = FakeItem(is_live=False)
 
-    regular, live = _partition_live_items(
+    # 直接测试排序与授权门禁，确保禁止网络请求的条件准确。
+    # pylint: disable-next=protected-access
+    regular, live = conftest._partition_live_items(
         [first_live, first_regular, second_live, second_regular]
     )
 
@@ -41,24 +39,44 @@ def test_live_items_are_partitioned_after_regular_items() -> None:
 
 
 def test_live_llm_requires_flag_and_green_preceding_tests() -> None:
-    assert _live_llm_block_reason(enabled=False, tests_failed=0) is not None
-    assert _live_llm_block_reason(enabled=True, tests_failed=1) is not None
-    assert _live_llm_block_reason(enabled=True, tests_failed=0) is None
+    assert (
+        # 直接测试排序与授权门禁，确保禁止网络请求的条件准确。
+        # pylint: disable-next=protected-access
+        conftest._live_llm_block_reason(enabled=False, tests_failed=0)
+        is not None
+    )
+    assert (
+        # 直接测试排序与授权门禁，确保禁止网络请求的条件准确。
+        # pylint: disable-next=protected-access
+        conftest._live_llm_block_reason(enabled=True, tests_failed=1)
+        is not None
+    )
+    # 直接测试排序与授权门禁，确保禁止网络请求的条件准确。
+    # pylint: disable-next=protected-access
+    assert conftest._live_llm_block_reason(enabled=True, tests_failed=0) is None
 
 
 def test_live_llm_preflight_rejects_missing_configuration() -> None:
-    config = replace(GlobalConfig, llm_api_key="")
+    config = dataclasses.replace(
+        autopatch_j_config.GLOBAL_CONFIG, llm_api_key=""
+    )
 
-    error = _live_llm_config_error(config)
+    # 直接测试排序与授权门禁，确保禁止网络请求的条件准确。
+    # pylint: disable-next=protected-access
+    error = conftest._live_llm_config_error(config)
 
     assert error is not None
     assert "AUTOPATCH_LLM_API_KEY" in error
 
 
-def test_live_llm_endpoint_summary_does_not_expose_credentials_path_or_query() -> None:
-    label = _safe_endpoint_label(
-        "https://user:secret@llm.example.test/private/v1"
-        "?api_key=must-not-appear#private-fragment"
+def test_endpoint_summary_excludes_credentials_path_and_query() -> None:
+    # 直接测试排序与授权门禁，确保禁止网络请求的条件准确。
+    # pylint: disable-next=protected-access
+    label = conftest._safe_endpoint_label(
+        "https://user:secret@llm.example."
+        "test/private/v1"
+        "?api_key=must-not-appear#private"
+        "-fragment"
     )
 
     assert label == "https://llm.example.test"
@@ -67,7 +85,14 @@ def test_live_llm_endpoint_summary_does_not_expose_credentials_path_or_query() -
 def test_regular_tests_fail_closed_before_real_openai_client_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(GlobalConfig, "llm_api_key", "configured-for-test")
+    monkeypatch.setattr(
+        autopatch_j_config.GLOBAL_CONFIG, "llm_api_key", "configured-for-test"
+    )
+    monkeypatch.setattr(
+        autopatch_j_config.GLOBAL_CONFIG, "llm_model", "deepseek-flash"
+    )
 
-    with pytest.raises(AssertionError, match="普通测试禁止创建真实 OpenAI client"):
-        build_default_llm_client()
+    with pytest.raises(
+        AssertionError, match="普通测试禁止创建真实 OpenAI client"
+    ):
+        factory.build_model_runtime()

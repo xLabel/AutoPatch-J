@@ -8,7 +8,14 @@ chcp 65001 > nul
 :: 2. Python 版本与环境检查
 python --version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Python not found. Please install Python 3.10 or higher.
+    echo [ERROR] Python not found. Please install Python 3.14 or higher.
+    pause
+    exit /b 1
+)
+
+python -c "import sys; raise SystemExit(sys.version_info < (3, 14))"
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Python 3.14 or higher is required.
     pause
     exit /b 1
 )
@@ -19,9 +26,22 @@ if not exist "%ROOT_DIR%.venv" (
     python -m venv "%ROOT_DIR%.venv"
 )
 
+"%ROOT_DIR%.venv\Scripts\python.exe" -c "import sys; raise SystemExit(sys.version_info < (3, 14))"
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Existing .venv requires Python 3.14+. Recreate it with that interpreter.
+    pause
+    exit /b 1
+)
+
 :: 4. 自动同步依赖 (Automation)
 echo [DEPENDENCY] Syncing project dependencies from pyproject.toml...
-"%ROOT_DIR%.venv\Scripts\python.exe" -m pip install --quiet -e "%ROOT_DIR%."
+"%ROOT_DIR%.venv\Scripts\python.exe" -m pip install --quiet -c "%ROOT_DIR%constraints.txt" -e "%ROOT_DIR%."
+
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Dependency installation failed.
+    pause
+    exit /b 1
+)
 
 :: 5. 校验系统环境变量 (Guidance)
 if "%AUTOPATCH_LLM_API_KEY%"=="" (

@@ -1,42 +1,51 @@
+"""仅登记实际可执行的扫描器并提供默认实现。"""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
 
-from autopatch_j.scanners.contracts import StaticScanner
-from autopatch_j.scanners.models import ScannerName
-from autopatch_j.scanners.planned import build_planned_scanners
-from autopatch_j.scanners.semgrep import SemgrepScanner
+from autopatch_j.scanners import contracts
+from autopatch_j.scanners import models
+from autopatch_j.scanners.semgrep import scanner as semgrep_scanner
 
-
-DEFAULT_SCANNER_NAME = ScannerName.SEMGREP
+DEFAULT_SCANNER_NAME = models.ScannerName.SEMGREP
 
 
 class ScannerCatalog:
-    """
-    Java 静态扫描器注册表。
+    """Java 静态扫描器注册表。
 
-    catalog 同时收纳已实现扫描器和计划中的占位扫描器，让 CLI 可以稳定展示
-    插件边界；真正执行扫描时仍由调用方选择明确的 scanner name。
+    只登记可执行的扫描器；未来接入方向在公开项目介绍中维护。
     """
 
-    def __init__(self, scanners: Iterable[StaticScanner]) -> None:
-        self._scanners: dict[str, StaticScanner] = {scanner.name.value: scanner for scanner in scanners}
+    def __init__(self, scanners: Iterable[contracts.StaticScanner]) -> None:
+        self._scanners: dict[str, contracts.StaticScanner] = {
+            scanner.name.value: scanner for scanner in scanners
+        }
 
     @classmethod
     def default(cls) -> ScannerCatalog:
-        return cls([SemgrepScanner(), *build_planned_scanners()])
+        """默认扫描器标识。"""
+        return cls([semgrep_scanner.SemgrepScanner()])
 
-    def all(self) -> tuple[StaticScanner, ...]:
+    def all(self) -> tuple[contracts.StaticScanner, ...]:
+        """返回当前注册的扫描器实现，不包含未来占位项。"""
         return tuple(self._scanners.values())
 
-    def implemented(self) -> tuple[StaticScanner, ...]:
-        return tuple(scanner for scanner in self._scanners.values() if scanner.get_meta().is_implemented)
+    def implemented(self) -> tuple[contracts.StaticScanner, ...]:
+        """返回目录中真实实现的扫描器。"""
+        return tuple(
+            scanner
+            for scanner in self._scanners.values()
+            if scanner.get_meta().is_implemented
+        )
 
-    def planned(self) -> tuple[StaticScanner, ...]:
-        return tuple(scanner for scanner in self._scanners.values() if not scanner.get_meta().is_implemented)
-
-    def get(self, name: ScannerName | str) -> StaticScanner | None:
-        scanner_name = name.value if isinstance(name, ScannerName) else str(name).lower()
+    def get(
+        self, name: models.ScannerName | str
+    ) -> contracts.StaticScanner | None:
+        """按标识返回扫描器，未注册时为 None。"""
+        scanner_name = (
+            name.value if isinstance(name, models.ScannerName) else name.lower()
+        )
         return self._scanners.get(scanner_name)
 
 

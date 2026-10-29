@@ -1,0 +1,10 @@
+*.py text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+
+# Preserve the exact bytes and recorded hashes of upstream reference files.
+/.pylintrc -text
+/docs/reference/google/python/pyguide.md -text
+/docs/reference/google/python/google_python_style.vim -text
+/docs/reference/google/python/LICENSE -text
+/docs/reference/google/python/LICENSE-APACHE-2.0.txt -text
