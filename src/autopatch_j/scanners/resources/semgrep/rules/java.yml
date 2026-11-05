@@ -16,7 +16,7 @@ rules:
       - pattern-either:
           - pattern: new java.util.Random(...)
           - pattern: new Random(...)
-    message: 检测到使用可预测的随机数生成器 (Random)。建议改用 SecureRandom。
+    message: 使用了可预测的 Random；仅当用于令牌、密钥等安全敏感用途时考虑 SecureRandom。模拟、采样和可复现随机序列不能据此直接判错。
     languages: [java]
     severity: WARNING
     metadata:
@@ -25,9 +25,9 @@ rules:
   # --- 2. 健壮性与正确性 (Correctness & Robustness) ---
   - id: autopatch-j.java.correctness.optional-get-without-check
     patterns:
-      - pattern: $OPT.get()
+      - pattern: (java.util.Optional $OPT).get()
       - pattern-not-inside: if ($OPT.isPresent()) { ... }
-    message: 检测到在未检查 isPresent() 的情况下调用 Optional.get()，存在 NPE 风险。
+    message: Optional.get() 未在直接的 isPresent() 分支中；空 Optional 会抛 NoSuchElementException。需核查调用前置条件和其他保护，不能直接认定缺陷。
     languages: [java]
     severity: ERROR
 
@@ -79,6 +79,6 @@ rules:
             this.$FIELD = Objects.requireNonNull($VAR, ...);
             ...
           }
-    message: 构造函数参数赋值前缺少 null 检查。建议执行防御性校验。
+    message: 构造参数直接赋给字段；需核查该参数是否允许 null 以及已有调用契约。允许为空时无需添加拒绝逻辑，不能仅因缺少检查认定缺陷。
     languages: [java]
     severity: WARNING
