@@ -13,7 +13,7 @@ from autopatch_j.cli import commands
 from autopatch_j.cli import render
 from autopatch_j.cli import runtime as cli_runtime
 from autopatch_j.cli import status_presenter
-from autopatch_j.core.patching import types
+from autopatch_j.core.repair import models
 from autopatch_j.scanners.semgrep import runtime as semgrep_runtime
 
 
@@ -32,7 +32,7 @@ class CliHostActions(Protocol):
         """为目标项目装配运行时并交还旧资源。"""
         ...
 
-    def reset_project_state(self) -> None:
+    def reset_project_state(self, expected: models.RepairState) -> None:
         """清理工作台并关闭运行时，保留独立用户数据。"""
         ...
 
@@ -49,6 +49,7 @@ class CommandHandlers:
 
     def __init__(self, host: CliHostActions) -> None:
         self.host = host
+        self.displayed_state: models.RepairState | None = None
 
     def handle_help(self, args: list[str] | None = None) -> None:
         """展示已注册系统命令与人工审核操作。"""
@@ -76,7 +77,8 @@ class CommandHandlers:
         act_table.add_row("@符号", "补全文件或目录")
         act_table.add_row("apply", "应用当前补丁预览")
         act_table.add_row("discard", "丢弃当前补丁草案")
-        act_table.add_row("abort", "中止审核并丢弃剩余所有补丁")
+        act_table.add_row("abort", "结束当前任务，不回滚已经写入的源码")
+        act_table.add_row("allow", "批准已展示的确切写文件范围")
 
         self.host.renderer.print_panel("命令帮助", style=render.SYSTEM_STYLE)
         self.host.renderer.print_table(sys_table)
@@ -87,9 +89,14 @@ class CommandHandlers:
     def handle_reset(self, args: list[str] | None = None) -> None:
         """重置工作台并展示保留数据的边界。"""
         del args
-        self.host.reset_project_state()
+        runtime = self._require_runtime()
+        if runtime is None:
+            return
+        self.host.reset_project_state(
+            self.displayed_state or runtime.repair.store.load()
+        )
         self.host.renderer.print_success(
-            "项目工作台已重置；普通会话、项目笔记、导出和终端历史已保留。"
+            "项目工作台已重置；项目会话、项目笔记、导出和终端历史已保留。"
             "如需清空 Memory，请执行 /memory clear --"
             "confirm。"
         )
@@ -107,7 +114,7 @@ class CommandHandlers:
         self.host.request_exit()
 
     def handle_init(self, args: list[str] | None = None) -> None:
-        """准备受管扫描器并重建索引；清空原审核工作台。"""
+        """准备受管扫描器并重建索引；保留当前任务。"""
         del args
         if self.host.repo_root is None:
             self.host.renderer.print_error("未检测到项目根目录，无法初始化。")
@@ -118,7 +125,6 @@ class CommandHandlers:
         runtime = self._require_runtime()
         if runtime is None:
             return
-        runtime.workspace_manager.clear()
 
         status, _ = semgrep_runtime.install_managed_semgrep_runtime()
         self.host.renderer.print_step(f"扫描器运行时自检: {status}")
@@ -158,17 +164,16 @@ class CommandHandlers:
         )
 
     def handle_new(self, args: list[str] | None = None) -> None:
-        """归档普通会话、清理待审草案和临时要求，保留长期笔记。"""
+        """归档项目会话、清理待审草案和临时要求，保留长期笔记。"""
         del args
         runtime = self._require_runtime()
         if runtime is None:
             return
 
+        runtime.repair.end(self.displayed_state or runtime.repair.store.load())
         conversation_id = runtime.model_runtime.run(runtime.conversations.new())
-        runtime.workspace_manager.clear()
-        runtime.agent.reset_history()
         self.host.renderer.print_success(
-            f"已开启新普通会话：{conversation_id}；项目笔记已保留。"
+            f"已开启新项目会话：{conversation_id}；项目笔记已保留。"
         )
 
     def handle_memory(self, args: list[str] | None = None) -> None:
@@ -194,12 +199,12 @@ class CommandHandlers:
             elif command == "forget" and len(rest) == 1:
                 run(notebook.forget(rest[0]))
                 renderer.print_success(
-                    "笔记已删除；普通会话中的历史内容仍保留。"
+                    "笔记已删除；项目会话中的历史内容仍保留。"
                 )
             elif command == "clear" and rest == ["--confirm"]:
                 run(notebook.clear())
                 renderer.print_success(
-                    "项目笔记已清空；普通会话、导出和终端历史仍保留。"
+                    "项目笔记已清空；项目会话、导出和终端历史仍保留。"
                 )
             elif command == "export" and not rest:
                 destination = run(notebook.export())
@@ -218,51 +223,6 @@ class CommandHandlers:
             sdk_memory.MemoryConflictError,
         ) as exc:
             renderer.print_error(f"Memory 操作未完成：{exc}")
-
-    def handle_apply(
-        self, pending: types.SearchReplacePatchDraft
-    ) -> types.PatchApplicationResult:
-        """调用审核业务服务并分别展示写入事实与验证结论。"""
-        runtime = self._require_runtime()
-        if runtime is None:
-            return types.PatchApplicationResult(
-                applied=False,
-                error_code="RUNTIME_UNAVAILABLE",
-                message="系统未初始化，无法应用补丁。",
-            )
-        self.host.renderer.print_step(f"正在应用补丁至 {pending.file_path}...")
-        outcome = runtime.review_service.apply(pending)
-        applied = outcome.application
-        if outcome.workspace_error:
-            self.host.renderer.print_error(outcome.workspace_error)
-        if not applied.applied:
-            self.host.renderer.print_error(
-                f"应用失败 [{applied.error_code or "UNKNOWN"}]：{applied.message}"
-            )
-            return applied
-        self.host.renderer.print_success("补丁已应用")
-        if outcome.workspace_error:
-            return applied
-        if outcome.queue_empty:
-            self.host.renderer.print_agent_text("补丁队列已清空")
-        if outcome.rebased or outcome.stale:
-            self.host.renderer.print_agent_text(
-                f"已重定位 {outcome.rebased} 个同文件待审补丁；{outcome.stale} 个补丁需重新扫描。"
-            )
-        verified = outcome.verification
-        if verified is None:
-            self.host.renderer.print_error(
-                "已应用；无法确认修复结果：未配置补丁验证器。"
-            )
-        elif verified.outcome is types.VerificationOutcome.RESOLVED:
-            self.host.renderer.print_success(verified.message)
-        else:
-            self.host.renderer.print_error(verified.message)
-        return applied
-
-    def handle_discard(self) -> None:
-        """展示丢弃反馈；领域状态推进由审核服务负责。"""
-        self.host.renderer.print_agent_text("已丢弃当前草案")
 
     def _require_runtime(self) -> cli_runtime.CliRuntime | None:
         if self.host.runtime is None:

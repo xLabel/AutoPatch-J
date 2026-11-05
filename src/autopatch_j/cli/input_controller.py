@@ -6,17 +6,17 @@ import pathlib
 import re
 from typing import Callable
 
-import prompt_toolkit
+from prompt_toolkit.application import current
 from prompt_toolkit import buffer as prompt_buffer
 from prompt_toolkit import completion as prompt_completion
 from prompt_toolkit import history as prompt_toolkit_history
 from prompt_toolkit import key_binding
-from prompt_toolkit import styles
-from prompt_toolkit.application import current
 from prompt_toolkit.key_binding import key_processor
+import prompt_toolkit
+from prompt_toolkit import styles
 
-from autopatch_j import config
 from autopatch_j.cli import completer
+from autopatch_j import config
 from autopatch_j.core.project import symbols
 
 
@@ -151,5 +151,5 @@ class CliInputController:
         if not original_document:
             return False
         return bool(
-            re.search(r"(^|\s)@[\w\.]*$", original_document.text_before_cursor)
+            re.search(r"(^|\s)@[^\s@]*$", original_document.text_before_cursor)
         )

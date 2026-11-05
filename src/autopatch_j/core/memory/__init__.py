@@ -60,7 +60,7 @@ class ProjectMemory:
         await self.store.delete(self._path(path), expected_version=item.version)
 
     async def clear(self) -> None:
-        """删除当前笔记，不删除普通会话；冲突时不覆盖并发修改。"""
+        """删除当前笔记，不删除项目会话；冲突时不覆盖并发修改。"""
         for path in await self.paths():
             item = await self.show(path)
             if item is not None:

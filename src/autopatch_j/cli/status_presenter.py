@@ -8,9 +8,9 @@ import pathlib
 from rich import table as rich_table
 from rich import text as rich_text
 
-from autopatch_j import config
 from autopatch_j.cli import render
 from autopatch_j.cli import runtime as cli_runtime
+from autopatch_j import config
 from autopatch_j.scanners import catalog
 from autopatch_j.scanners import models
 
@@ -92,17 +92,12 @@ class StatusPresenter:
         self, table: rich_table.Table, runtime: cli_runtime.CliRuntime
     ) -> None:
         """向状态表加入持久工作台与符号提取诊断。"""
-        workspace = runtime.workspace_manager.load()
-        pending = workspace.current_patch()
-        buffer_status = (
-            rich_text.Text.assemble(
-                ("存在待确认补丁", render.DECISION_STYLE),
-                (f" ({pending.file_path})", render.MUTED_STYLE),
-            )
-            if pending
-            else self._value("空闲")
+        state = runtime.repair.store.load()
+        table.add_row(self._label("修复任务"), self._value(state.status))
+        table.add_row(
+            self._label("写范围"),
+            self._value("、".join(state.write_paths) or "未授权"),
         )
-        table.add_row(self._label("补丁缓冲区"), buffer_status)
 
         stats = runtime.symbol_indexer.get_stats()
         stats_text = self._format_symbol_stats(stats)

@@ -71,7 +71,6 @@ class AppConfig:
     )
 
     # 审计配置
-    audit_batch_limit: int = 4
 
     @classmethod
     def from_env(cls) -> "AppConfig":
@@ -92,9 +91,6 @@ class AppConfig:
             semgrep_version="1.160.0",
             semgrep_install_lock_timeout=600,
             scanner_timeout=300,
-            audit_batch_limit=cls._positive_int_env(
-                "AUTOPATCH_AUDIT_BATCH_LIMIT", 4
-            ),
         )
 
     def is_llm_ready(self) -> bool:
@@ -118,14 +114,6 @@ class AppConfig:
             context_window=self.llm_context_window,
             max_output_tokens=self.llm_max_output_tokens,
         )
-
-    @staticmethod
-    def _positive_int_env(name: str, default: int) -> int:
-        try:
-            value = int(os.getenv(name, str(default)))
-        except ValueError:
-            return default
-        return value if value > 0 else default
 
     @staticmethod
     def _optional_positive_int_env(name: str) -> int | None:

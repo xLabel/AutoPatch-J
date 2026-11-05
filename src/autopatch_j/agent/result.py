@@ -1,13 +1,11 @@
-"""业务需要的 Agent 结果，不保存另一套模型消息协议。"""
+"""SDK 运行完成状态与用户可见回答，不从工具字典推断业务结论。"""
 
 import dataclasses
 import enum
 
-from autopatch_j.tools import contract
-
 
 class RunStatus(enum.StrEnum):
-    """受限结果可以审核；异常和取消不能提交暂存草案。"""
+    """完整、受限、失败与取消分别表达，受限不冒充完成。"""
 
     COMPLETED = "completed"
     LIMITED = "limited"
@@ -17,8 +15,7 @@ class RunStatus(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class AgentRunResult:
-    """呈现给 workflow 的最终回答与完成状态。"""
+    """用户可见回答和完成状态，不能替代持久业务状态。"""
 
     final_answer: str
     status: RunStatus = RunStatus.COMPLETED
-    observations: tuple[contract.ToolExecutionResult, ...] = ()

@@ -9,7 +9,6 @@ from pydantic_ai.profiles import openai as openai_profile
 from pydantic_ai.providers import openai as openai_provider
 
 from autopatch_j import config
-from autopatch_j.llm import policy
 from autopatch_j.llm import runtime
 
 
@@ -38,7 +37,7 @@ def build_model_runtime(
                 openai_chat_streaming_requires_finish_reason=True,
             ),
         )
-        resources.model = policy.CapacityGuard(model, profile)
+        resources.model = model
         return resources
     except BaseException:
         # 收尾故障不能覆盖装配阶段的原始失败。

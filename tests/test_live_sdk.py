@@ -1,70 +1,57 @@
-"""显式授权后的真实 SDK 集成：使用临时项目，不修改示例或用户源码。"""
+"""本次明确授权后才运行的真实模型集成；只操作临时 Java 项目。"""
 
 import pathlib
 
 import pytest
 
-from autopatch_j.agent import classification
 from autopatch_j.agent import result
 from autopatch_j.cli import runtime as cli_runtime
-from autopatch_j.core.domain import intent
-from autopatch_j.core.domain import scope as domain_scope
-from autopatch_j.core.patching import types
 from autopatch_j.llm import factory
 from autopatch_j.llm import runtime as model_runtime
 
 pytestmark = pytest.mark.live_llm
 
 
-def test_live_short_classifiers(live_llm_client: model_runtime.ModelRuntime):
-    detected, error = classification.build_intent_classifier(live_llm_client)(
-        "你好，聊聊你能做什么", False
-    )
-    assert error == "" and detected is intent.IntentType.GENERAL_CHAT
-    route, error = classification.build_route_classifier(live_llm_client)(
-        "请解释当前补丁为什么这样改", "Demo.java", None
-    )
-    assert error == "" and route is intent.ConversationRoute.REVIEW_CONTINUE
+def authorize(runtime, paths, goal):
+    repair = runtime.repair
+    initial = repair.store.load()
+    started = repair.commit(initial, repair.start(initial, goal, tuple(paths)))
+    return repair.approve_scope(started)
 
 
-def test_live_reasoning_and_source_tools(
+def test_live_source_evidence_and_reasoning(
     tmp_path: pathlib.Path, live_llm_client: model_runtime.ModelRuntime
 ):
-    (tmp_path / "Demo.java").write_text(
-        "class Demo {\n    int twice(int n) { return n * 2; }\n}\n",
-        encoding="utf-8",
-    )
+    original = "class Demo { int twice(int n) { return n * 2; } }"
+    (tmp_path / "Demo.java").write_text(original, encoding="utf-8")
     runtime = cli_runtime.build_cli_runtime(tmp_path, lambda: live_llm_client)
     reasoning = []
-    runtime.agent.session.set_focus_paths(["Demo.java"])
+    tools = []
     try:
-        response = runtime.agent.perform_code_explain(
-            "请先调用 read_source_file 读取 Demo.java，再独立调用 "
-            "read_source_context 读取第 2 行，完成两次工具调用后解释 twice。",
-            scope=None,
-            allow_symbol_search=False,
+        response = runtime.agent.run(
+            "请先调用 read_source_file 读取 Demo.java，"
+            "再调用 read_source_context 读取第 1 行，然后解释 twice。只是解释。",
             on_reasoning=reasoning.append,
+            on_tool_start=tools.append,
         )
         assert response.status is result.RunStatus.COMPLETED
-        assert response.final_answer and reasoning
-        names = {
-            item.name for item in response.observations if item.status == "ok"
-        }
-        assert {"read_source_file", "read_source_context"} <= names
-        assert runtime.model_runtime.run(runtime.conversations.load()).messages
+        assert {"read_source_file", "read_source_context"} <= set(tools)
+        assert reasoning and response.final_answer
+        assert runtime.repair.store.load().status == "idle"
+        assert (tmp_path / "Demo.java").read_text() == original
     finally:
         runtime.close()
 
 
-def test_live_notebook_write_and_restart(
+def test_live_notebook_and_restart(
     tmp_path: pathlib.Path, live_llm_client: model_runtime.ModelRuntime
 ):
     runtime = cli_runtime.build_cli_runtime(tmp_path, lambda: live_llm_client)
     try:
-        response = runtime.agent.perform_general_chat(
-            "我明确确认本项目的长期决定：每次补丁都必须经人工审核，"
-            "决定标识 APJ-LIVE-DECISION-42。请用 write_memory 将这项决定"
-            "写入 MEMORY.md，随后用 read_memory 读回确认。"
+        response = runtime.agent.run(
+            "我明确确认长期决定：本项目补丁必须人工审核，"
+            "决定标识 APJ-LIVE-DECISION-42。请用 write_memory 写入 MEMORY.md，"
+            "并 read_memory 读回确认。"
         )
         assert response.status is result.RunStatus.COMPLETED
         note = runtime.model_runtime.run(runtime.memory.show())
@@ -76,69 +63,85 @@ def test_live_notebook_write_and_restart(
         tmp_path, factory.build_model_runtime
     )
     try:
-        assert not restarted.model_runtime.run(
-            restarted.conversations.load()
-        ).messages
-        response = restarted.agent.perform_general_chat(
-            "本项目的长期审核决定是什么？请包含决定标识。"
+        response = restarted.agent.run(
+            "本项目的长期审核决定是什么？包含决定标识。"
         )
         assert response.status is result.RunStatus.COMPLETED
         assert "APJ-LIVE-DECISION-42" in response.final_answer
-        note = restarted.model_runtime.run(restarted.memory.show())
-        assert note is not None and "人工审核" in note.content
     finally:
         restarted.close()
 
 
-def test_live_scan_draft_review_apply_and_rescan(
+def test_live_scan_proposal_review_apply_rescan(
     tmp_path: pathlib.Path, live_llm_client: model_runtime.ModelRuntime
 ):
-    source = tmp_path / "Demo.java"
     original = (
         "import java.security.MessageDigest;\n"
-        "class Demo {\n"
-        "  MessageDigest digest() throws Exception {\n"
-        '    return MessageDigest.getInstance("MD5");\n'
-        "  }\n}\n"
+        "class Demo { MessageDigest digest() throws Exception {\n"
+        'return MessageDigest.getInstance("MD5"); } }\n'
     )
+    source = tmp_path / "Demo.java"
     source.write_text(original, encoding="utf-8")
     runtime = cli_runtime.build_cli_runtime(tmp_path, lambda: live_llm_client)
-    scope = domain_scope.CodeScope(
-        domain_scope.CodeScopeKind.SINGLE_FILE,
-        ["Demo.java"],
-        ["Demo.java"],
-        True,
-    )
     try:
-        scan_id, scan = runtime.scanner_runner.run_scan_and_save(scope)
-        backlog = runtime.backlog_manager.build_from_scan_result(scan)
-        target = next(
-            item
-            for item in backlog
-            if item.check_id.endswith("weak-crypto-md5")
-        )
-        runtime.workspace_manager.initialize_review(scope, scan_id, [])
-        runtime.agent.session.set_focus_paths(["Demo.java"])
-        response = runtime.agent.perform_code_audit(
-            "只修复当前 MD5 finding，将算法改为 SHA-256，提交草案供我审核。",
-            target,
-            force_reread=False,
+        authorize(runtime, ["Demo.java"], "将当前 MD5 摘要改为 SHA-256")
+        response = runtime.agent.run(
+            "请用 scan_java 扫描 Demo.java，核对 MD5 finding 后将摘要改为 SHA-256。"
+            "用 propose_patch 提交完整提案并关联扫描句柄，等待我审核。"
         )
         assert response.status is result.RunStatus.COMPLETED
-        draft = runtime.agent.session.pop_proposed_patch_draft()
-        assert draft is not None and draft.source_scan_id == scan_id
-        assert draft.associated_finding_id == target.finding_id
-        assert source.read_text(encoding="utf-8") == original
-        runtime.workspace_manager.add_patch(draft)
-        assert runtime.workspace_manager.load_current_patch_draft() == draft
-        # 测试在临时项目明确代表人工批准；产品没有自动 apply。
-        outcome = runtime.review_service.apply(draft)
-        assert outcome.application.applied
-        assert outcome.verification is not None
+        pending = runtime.repair.store.load()
+        assert pending.proposal is not None
         assert (
-            outcome.verification.outcome is types.VerificationOutcome.RESOLVED
+            pending.status == "pending" and pending.proposal.target is not None
         )
-        assert '"SHA-256"' in source.read_text(encoding="utf-8")
-        assert not runtime.workspace_manager.load().has_pending_patch()
+        assert source.read_text() == original
+        outcome = runtime.repair.apply(
+            pending
+        )  # 此临时项目用例明确代表人工批准。
+        assert outcome.status == "applied"
+        assert (
+            outcome.checks[-1].kind == "target_rescan"
+            and outcome.checks[-1].status == "passed"
+        )
+        assert '"SHA-256"' in source.read_text()
+    finally:
+        runtime.close()
+
+
+def test_live_multifile_proposal_and_readonly_followup(
+    tmp_path: pathlib.Path, live_llm_client: model_runtime.ModelRuntime
+):
+    originals = {
+        "A.java": "class A { static int defaultCount() { return 1; } }",
+        "B.java": (
+            "class B { int count = A.defaultCount(); "
+            "// expected default: 1\n}"
+        ),
+    }
+    for name, content in originals.items():
+        (tmp_path / name).write_text(content, encoding="utf-8")
+    runtime = cli_runtime.build_cli_runtime(tmp_path, lambda: live_llm_client)
+    try:
+        authorize(runtime, list(originals), "默认数值应为 2，同步调用方注释")
+        response = runtime.agent.run(
+            "默认数值应为 2。请读取 A.java 与 B.java，把 A 的默认返回值改为 2。"
+            "同步 B 的 expected default 注释为 2，一项多文件完整提案，不改其他内容。"
+        )
+        assert response.status is result.RunStatus.COMPLETED
+        pending = runtime.repair.store.load()
+        assert pending.proposal is not None
+        assert {item.path for item in pending.proposal.files} == set(originals)
+        assert {
+            name: (tmp_path / name).read_text() for name in originals
+        } == originals
+        explained = runtime.agent.run(
+            "只解释当前提案为什么需要两个文件，不要修订或改变任务。"
+        )
+        assert explained.status is result.RunStatus.COMPLETED
+        assert runtime.repair.store.load() == pending
+        assert runtime.repair.apply(pending).status == "applied"
+        assert "return 2" in (tmp_path / "A.java").read_text()
+        assert "expected default: 2" in (tmp_path / "B.java").read_text()
     finally:
         runtime.close()

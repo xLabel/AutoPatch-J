@@ -133,11 +133,11 @@ def _prepare_finding(
     if not isinstance(extra, dict):
         raise ValueError("extra 字段不是 JSON object。")
     fallback_snippet = str(extra.get("lines", "")).strip()
-    snippet = code_fetcher.fetch_resolved_snippet(
-        file_path=finding_path,
-        start_line=region.start_line,
-        end_line=region.inclusive_end_line,
-        fallback_snippet=fallback_snippet,
+    snippet = (
+        code_fetcher.read(
+            finding_path, region.start_line, region.inclusive_end_line
+        ).code.strip()
+        or fallback_snippet
     )
     base_hash = _build_base_hash(
         engine="semgrep",

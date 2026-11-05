@@ -71,8 +71,8 @@ CLI_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand(
         name="/new",
         handler_name="handle_new",
-        help_description="结束当前工作状态并创建新的普通会话",
-        completion_description="新建普通会话",
+        help_description="结束当前工作状态并创建新的项目会话",
+        completion_description="新建项目会话",
     ),
     CliCommand(
         name="/memory",

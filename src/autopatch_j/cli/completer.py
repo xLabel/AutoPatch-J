@@ -20,7 +20,7 @@ class AutoPatchCompleter(completion.Completer):
     职责边界：
     1. 输入 '/' 时补全系统命令。
     2. 输入 '@' 时基于本地索引补全文件、目录、类或方法。
-    3. 不解析最终工作范围；@mention 到 CodeScope 的转换由 ScopeResolver 完成。
+    3. 只补全输入线索，不选择任务或授权写入范围。
     """
 
     def __init__(
@@ -28,7 +28,7 @@ class AutoPatchCompleter(completion.Completer):
     ) -> None:
         self.search_func = search_func
         # 预编译正则，支持双前缀识别
-        self.mention_pattern = re.compile(r"@[\w\.]*")
+        self.mention_pattern = re.compile(r"@[^\s@]*")
         self.command_pattern = re.compile(r"/[\w]*")
 
         self.commands = {
@@ -103,7 +103,7 @@ class AutoPatchCompleter(completion.Completer):
                 display_text = f"{entry.name}"
 
                 yield completion.Completion(
-                    entry.name,
+                    entry.path,
                     start_position=-len(mention_match) + 1,
                     display=display_text,
                     display_meta=display_meta,

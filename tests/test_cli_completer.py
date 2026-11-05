@@ -153,3 +153,8 @@ def test_mention_completion_only_exposes_files_and_directories() -> None:
         "demo",
         "UserService.java",
     ]
+    selected = completions[1]
+    assert (
+        _apply_completion("@User", selected.text, selected.start_position)
+        == "@src/main/java/demo/UserService.java"
+    )

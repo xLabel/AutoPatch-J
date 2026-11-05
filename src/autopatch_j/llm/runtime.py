@@ -9,7 +9,6 @@ import openai
 from pydantic_ai import models
 
 from autopatch_j.llm import context_window
-from autopatch_j.llm import policy
 
 ResultT = TypeVar("ResultT")
 
@@ -25,9 +24,7 @@ class ModelRuntime:
     ) -> None:
         os.environ["PYDANTIC_AI_NO_BANNER"] = "1"
         self.profile = profile
-        self.model = (
-            policy.CapacityGuard(model, profile) if model is not None else None
-        )
+        self.model = model
         self.client = client
         self.runner = asyncio.Runner()
         self.closed = False

@@ -1,4 +1,4 @@
-"""本项目普通会话的选择与保存，消息存储由官方组件负责。"""
+"""本项目统一会话的选择与保存，消息存储由官方组件负责。"""
 
 import pathlib
 
@@ -7,7 +7,7 @@ from pydantic_ai_harness.step_persistence import conversations
 
 
 class ProjectConversations:
-    """只选择本项目会话，不从修复请求拼装普通历史。"""
+    """选择本项目会话，问答、取证与修复共用原生 SDK 消息。"""
 
     def __init__(self, repo_root: pathlib.Path) -> None:
         self.workspace = str(repo_root.resolve())
