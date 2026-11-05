@@ -1,211 +1,213 @@
 # AutoPatch-J 项目规格
 
-本文统一维护项目行为、接口和关键边界。用户明确确认的需求优先；代码用于核实当前实现，测试用于核实覆盖和结果，二者不能自行改变需求。已确认需求与实现冲突时，标明差异并修正实现，不能反向改写要求。
+本文维护产品行为、接口和失败边界。需求决定目标，代码与测试分别提供实现和验证证据，不能反向定义需求。协作与授权见 [AGENTS](../AGENTS.md)，工程判断见 [ENGINEERING](ENGINEERING.md)，操作见 [使用手册](GETTING_STARTED.md)。
 
-项目尚未上线，不为历史版本、旧 schema、配置或工作流增加兼容、迁移及双读。当前版本的故障处理、中断恢复和数据保护仍属于有效行为。协作与验证操作见 [AGENTS](../AGENTS.md)，设计取舍与工程实践见[工程指南](ENGINEERING.md)，安装和日常操作见[使用手册](getting_started.md)。
+本项目托管于 GitHub Public 仓库。README 是面向外部读者的项目首页；产品规格、实现边界和工程约束在对应专题维护，任务过程留在会话。项目尚未上线，不为旧入口、配置或 schema 建兼容、迁移与双读；已有用户数据不自动删除。
 
 ## 1. 产品能力与架构
 
-AutoPatch-J 是面向 Java 仓库的 Python 3.14+ 交互式 CLI Agent。当前闭环是：解析请求范围 → 静态扫描 → 按 finding 取证与起草补丁 → 人工审核 → 应用 → 重扫目标。另支持代码解释、普通问答和项目级 Memory。
+AutoPatch-J 是面向企业 Java 仓库的 Python CLI 代码审阅与修复助手，结合项目规范、长期项目知识、静态分析和 AI 判断，交付可审核、可验证的补丁。当前以员工本地交互使用为主，未来支持流水线接入；保留项目问答，不定位为通用聊天工具。
 
-当前实际扫描引擎为 managed Semgrep；运行时仅登记可执行实现，后续扫描器方向见 README 的展望。Java 草案语法检查使用 Tree-sitter，不等于编译或业务测试。自动执行目标项目的构建、测试、CI/CD 集成和创建 MR/PR 尚未实现。
+主流程：明确目标 → 收集证据并判断是否应该修改 → 起草一项完整修复 → 人工审核与修订 → 应用 → 验证并反馈下一步。扫描 finding 是候选，零 finding 不能否定用户指出的缺陷；不修改、证据不足和执行失败分别表达。
 
-| 层 | 当前职责与主要入口 |
+| 位置 | 职责 |
 |---|---|
-| `cli/` | 命令、输入路由、workflow、终端展示；`app.py` 装配入口 |
-| `agent/` | 任务画像与 prompt、SDK Agent 适配、请求权限和草案提交资格 |
-| `tools/` | 受控业务函数和补丁草案构造；SDK 从注解生成 schema |
-| `core/` | finding/补丁领域模型、审核应用协调、源码与索引、会话及笔记存储接入 |
-| `llm/` | 原生模型装配、固定任务策略、容量与结束校验、资源作用域 |
-| `scanners/` | 扫描器目录、managed runtime、目标选择及结果归一化 |
+| `cli/` | 输入、命令、完整预览和人工决定，不编排 finding 批次或重试 |
+| `agent/` | 一个项目 Agent、指引、SDK 适配、运行暂存与提交资格 |
+| `tools/` | 受控业务函数，SDK 生成 schema、校验参数、反馈纠错 |
+| `core/repair/` | 任务和提案类型、准备、审核应用、状态持久化、扫描证据和验证 |
+| `core/project/` | 安全路径、源码解码与范围读取、Java 符号索引 |
+| `core/conversations.py`、`core/memory/` | 官方会话与长期笔记的项目接入 |
+| `llm/` | 模型装配、请求设置、结束校验和客户端生命周期 |
+| `scanners/` | managed Semgrep、目标选择和扫描结果归一化 |
 
-此表是当前代码导航，内部文件和抽象可随已确认需求调整；职责组织的工程要求见[工程指南](ENGINEERING.md#3-职责类型与命名)。
+SDK 负责 Agent 循环、协议、参数校验、流、reasoning、历史摘要和 Memory；项目自研部分聚焦证据与可审核补丁业务。不实现 Windows Workspace、通用 shell、创建/删除/重命名源码工具、通用构建执行平台或规则治理系统。
 
-## 2. 项目边界、命令与输入路由
+## 2. 项目边界、命令与交互
 
-启动 CLI 时所在目录就是项目根，不向上查找 Git 根。项目状态写入该目录的 `.autopatch-j/`：扫描快照位于 `findings/`，审核状态为 `workspace.json`，符号索引为 `index.db`，普通 SDK 会话为 `conversations.sqlite3`，项目笔记为 `memory.sqlite3`，终端历史为 `history.txt`。
+CLI 启动目录就是目标项目根，不向上猜 Git 根。项目状态在 `.autopatch-j/`：`repair.json` 为任务与完整提案，`repair.lock` 为进程间互斥，`findings/` 保存扫描证据，`index.db` 为可重建索引，`conversations.sqlite3` 与 `memory.sqlite3` 分别保存原生消息和长期笔记，`history.txt` 保存终端输入历史。
 
-| 命令 | 行为 |
+| 输入 | 行为 |
 |---|---|
-| `/init` | 初始化 runtime，清空补丁审核工作台，准备 managed Semgrep 并重建 Java 索引 |
-| `/status`、`/scanner` | 分别展示项目诊断、扫描器状态 |
-| `/reindex` | 重建符号索引 |
-| `/reset` | 清理 review、scan、index 及请求缓存；保留普通会话、笔记、导出与终端历史 |
-| `/new` | 归档普通会话并开启空会话；中止待审草案并清理临时状态，保留项目笔记 |
-| `/memory ...` | 管理 Memory，详见第 7 节 |
-| `/help`、`/quit` | 显示帮助；执行退出收尾并退出 |
+| 自然语言、`@路径` | 同一 Agent 理解目标和上下文；引用路径不清空任务，也不扩大写权限 |
+| `allow` | 批准界面已展示的确切写文件申请，并继续准备当前提案；不修改源码 |
+| `apply` | 批准并应用已展示版本的完整提案 |
+| `discard` | 结束当前待审任务，丢弃提案；不撤销已写入源码 |
+| `abort` | 明确结束当前任务；中断状态先核对界面中的写入证据 |
+| `/init` | 准备扫描器并重建索引，保留当前任务与提案 |
+| `/status`、`/scanner`、`/reindex` | 状态诊断、扫描器状态、重建索引 |
+| `/new` | 结束当前任务，归档项目会话并开启空会话；保留长期笔记 |
+| `/reset` | 结束当前任务、删除可重建索引并关闭运行时；保留锁文件、会话、笔记、扫描证据、导出和其他用户文件 |
+| `/memory ...`、`/help`、`/quit` | 笔记管理、帮助、资源关闭与退出 |
 
-只输入 `@路径` 时提示补充具体要求。斜杠命令走命令路由；无 pending patch 时进入新任务；pending 时显式 `@scope` 表示新任务，会清除旧审核工作台，其余模糊输入由 review route classifier 判断是否继续审核。
+不再使用五类 intent、审核路由分类器、批次草案队列或重定位。默认问答与讲解只读。模型的语义判断由指引约束；源码修改仍由确定性的人工 `apply` 入口控制，不能宣称模型自动证明了用户意图。
 
-业务意图为 `code_audit`、`code_explain`、`general_chat`、`patch_explain`、`patch_revise`。没有 pending patch 时不得接受 patch-only intent。分类失败时使用确定性默认值：无 pending 为 `GENERAL_CHAT`，pending intent 为 `PATCH_EXPLAIN`，pending route 为 `REVIEW_CONTINUE`。每个需要模型分类的分类器只做一次短逻辑调用，不做输出重生成或 Agent 二次分类；debug 保留失败原因。
+一次至多一项待审修复，可以包含同一问题必需的多文件改动。任务 A 待审时允许只读调查 B，但 B 不能借 A 的身份、提案或权限起草；即使同文件也须先完成 A 或由用户明确 discard/abort/new。失败或部分应用不等于结束任务，须核查并明确结束。新任务不继承旧写权限或临时要求。
 
 ## 3. 源码、工具与任务权限
 
-路径经归一化和真实目标解析后必须位于仓库内；拒绝越界路径和落入 `.autopatch-j/**` 的路径，包含软链接。该边界覆盖 focus、源码 scope、符号索引及搜索、扫描 targets/results 和 source-read。指向正常仓库源码的内部软链接可用，状态目录不因精确路径或旧索引记录而获豁免。
+### 3.1 路径与读取
 
-源码请求路径缺失时，只允许使用唯一的 in-focus 同名索引候选；多个候选返回候选列表并要求明确路径。当前锁定的 focus 同时约束读取与补丁目标。
+路径只接受仓库相对路径，解析真实目标后须位于仓库内，且不属于 `.autopatch-j/**`，包括指向状态目录或仓库外的软链接。安全的内部源码链接可用。缺失路径直接报告，不从同名索引候选中猜目标；符号索引只用于定位，需读取当前源码。
 
-| 工具 | 输入与职责 |
+读取可按需要扩展到仓库内关联代码；写权限单独绑定经用户 `allow` 批准的确切已有文件。目录不能直接作为写权限；扫描可展开明确目录。`@` 只提供上下文线索，不切换任务或授权写入。
+
+写范围申请只登记新增未授权文件，保留已有待批申请；重复申请已授权文件不重开审批，工具明确提示继续准备提案。空文件申请拒绝。
+
+源码返回实际行范围、总行数、截断、编码、无损解码状态及语法块降级信息。行窗口前 20 后 80 行；全文和块读取按最多 300 行、约 30000 字符预算逐步展示，单个物理行保持完整。截断后可按行号继续读取。失败抛出明确错误，不把错误提示拼入源码；没有跨请求共享的 last_* 读取状态或源码缓存。
+
+### 3.2 业务工具
+
+| 工具 | 输入和职责 |
 |---|---|
-| `get_finding_detail` | `finding_id` 扫描内句柄；返回身份、当前绑定区域和源码证据，句柄不是规则 ID |
-| `search_symbols` | `query`；查 Java 类、方法等符号并返回定位信息 |
-| `read_source_context` | `path, line`；1-based 目标行，默认前 20、后 80 行，范围受文件边界限制 |
-| `read_source_block` | `path, line`；读取所在 Java 方法、构造器或类型块，解析不可用或未命中时退化为目标行起的最多 30 行 |
-| `read_source_file` | `path`；请求全文；目录和大型 Java 文件受防线限制，非 Java 文件最多展示 200 行 |
-| `propose_patch`、`revise_patch` | `file_path, old_string, new_string, rationale, associated_finding_id?`；暂存新草案或当前补丁的替代草案，不直接修改源码或审核队列 |
-| `write_memory`、`read_memory`、`delete_memory`、`search_memory` | 官方 Memory 工具及原生参数，围绕 notebook 文件操作；不作为源码或 finding 证据 |
+| `start_repair` | `goal, write_paths`；用户明确要求修复时准备新任务与写范围申请 |
+| `request_write_scope` | `paths`；申请增加确切文件，等待用户 `allow` |
+| `record_constraint` | `requirement`；保存用户明确提出的当前任务临时要求 |
+| `scan_java` | `paths`；显式扫描 Java 文件或目录，返回候选与总数，每页 20 项 |
+| `get_scan_findings` | `scan_id, offset=0`；继续读取已有扫描候选 |
+| `get_finding_detail` | `finding_handle`；原始扫描身份、当前源码、适用规范及证据是否仍对应当前 bytes |
+| `search_symbols` | `query`；仓库内 Java 符号定位 |
+| `read_source_context` | `path, line=1`；行窗口与适用祖先规范 |
+| `read_source_block` | `path, line`；Java 方法、构造器或类型；不可用时退化为目标行起 30 行 |
+| `read_source_file` | `path`；有界全文，截断后继续按行读取 |
+| `get_proposal` | 当前完整 diff、理由及语法结果，供解释和修订取证 |
+| `propose_patch` | `edits, rationale, finding_handle?`；新建或修订同一问题的完整提案 |
+| `assess_issue` | `outcome, reason, finding_handle?`；明确登记不修改、证据不足或执行失败 |
+| 官方 Memory 四工具 | SDK 原生 notebook 参数，见第 7 节 |
 
-工具名由 `FunctionToolName` 统一定义，schema 由 SDK 从注解、Field 描述及 Google 格式 docstring 生成；整数拒绝 bool、字符串或小数冒充，未知参数拒绝。每个任务只导出白名单工具，执行器再次拒绝未开放工具。
+`FunctionToolName` 定义对外名称；schema 来自注解和 docstring。行号拒绝 bool、字符串及小数，未知参数拒绝。工具串行执行，模型没有源码写入、批准范围、apply、discard 或任务清空工具。业务输入可纠正错误经 SDK `ModelRetry` 同轮反馈，每工具最多两次纠错，不由 CLI 重跑整个 Agent。
 
-| 任务 | 可用工具 |
-|---|---|
-| `code_audit` | finding detail、三种源码读取、propose、Memory 读写、搜索与删除 |
-| 零 finding 二次复核 | 三种源码读取、propose、Memory 读写、搜索与删除 |
-| `code_explain` | 三种源码读取、Memory 读写、搜索与删除；允许导航时增加 symbol search |
-| `general_chat` | Memory 读写、搜索与删除 |
-| `patch_explain` | symbol search、三种源码读取、Memory 读写、搜索与删除 |
-| `patch_revise` | symbol search、三种源码读取、finding detail、revise、Memory 读写、搜索与删除 |
+### 3.3 项目规范与长期知识
 
-自然语言 prompt 用 Markdown section 分开任务、用户原文、证据与执行要求；代码和 diff 使用代码块，分类器保留 `<<<USER_TEXT ... USER_TEXT` 原文边界。function schema 和 SDK 消息保持原生结构。提示词中的取证要求与程序侧权限、绑定校验共同生效，不能把提示词要求宣称为程序已证明的事实。
+根目录 AGENTS 作为正式规范来源注入，读取源码时带回目标祖先 AGENTS；长文截断必须继续读取。用户明确提供或规范明确引用的其他规则文件按需读取，不扫描所有 Markdown。
 
-## 4. 扫描与有界审计
+当前要求、正式规范、长期笔记、源码和扫描证据分别标识。影响当前修复的实质冲突应说明并澄清，不自动创建冲突优先级引擎。可独立检查的要求用现有适合的语法或扫描验证，不为每条规则编写新检查器。临时要求摘取当前用户原文，随任务完成、丢弃、中止或 new 清理，不自动升级为长期笔记。
 
-Semgrep 使用项目内置 Java 规则和 AutoPatch-J 管理的运行时，当前固定版本和扫描超时由 `AppConfig` 管理；安装使用 filelock 系统互斥锁，等待超时后失败，取得锁后再次检查是否已经安装。缺少运行时须通过 `/init` 准备，不静默选用其他扫描器。
+## 4. 扫描与问题判断
 
-成功 payload 必须显式含 list 类型的 `results` 与 `errors`，且 `errors` 为空。无效 JSON、进程失败、超时、缺字段、非空 errors 或任一 finding 证据不合法时，整次扫描失败；不得保存部分成功 artifact、进入 backlog 或冒充零 finding。没有可扫描目标的 `skipped` 与成功零 finding 分别表达。
+managed Semgrep 使用内置 Java 规则，运行版本和超时见 `AppConfig`；安装用 filelock 互斥并在锁内复查，不静默改用其他扫描器。未准备好时明确报告，用户可执行 `/init`。
 
-每个 finding 保存应用侧 fingerprint、engine、规则 ID、repo-relative POSIX path 和精确 region。region 使用 1-based line/column、byte offset 与半开区间；fingerprint 结合版本、engine、规则、路径和匹配源码，同证据重复项按源码位置确定性区分，不依赖 Semgrep 登录指纹或 raw result 顺序。
+成功 payload 必须包含 list 类型 `results`、`errors`，且 errors 为空；进程、JSON、结构或任一 finding 证据出错则整次失败，不登记部分成功或冒充零 finding。证据登记还比较扫描前后文件指纹，变化则拒绝。无 Java 文件表示未扫描。
 
-每次用户请求最多处理 `audit_batch_limit` 个 finding；超额时保留已生成的待审补丁并提示用户确认后重新检查，不承诺跨请求保存剩余 finding backlog。再次审计重新扫描当前源码。可重试的 finding 工具失败最多增加一次强制重读尝试，不表示任意失败均自动重试。
+finding 包含规则、repo-relative path、fingerprint 及精确半开区域：行列从 1 开始、byte offset 从 0 开始。对外句柄为 `<scan_id>:F<n>`，不依赖隐式“当前扫描”，新扫描不重绑旧句柄。扫描快照与每文件原始指纹一起保存，起草关联补丁前再核对当前源码。
 
-成功扫描为零 finding 时，逐文件进入 LLM 二次复核，找到首个可入队草案后停止该流程；finding 批次限制不是零 finding 文件数上限。扫描无报错、LLM 未起草补丁，都不证明代码没有缺陷。
+Optional 规则约束 `java.util.Optional` 接收者；空值调用 get 抛出的是 `NoSuchElementException`，仍须判断其他前置条件和保护。Random 只在安全敏感用途下考虑 SecureRandom；可复现模拟不据此直接判错。构造参数是否拒绝 null 依业务契约判断。静态候选不等于必须修改。
 
-每次 Agent 运行最多 10 次逻辑模型请求，摘要与纠错共享该额度。官方 DetectLoops 在重复结果或交替调用达到阈值时停止，不因相同工具参数本身判定循环。普通模式折叠 reasoning 与 observation 细节；debug 展示更多信息，workflow 可强制紧凑 observation。终端渲染与业务状态分开维护。
+Agent 逐项判断而非预生成批次补丁。`no_change` 是有效完成结论并记录理由；`insufficient_evidence` 保留待澄清任务，`execution_failure` 表示执行未完成。没有补丁本身不表示失败或整个仓库无问题。
 
 ## 5. 补丁安全与人工审核
 
-### 5.1 草案与绑定
+### 5.1 完整提案与绑定
 
-search-replace 的 `old_string` 必须在当前源码中唯一匹配；引擎按规范化换行定位，并保存原始 bytes 上的 `match_region`。关联扫描 finding 时保存句柄、scan ID 和完整目标 identity，补丁区域须与当前 finding region 相交。同文件不等于命中同一 finding。
+`edits` 为文件列表，每文件只出现一次，包含有序 `replacements`：`old_text` 非空，在前项替换结果中必须恰好匹配一次；`new_text` 可为空表示删除该片段。重复真实文件、未授权路径、空修改、匹配失效或不唯一，整项准备失败。只操作已有文本文件，不提供文件创建、删除或重命名；无法完成完整修复须说明能力限制。
 
-工具先将草案暂存于请求 session；正常或受限结束后，workflow 校验有效草案并入队。异常或取消不提交本轮暂存草案。Java 草案附 Tree-sitter 语法结果；`invalid` 或 `unavailable` 仍须准确显示，不能声称所有可预览草案均通过语法、编译或测试。用户确认 apply 才写源码。
+所有文件先在内存准备，全部成功才生成完整提案。提案包含任务 ID、问题 ID、独立版本 ID、理由、原始与候选 bytes、两者指纹、真实目标、完整 diff、原编码与权限、编辑足迹及校验结果；内存与持久化使用同一模型，不重建另一份状态。完整 bytes 只作本地审核与应用证据，不全量注入提示词。
 
-revision 只能替换当前文件和当前 finding，省略句柄时继承原绑定；提供不同句柄或区域失配时拒绝，原草案不变。当前补丁的局部运行约束按 review item 绑定，不能泄漏给同文件其他补丁。
+新建与修订使用同一个工具；修订继承原问题和 finding，不能切换绑定。导入、辅助方法、调用方可属于同一修复，不要求每次编辑与警告区域相交。Java 候选已确认语法错误时反馈纠错，不产生可应用提案；分析不可用单独标为 `unverified`，不伪装通过。
 
-### 5.2 审核与落盘
+准备或运行失败不替换已有提案。正常或受限结束的有效候选经业务入口提交；失败、异常结束和取消不提交本轮暂存结果。受限运行仍提示“未完整完成”。每次有效修订均重新预览并等待人工 apply。
 
-`apply` 应用当前补丁，`discard` 丢弃当前项，`abort` 中止审核并丢弃剩余项。解释为只读任务，修订仍须重新预览与确认。
+### 5.2 审核、写入与中断
 
-apply 前确认所选草案仍等于当前持久待审项，再重读源码，确认 old string 仍唯一且区域等于草案绑定。无法无损解码、重新编码失败或源码绑定变化时拒绝。写入仅替换匹配区域 bytes，区域外 bytes 保持一致；replacement 沿用文件编码和检测到的换行形式，保留可观察的 permission mode。
+所有业务状态写入共用进程间锁：提交新任务、范围、临时要求、提案、人工动作、new/reset 均在锁内重读并比较预期任务、状态、版本及提案。LLM 与人工等待在锁外，过期运行拒绝覆盖新版本；完整源码应用和写入进度保存期间持锁；复扫在锁外执行，保存验证结果时再核对版本，不覆盖后续任务。锁文件显式保留，不随 reset 删除。
 
-在同目录临时文件完成编码、写入、flush、fsync，再比较目标当前 bytes 并原子替换。原子替换前失败或比较已发现的外部修改不会覆盖当时目标；不承诺消除最终比较之后的非协作竞争写入。
+apply 绑定界面展示的版本；先重读所有目标，比较完整原始 bytes、真实路径及提案指纹，扫描目标也核对原指纹。任一预检失败则零写入，须重新准备与审核，不重定位旧提案。
 
-源码写入前，先把当前及同文件待审草案持久化为阻断状态；阻断状态保存失败则不写源码。写入成功后再保存 applied、重定位和队列状态。最终保存失败时明确报告“源码已写入、审核状态未保存”，停止复扫，保留失效草案阻止重复应用；重启后同样要求核对源码，再 discard 或 abort 并重新扫描，不自动回滚或恢复执行。
+完整预检通过后先持久化 `applying` 与预期结果，再逐文件写入、保存真实进度。每文件在同目录临时文件完成编码、flush、fsync，保留 permission mode，最后再次比较原 bytes 并 `os.replace`。匹配时规范化换行，写入只替换对应 bytes，其他 bytes 不重编码；保留 UTF-8/GBK、BOM、换行与无尾换行。
 
-前序补丁应用后，按真实 source/changed region 更新同文件非重叠 pending 草案及 finding 区域，刷新 diff 与语法结果。重叠、匹配丢失、不唯一或偏离预期位置时标为 `STALE_DRAFT`，禁止 apply/revise，提示 discard 或 abort 后重新扫描。finding detail 使用工作台当前绑定，不能退回初始位置。
+多文件不承诺全部成功或自动撤销。第一个 IO、路径或持久化故障后停止，报告已写入、未写入和不确定项，不自动回滚或重新 apply。写后保存失败明确保留写入事实；磁盘 applying 状态阻止重放。重启只展示持久进度与当前 bytes 对照，文件等于候选不能单独证明执行历史，须人工核查再 abort/new。最终比较之后的非协作竞争写入仍可能存在，不宣称消除所有外部竞争。
+
+损坏或不合法的修复状态明确拒绝，不当作 idle，不自动重建或迁移。交互输入前读取或展示状态失败时，报告一次并关闭资源，以非零状态退出，保留磁盘数据。discard、abort、new 和 reset 不撤销已经应用的源码。
 
 ### 5.3 应用后验证
 
-成功写入与确认问题消失是两个事实。verifier 先检查成功 apply 证据：source 等于草案 match region、source/changed 起点一致、source 仍与目标相交。证据不足时返回 `UNVERIFIED`，不盲目重扫。
+成功写入、语法通过、目标规则未再触发、编译及业务验收是不同事实。所有文件成功写入且 applied 状态保存后才验证，失败或中断不继续复扫。记录语法结果、目标复扫及未执行的编译/测试。
 
-验证把原 finding region 按真实编辑映射为 apply 后足迹，使用同路径、同规则 candidate 判断目标是否仍在；仅看 replacement 或文件内是否还有同规则都不足。保留的目标前缀、后缀也须计入，足迹外同规则项只算其他剩余问题。零长度删除点按区域包含关系处理，结束于该点的相邻项不自动算目标。
+有可靠扫描绑定时，将原目标半开区间依次映射经过每次真实替换；辅助文件修改不强制覆盖目标区域。验证前后确认预期 bytes 未变，复扫同路径同规则的映射足迹。足迹内仍命中为 `failed`，未命中为 `passed`；其他位置同规则不混作原目标。缺目标、扫描器、可靠源码或复扫失败均为 `unverified`。
 
-| 结果 | 含义 |
-|---|---|
-| `RESOLVED` | 目标映射足迹内不再触发规则，其他位置可仍有同规则 finding |
-| `STILL_PRESENT` | 目标映射足迹内仍触发规则 |
-| `UNVERIFIED` | 无可靠目标/应用证据、扫描器不可用或重扫失败等，不能确认 |
-
-没有 scanner finding 绑定的 LLM 二次复核草案无法做精确目标验证。验证失败不自动回滚已确认并成功写入的补丁，审核项仍记录 applied，CLI 同时显示验证结论。
+上述 passed 仅证明目标足迹没有再触发同规则，不证明业务语义正确。没有扫描绑定的用户缺陷不能伪造目标复扫通过。编译、测试、业务验收当前未自动执行，明确 `unverified`；验证失败不回滚已批准写入，applied 事实仍保留。
 
 ## 6. LLM、上下文与诊断
 
 ### 6.1 配置与协议
 
-运行基线为 Python 3.14+。项目固定 `pydantic-ai-slim[openai]==2.63.0`、`pydantic-ai-harness==0.63.0`、`openai==3.40.0` 和 `filelock==4.2.4`。runtime/test/dev 的精确解析版本见根 `constraints.txt`，安装使用 `python -m pip install -c constraints.txt -e '.[test,dev]'`。依赖锁定不固定模型服务端版本。
+Python 3.14+；固定 `pydantic-ai-slim[openai]==2.63.0`、`pydantic-ai-harness==0.63.0`、`openai==3.40.0`、`filelock==4.2.4`。完整解析版本在 `constraints.txt`，安装使用 `python -m pip install -c constraints.txt -e '.[test,dev]'`。固定依赖不代表固定模型服务端版本。
 
 | 环境变量 | 默认值与用途 |
 |---|---|
-| `AUTOPATCH_LLM_API_KEY` | 必填；无 Key 时仍可使用本地命令 |
-| `AUTOPATCH_LLM_BASE_URL` | `https://api.deepseek.com`；标准 Chat Completions 地址 |
+| `AUTOPATCH_LLM_API_KEY` | 必填；没有 Key 仍可运行本地命令 |
+| `AUTOPATCH_LLM_BASE_URL` | `https://api.deepseek.com` |
 | `AUTOPATCH_LLM_MODEL` | `deepseek-flash` |
-| `AUTOPATCH_LLM_CONTEXT_WINDOW` | 未知部署必须明确提供的上下文容量 |
-| `AUTOPATCH_LLM_MAX_OUTPUT_TOKENS` | 未知部署必须明确提供的输出预算 |
-| `AUTOPATCH_DEBUG` | `false`；展示 reasoning、工具观察及前台错误详情 |
-| `AUTOPATCH_AUDIT_BATCH_LIMIT` | `4`；一次审计处理的 finding 数量 |
+| `AUTOPATCH_LLM_CONTEXT_WINDOW` | 未知部署必须明确的上下文容量 |
+| `AUTOPATCH_LLM_MAX_OUTPUT_TOKENS` | 未知部署必须明确的输出预算 |
+| `AUTOPATCH_DEBUG` | `false`；前台展示更多推理与有界错误详情 |
 
-配置只读启动进程环境，不自动读取 `.env`。内置 `deepseek-flash` 与 `deepseek-v4-pro` 使用固定容量，不接受覆盖；其他模型必须同时指定容量与输出预算。旧模型别名不自动转换，任意 extra body、reasoning effort 和 stream dialect 不作为用户配置。
+只读启动环境，不读 `.env`。内置 Flash 与 deepseek-v4-pro 固定容量，不接受覆盖；其他模型必须明确容量和输出预算。旧模型名不转换，不保留已删除的批次参数。
 
-Flash 的官方上下文为 1,048,576 tokens，服务端最大输出为 393,216；应用操作输出上限为 128,000，协议安全余量为 32,768，输入预算为 887,808。[官方模型数据](https://api-docs.deepseek.com/zh-cn/api/list-models/)
+Flash 上下文为 1,048,576 tokens，服务端最大输出 393,216；应用输出上限 128,000，安全余量 32,768，输入预算 887,808，见 [模型官方数据](https://api-docs.deepseek.com/zh-cn/api/list-models/)。DeepSeek 请求开启 thinking、reasoning_effort=max，公开 profile 选择 max_tokens；其他模型沿用 SDK baseline，不宣称已验证所有部署。摘要同模型、非流式、120 秒超时。
 
-审计、解释、草案与修订开启 DeepSeek thinking，使用 `reasoning_effort=max`；分类非流式，关闭 thinking、temperature=0、输出最多 128；摘要使用同一模型，非流式且超时 120 秒。通过公开 OpenAI model profile 选择 DeepSeek 的 `max_tokens`；其他明确配置的模型使用 SDK baseline，不发送 DeepSeek 专属字段，不宣称已验证全部部署。
-
-分类和笔记管理的异步取消同样终止当前交互并收尾，不按分类失败默认值继续调用模型。
-
-SDK 负责 Chat Completions、流解析、reasoning 回传、schema 和参数校验，不维护第二套 wire/parser。SDK 将缺失的 reasoning 映射为空字符串等行为按原生语义处理，不宣称已证明响应原始字段存在。每个 CLI runtime 拥有单个 asyncio.Runner 和异步客户端，跨请求复用并在退出或装配失败时关闭；不启用 SDK 宣传 banner 和默认外部 instrumentation。
+SDK 管理 Chat Completions、参数 schema、流、reasoning 回传；没有第二套 parser。每个 CLI runtime 拥有单个 asyncio.Runner 和异步客户端，跨请求复用，退出或装配失败时关闭；不启用默认外部 instrumentation 或 SDK banner。
 
 ### 6.2 请求额度、上下文与正常结束
 
-每次 Agent.run 最多 10 次逻辑模型请求，摘要、工具参数纠错共同计入；分类另计一次，不做输出重生成。SDK 网络重试最多两次，不叠加通用重试或重放已消费的流。
+使用原生 `UsageLimits()` 默认每轮 50 次逻辑模型请求，摘要与工具纠错共享；这不是上下文压缩，也不是费用上限。网络最多两次原生重试，不叠加通用 retry，不重放已消费的流或业务工具流程。
 
-只把原生 `finish_reason=stop/tool_calls` 当作正常结果。开启严格流结束标记，并在公开 after_model_request hook 校验原始结束状态；截断、过滤、资源不足、aborted、缺失和未知状态不能执行该响应工具、提交本轮草案、保存成功普通会话或采用为有效摘要。同一校验覆盖分类和摘要。此前已成功写入的笔记不随之后的模型失败自动回滚。
+只接受原始 finish_reason=stop/tool_calls，开启严格流结束标记。公开 after_model_request hook 在工具执行前拒绝截断、过滤、资源不足、aborted、缺失和未知状态；同一校验用于摘要。SDK 对缺字段的原生映射不等于证明原始字段存在。
 
-请求结果区分 completed、limited、failed、cancelled。额度或循环限制可保留经业务校验的草案供人工审核；失败和取消不提交暂存草案。受限、失败和取消提示不随最终答案抑制而隐藏。未完成的零 finding 复核不能显示“未发现问题”，部分过程展示也不表示成功完成。
+上下文只用原生 SummarizingCompaction，输入预算的 85% 触发、保留默认最近 20 条消息及工具依赖。估算采用 SDK 的 provider usage 与原生启发式，不用 UTF-8 字节计数。当前用户原文、目标、写范围、临时约束和提案身份通过公开请求指令独立提供，不依赖摘要恢复。
 
-使用官方 ClearToolResults、SummarizingCompaction、SlidingWindowCompaction 和 DetectLoops。输入预算达到 80% 时清理旧的可重读工具结果，85% 时尝试摘要；摘要保留最近 20 条消息和必要工具依赖，预期模型失败可回退窗口。保留当前用户原文、任务约束和程序绑定的独立投影，不交给摘要替代。DetectLoops 的重复调用次数不设阈值，重复结果和交替调用阈值均为 3，触发即停止。
+摘要是尽力压缩：无可摘要前缀或摘要不更小时保留原历史，本轮不重复无收益摘要，不裁掉必需内容，不回退清工具结果或滑动窗口。摘要失败或供应商拒绝超限即停止当前运行，保留原任务和提案，不提交本轮暂存结果；不声称本地估算能证明完整 DeepSeek 请求一定容纳。
 
-最终通过公开 WrapperModel 在委托 SDK 前核对完整消息、指令、function/output tool schema、请求设置及笔记；中文计入 UTF-8 字节量。压缩使用同一保守估算量纲。它可能提前压缩或拒绝，不是精确 DeepSeek tokenizer 或容量证明；必需内容仍超限则明确停止，不静默裁剪。
+DetectLoops 使用 SDK 默认 nudge 行为，不保留三次即报错的自研硬停。运行区分 completed、limited、failed、cancelled。失败或取消不能保存残缺会话、不能替换原提案；此前已成功保存的长期笔记不随之后模型失败回滚。
 
 ### 6.3 诊断边界
 
-普通模式显示简明错误；debug 的前台错误最多展示 20,000 字符的异常/body，按文字显示 Rich 标记。格式化不主动附加请求、headers 或认证信息，也不保证供应商回显内容已脱敏。
+普通模式隐藏原始供应商错误，debug 前台展示最多 20000 字符的异常/body，按普通文字显示 Rich 标记。不主动附加请求或 headers，不保证供应商回显已脱敏。
 
-会话和笔记的预期存储故障明确提示，不当作健康空结果；并发冲突不覆盖对方，contract 与编程错误继续传播。回答已生成而普通会话保存失败时，保留回答并说明未保存。异常展示是最外层边界，不改变业务成功事实。
+笔记和会话预期存储故障明确提示，不当作空数据；contract 与编程错误继续传播。回答生成后会话保存失败保留回答，说明未保存，并发 CAS 不覆盖其他进程。业务提交先于成功会话保存，过期业务结果不保存成成功修复回合。
 
 ## 7. 项目 Memory
 
-### 7.1 普通会话
+### 7.1 统一会话
 
-官方 SqliteConversationStore 保存完整 SDK 消息，包括 reasoning、工具调用与结果以及实际压缩后的 head，位置为 `.autopatch-j/conversations.sqlite3`。启动恢复本项目最近未归档的普通会话，使用 conversation_id 延续，不拼接重叠快照。只保存完成的普通请求；失败或取消不把残缺回合留给下次请求。
+官方 SqliteConversationStore 保存完整 SDK 消息，包括 reasoning、工具调用、工具结果和实际摘要后的 head。启动恢复本项目最近未归档会话，问答、读取、扫描、修复及提案解释共用原生历史；不拼接另一套消息、不启用自动重放或 StepPersistence。
 
-普通聊天与代码讲解加载和保存普通历史。代码审计、零 finding 复核、补丁解释和修订使用独立历史，不读写普通会话。所有任务可访问本项目长期笔记；笔记不能覆盖当前用户指令、focus、源码证据、finding 绑定及人工审核。
+仅完整成功回合保存；失败、取消和受限回合不保存残缺消息。任务、提案和写权限独立持久化，模型历史不是审核状态。业务提交失败不保存该回合为成功会话；回答已生成而会话保存失败仍可显示回答和实际业务状态。
 
 ### 7.2 长期笔记
 
-官方 Memory＋SqliteMemoryStore 保存 Agent 维护的 notebook，位置为 `.autopatch-j/memory.sqlite3`，固定 namespace 为 `project`、agent_name 为 `main`。SDK 管理原生文件操作、根笔记注入和版本冲突；项目不维护后台提取、候选合并、job、lease 或 Markdown 审阅投影。[官方 Memory 文档](https://pydantic.dev/docs/ai/harness/memory/)
+官方 Memory + SqliteMemoryStore 保存 notebook，namespace=project、agent_name=main。原生四工具为 read_memory、write_memory、delete_memory、search_memory，SDK 负责注入、文件操作和版本冲突，见 [官方 Memory 文档](https://pydantic.dev/docs/ai/harness/memory/)。
 
-Agent 指引只记录用户明确表达或确认的长期项目偏好与决定，不从一次补丁纠正、源码、工具输出或 AI 单方结论推导永久规则。此语义由指引约束，不宣称 SDK 已自动证明。当前补丁的临时要求按审核项保存，完成、丢弃、中止或 /new 后清理。
+只记录用户明确表达或确认的长期项目偏好与决定；不从源码、扫描、一次修订或 AI 自己的结论自动提炼永久规则。此约束由指引落实，不宣称 SDK 自动理解业务。临时任务要求与正式项目规范各有来源和生命周期，必要冲突在当前对话澄清。
 
 ### 7.3 管理与数据边界
 
 | 命令 | 行为 |
 |---|---|
-| `/memory status`、`list` | 读取当前笔记文件列表；实际存储异常直接报告 |
-| `/memory show [path]` | 显示文件，默认 MEMORY.md |
-| `/memory forget <path>` | 删除指定笔记；主 MEMORY.md 受保护，须明确要求 Agent 修订，或使用 clear |
-| `/memory clear --confirm` | 删除当前笔记，保留普通会话、导出及终端历史 |
-| `/memory export` | 独占创建现有笔记的 JSON 导出，不覆盖旧文件，不宣称 RAW 审计快照 |
+| `/memory status`、`list` | 读取实际文件列表，故障不显示成空笔记 |
+| `/memory show [path]` | 显示笔记，默认 MEMORY.md |
+| `/memory forget <path>` | 删除指定笔记；主 MEMORY.md 受保护，需明确修订或 clear |
+| `/memory clear --confirm` | 清空笔记，保留项目会话、导出和终端历史 |
+| `/memory export` | 独占创建现有笔记 JSON 导出，不覆盖旧文件 |
 
-本进程操作在同一同步入口顺序执行；存储使用原生版本条件防止覆盖并发修改。删除笔记不擦除旧会话中已经出现的内容，指引禁止从旧历史自行恢复已删除笔记。各项目数据库独立，不提供跨项目共享或云端记忆。
-
-旧 memory.db、memory_summary.md 和已有导出不读取、不迁移，也不自动删除。/reset 保留这些已有用户数据以及新的会话与笔记。损坏数据库不会自动重建，不承诺任意损坏均可导出或清空。会话与笔记可能包含用户原文、推理或源码，导出仅包括 notebook 内容。
+各项目数据库隔离，无跨项目或云端 Memory。删除笔记不擦除旧会话，指引禁止据旧会话恢复已删除笔记。旧 memory.db、memory_summary.md 和已有导出不读取、不迁移、不自动删除。损坏数据库不自动重建，也不承诺任意损坏均可导出或清空。会话和笔记可能包含用户原文、源码及 reasoning；导出只含 notebook。
 
 ## 8. 验证契约与能力限制
 
-`pytest -q` 为确定性完整回归。普通测试阻止真实 OpenAI/AsyncOpenAI 构造和原生模型网络请求，只允许明确的 FunctionModel/TestModel 或 MockTransport；本机存在有效 Key 不能触发真实调用。扫描编排使用明确的进程或扫描边界替身，源码、绑定、审核及持久化判断保留真实组件。
+`pytest -q` 是确定性完整回归，默认阻止真实 OpenAI client 和原生模型网络调用；只允许明确 FunctionModel/TestModel 或 MockTransport。扫描器与传输可以替代，补丁判断、文件 IO、状态转换、人工绑定及 SQLite 持久化保留真实组件。
 
-真实 LLM 测试标记 live_llm，仅 `--run-live-llm` 启用，且排序在确定性测试之后；先行失败或首个 live 失败阻止后续请求。配置摘要只显示模型和安全 endpoint origin。是否运行、平台及结果按本次实际证据报告，授权见 [AGENTS](../AGENTS.md#实现与验证)。
+真实 LLM 用例标记 live_llm，需本次明确同意并以 `--run-live-llm` 启用；先行确定性失败或首个 live 失败阻止后续请求。输出只显示模型和安全 endpoint origin。授权要求见 [AGENTS](../AGENTS.md#实现与验证)。
 
-能力限制：Java 编译、测试及业务验收尚未自动接入；静态无 finding 不证明无缺陷，RESOLVED 只表达目标规则足迹的复扫结论。笔记不能证明代码事实，保守估算不能保证服务端容量。未启用 StepPersistence、自动执行恢复、额外会话命名模型或持久化调度引擎。
+自动化未覆盖 Java 编译、测试、业务验收和流水线交付；静态无 finding 不证明无缺陷，摘要估算不保证服务端容量，多文件应用不具备整体回滚。平台验证以实际执行为准。
 
 ## 9. 代码与测试证据索引
 
-| 领域 | 代码入口 | 相关测试 |
+| 领域 | 代码 | 测试 |
 |---|---|---|
-| SDK、流、额度与结束 | [Agent](../src/autopatch_j/agent/agent.py)、[策略](../src/autopatch_j/llm/policy.py)、[装配](../src/autopatch_j/llm/factory.py) | [离线 SDK 场景](../tests/test_sdk_agent.py)、[容量](../tests/test_context_window.py) |
-| 普通会话与笔记 | [会话](../src/autopatch_j/core/conversations.py)、[笔记](../src/autopatch_j/core/memory/__init__.py) | [SDK 与存储](../tests/test_sdk_agent.py) |
-| 路由与展示 | [输入](../src/autopatch_j/cli/input_router.py)、[展示](../src/autopatch_j/cli/agent_stream_presenter.py) | [CLI](../tests/test_cli_commands.py)、[路由](../tests/test_conversation_router.py)、[流式展示](../tests/test_agent_stream_presenter.py) |
-| 范围与扫描 | [项目](../src/autopatch_j/core/project/)、[Semgrep](../src/autopatch_j/scanners/semgrep/) | [源码](../tests/test_source_read_tools.py)、[焦点](../tests/test_focus_guardrails.py)、[扫描身份](../tests/test_semgrep_finding_identity.py) |
-| 补丁与审核 | [补丁](../src/autopatch_j/core/patching/)、[审核服务](../src/autopatch_j/core/review/application.py) | [字节与原子写入](../tests/test_core_patch.py)、[草案](../tests/test_patch_draft_tools.py)、[验证](../tests/test_patch_verifier.py)、[工作台](../tests/test_workspace_manager.py) |
-| 真实集成 | [显式授权门禁](../tests/conftest.py) | [Flash 与临时 Java 闭环](../tests/test_live_sdk.py)，默认跳过 |
-| 分层测试 | [测试入口](../tests/conftest.py) | [授权及顺序](../tests/test_layered_test_execution.py) |
+| 任务、提案与状态 | [领域模型](../src/autopatch_j/core/repair/models.py)、[业务入口](../src/autopatch_j/core/repair/service.py)、[存储](../src/autopatch_j/core/repair/store.py) | [完整提案与失败恢复](../tests/test_repair.py) |
+| 字节准备与原子写入 | [文件操作](../src/autopatch_j/core/repair/files.py) | [字节、预检与 IO 故障](../tests/test_repair.py) |
+| 扫描证据与验证 | [证据](../src/autopatch_j/core/repair/evidence.py)、[复扫](../src/autopatch_j/core/repair/verification.py)、[语法](../src/autopatch_j/core/repair/checks.py) | [目标足迹及误报判断](../tests/test_patch_verifier.py)、[SDK 完整闭环](../tests/test_repair_integration.py)、[语法](../tests/test_syntax_checker.py) |
+| 统一 Agent 与 SDK | [Agent](../src/autopatch_j/agent/agent.py)、[请求边界](../src/autopatch_j/agent/boundaries.py)、[工具](../src/autopatch_j/tools/project.py) | [离线 SDK 与 SQLite](../tests/test_sdk_agent.py) |
+| 读取与规范来源 | [源码](../src/autopatch_j/core/project/source_reader.py) | [读取和祖先规范](../tests/test_source_read_tools.py) |
+| 人工交互 | [输入](../src/autopatch_j/cli/input_router.py)、[主循环](../src/autopatch_j/cli/app.py) | [实际 CLI](../tests/test_cli_commands.py) |
+| 真实集成 | [授权门禁](../tests/conftest.py) | [真实模型用例](../tests/test_live_sdk.py)，默认不运行 |

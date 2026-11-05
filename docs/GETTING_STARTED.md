@@ -23,7 +23,7 @@ source .venv/bin/activate
 python -m pip install -c constraints.txt -e .
 ```
 
-Windows PowerShell：
+Windows（PowerShell 7）：
 
 ```powershell
 python -m venv .venv
@@ -45,7 +45,7 @@ export AUTOPATCH_LLM_BASE_URL="https://api.deepseek.com"
 export AUTOPATCH_LLM_MODEL="deepseek-flash"
 ```
 
-Windows PowerShell：
+Windows（PowerShell 7）：
 
 ```powershell
 $env:AUTOPATCH_LLM_API_KEY="your-api-key"
@@ -53,7 +53,7 @@ $env:AUTOPATCH_LLM_BASE_URL="https://api.deepseek.com"
 $env:AUTOPATCH_LLM_MODEL="deepseek-flash"
 ```
 
-完整环境变量、默认值和校验规则见 [SPEC 配置](SPEC.md#61-配置与协议)。`AUTOPATCH_DEBUG=true` 开启调试，`AUTOPATCH_AUDIT_BATCH_LIMIT` 控制每轮 finding 数量。
+完整环境变量、默认值和校验规则见 [SPEC 配置](SPEC.md#61-配置与协议)。`AUTOPATCH_DEBUG=true` 开启调试。
 
 使用内置 `deepseek-flash` 或 `deepseek-v4-pro` 时，应用已经定义 context profile，不接受容量覆盖。使用其他模型时，必须根据实际模型能力同时设置正整数 `AUTOPATCH_LLM_CONTEXT_WINDOW` 与 `AUTOPATCH_LLM_MAX_OUTPUT_TOKENS`，且为输入保留安全余量；缺失或不合法会报告配置错误。应用只支持标准 Chat Completions function-call 协议，协议、流解析和 reasoning 回传由 Pydantic AI 与原生 SDK 处理，请求策略按任务用途固定。
 
@@ -78,7 +78,7 @@ python -m autopatch_j
 /init
 ```
 
-`/init` 会初始化项目运行环境、清空原有补丁审核工作台、安装或检查 managed Semgrep runtime，并重建 Java 符号索引。完成后可以用 `/status` 和 `/scanner` 检查状态。
+`/init` 会准备项目运行环境、安装或检查 managed Semgrep runtime，并重建 Java 符号索引，保留当前任务和待审提案。完成后可以用 `/status` 和 `/scanner` 检查状态。
 
 ### 运行内置 demo
 
@@ -107,52 +107,51 @@ macOS 脚本会在启动前准备 managed Semgrep runtime。Windows 脚本启动
 @src/main/java/demo/AppConfig.java 审计这个文件并给出修复建议
 ```
 
-如果只输入 `@路径`，CLI 会提示继续输入具体要求。收到完整指令后，系统解析检查范围、执行 Semgrep，并把合法的扫描结果加入 finding 队列。每轮最多处理的数量由 `AUTOPATCH_AUDIT_BATCH_LIMIT` 控制。
+Agent 根据具体目标调用扫描、源码读取和符号查询；需要时继续阅读同仓库关联代码。扫描结果是待核查候选，不代表必须修改，零 finding 也不能否定你明确指出的缺陷。
 
-Agent 会为当前 finding 准备候选补丁。CLI 展示目标文件、diff、修改理由和语法检查结果，然后把补丁放入审核队列。在用户应用、丢弃或中止之前，CLI 会一直显示当前补丁。
+第一次要求修复时，Agent 会准备修复目标与需要修改的确切文件。界面展示写范围申请后，输入：
 
-![AutoPatch-J CLI 审计与补丁确认](assets/autopatch-j-cli-review.png)
+```text
+allow
+```
 
-## 6. 审核补丁
+`allow` 批准已展示的文件并继续准备当前提案，不修改源码。后续需要增加文件时，同样先展示并批准。单纯 `@文件`、解释或读取关联代码不会自动扩大写范围。
 
-看到补丁预览后，可以直接输入：
+## 6. 审核与应用
+
+一次只准备一项完整提案；同一问题必需的多文件、多段修改一起展示。CLI 显示所有文件的完整 diff、修改理由和语法结果。准备失败不会覆盖原待审提案。
 
 | 输入 | 结果 |
 |---|---|
-| `apply` | 应用当前补丁，重新检查目标 finding，然后进入下一项 |
-| `discard` | 丢弃当前补丁，然后进入下一项 |
-| `abort` | 结束本轮审核并丢弃剩余补丁 |
+| `apply` | 批准并应用已展示版本的完整提案，再反馈验证 |
+| `discard` | 丢弃当前待审提案并结束任务 |
+| `abort` | 明确结束当前任务，不撤销已写入源码 |
 
-决定之前也可以继续提问或要求修改：
+决定前可继续输入：
 
 ```text
-解释为什么要这样修改
-把判空改成 Objects.equals 的写法
-这个修改会影响哪些调用方？
+只解释为什么需要修改调用方
+这个修改会影响哪些业务行为？
+将判空改为 Objects.equals，并重新展示完整提案
 ```
 
-补丁解释围绕当前待审项，修订只能替换当前文件和 finding，仍须与当前绑定区域相交，不能切换到同文件其他 finding。绑定校验失败时原补丁不变；语法检查结果会随预览显示，不等于目标项目编译或测试通过。
+解释默认只读。修订围绕同一问题，成功后重新预览并等待 apply；失败则原提案仍待审。另一问题需要先完成当前提案，或明确 discard/abort/new，即使两个问题在同一文件。只读调查其他问题可以继续。
 
-如果同一文件还有其他待审补丁，前一个补丁可能会改变它们的位置。系统会更新不重叠补丁的位置；无法重新定位的补丁会显示 `STALE_DRAFT`。这类补丁不能继续 apply 或 revise，可以选择 `discard`，也可以 `abort` 后按当前源码重新扫描。
+apply 前先检查所有文件的完整基线。任一文件变化则不写任何文件，需要按当前源码重新准备并审核。通过后逐文件原子写入；不承诺多文件整体回滚。第二个文件失败时，第一个文件可能已经生效，界面会分别说明已写、未写和不确定项。
 
-补丁应用后会得到以下结果之一：
+语法通过不等于编译或业务测试通过。有可靠扫描绑定时，应用后复扫映射的目标区域，结果以 passed、failed 或 unverified 表达。passed 只表示该区域没有再触发同规则，不证明所有业务行为正确；编译和测试当前未自动执行，明确显示未验证。复扫失败也不会撤销已经批准的源码修改。
 
-- `RESOLVED`：修改后的位置不再触发同一条规则。
-- `STILL_PRESENT`：修改后的位置仍然触发该规则。
-- `UNVERIFIED`：扫描器不可用，或者缺少可靠的补丁应用记录，无法确认补丁仍对应原 finding。
-
-如果结果是 `STILL_PRESENT` 或 `UNVERIFIED`，已经应用的补丁不会自动回滚。
-
-## 7. 代码解释与普通问答
-
-除了审计，也可以让 AutoPatch-J 解释代码或回答工程问题：
+## 7. 项目问答与长期知识
 
 ```text
 @src/main/java/demo/AppConfig.java 解释这个类的职责
-为什么这里适合使用不可变对象？
+本项目为什么选择不可变配置对象？
+我确认这是长期项目约定，请记入项目笔记
 ```
 
-普通问答和代码解释会保存完整 SDK 会话，重启后可继续。代码审计、零 finding 复核、补丁解释与修订使用独立历史；各任务可读取本项目长期笔记。需要记住已确认的长期偏好或决定时，可以明确要求 Agent 写入笔记。详见 [会话与 Memory 规格](SPEC.md#7-项目-memory)。
+项目问答、代码取证、扫描、修复和提案解释共享完整 SDK 会话，重启可继续；任务与提案独立保存，不从聊天文本猜审核状态。根 AGENTS 和源码祖先 AGENTS 作为正式规范读取，明确引用的其他规则按需阅读。
+
+长期笔记保留用户明确表达或确认的项目知识；当前补丁的临时要求另绑定任务，不从一次修订或 AI 自己的判断自动提炼永久规则。有实质冲突时先说明并澄清。详见 [项目 Memory](SPEC.md#7-项目-memory)。
 
 ## 8. CLI 命令
 
@@ -162,8 +161,8 @@ Agent 会为当前 finding 准备候选补丁。CLI 展示目标文件、diff、
 | `/status` | 查看项目状态和运行诊断 |
 | `/scanner` | 查看扫描器状态 |
 | `/reindex` | 重建 Java 符号索引 |
-| `/reset` | 重置扫描、索引与审核工作台；保留会话、笔记、导出和终端历史 |
-| `/new` | 归档当前普通会话、开启空会话，清理待审草案并保留笔记 |
+| `/reset` | 重置任务与索引并关闭运行时；保留扫描证据、锁、会话、笔记、导出和终端历史 |
+| `/new` | 归档当前项目会话、开启空会话，清理待审草案并保留笔记 |
 | `/memory ...` | 查看和管理项目级 Memory |
 | `/help` | 显示命令和交互关键字 |
 | `/quit` | 关闭模型客户端及运行资源后退出 |
@@ -175,10 +174,10 @@ Agent 会为当前 finding 准备候选补丁。CLI 展示目标文件、diff、
 | `/memory status`、`list` | 读取当前项目笔记文件列表 |
 | `/memory show [path]` | 查看笔记内容，默认 MEMORY.md |
 | `/memory forget <path>` | 删除笔记文件；MEMORY.md 受保护，使用明确自然语言修订或 clear |
-| `/memory clear --confirm` | 清空项目笔记，保留普通会话、导出和终端历史 |
+| `/memory clear --confirm` | 清空项目笔记，保留项目会话、导出和终端历史 |
 | `/memory export` | 创建现有笔记的 JSON 导出，不覆盖旧文件 |
 
-普通会话保存在 `.autopatch-j/conversations.sqlite3`，长期笔记保存在 `.autopatch-j/memory.sqlite3`。删除笔记不会擦除普通会话中的旧内容；如需开始独立对话，使用 `/new`。导出仅含 notebook 文件，不是完整对话或 RAW 审计记录。
+项目会话保存在 `.autopatch-j/conversations.sqlite3`，长期笔记保存在 `.autopatch-j/memory.sqlite3`。删除笔记不会擦除项目会话中的旧内容；如需开始独立对话，使用 `/new`。导出仅含 notebook 文件，不是完整对话或 RAW 审计记录。
 
 旧 memory.db、memory_summary.md 不再作为输入，也不会自动迁移或删除；如有需要可自行备份查看。项目不再生成 Markdown 审阅投影，也没有后台 Memory 提取任务。
 
@@ -204,15 +203,21 @@ AutoPatch-J 不读取 `.env`。请把变量设置到启动 CLI 的 shell 或系�
 
 先执行 `/scanner` 查看状态，再用 `/init` 检查 managed Semgrep runtime。Semgrep 返回的数据缺少必要字段、包含错误或 finding 位置无效时，AutoPatch-J 会中止本次扫描，不会把结果当作零 finding。
 
-### 当前补丁显示 `STALE_DRAFT`
+### 提示源码基线已变化
 
-这表示当前源码已经无法和补丁保存的位置可靠对应，或上次应用的最终审核状态未能保存。选择 `discard` 丢弃当前项，或者 `abort` 后重新扫描；不要继续应用这份草案。
+当前文件或真实路径与已审提案不同，完整预检失败时没有文件写入。请重新读取、准备提案，再审核。不会自动重定位旧草案。
 
-### 提示“源码已写入，但审核状态未保存”
+### 提示部分写入、applying 或状态未保存
 
-源码修改已经生效，请先核对文件。程序保留了失效草案，重启后也会阻止重复应用；选择 `discard` 或 `abort` 后重新扫描。不会自动回滚、重试 apply 或继续复扫。若连写入前的阻断状态也无法保存，则不会写源码。
+先核对界面中的逐文件写入记录和当前 bytes 对照。已经写入的源码不会自动回滚；applying/interrupted 状态禁止再次 apply。确认实际文件后，用 abort 或 /new 明确结束，再按现状提出下一项修复。
 
-### 笔记或普通会话存储不可用
+写入前的 applying 状态无法保存时不写源码；写后保存失败会明确报告修改已生效、状态未保存，不继续复扫或自动恢复。
+
+### 修复状态文件损坏
+
+程序会明确报错，保留原文件，不当作空闲或自动重建。若在交互输入前读取状态失败，程序报告一次并关闭资源后退出，避免反复报错。请先备份并核查 `.autopatch-j/repair.json` 及目标源码，确认写入事实后再处理损坏状态。
+
+### 笔记或项目会话存储不可用
 
 存储异常会明确提示。笔记加载失败时，主任务可继续，但本轮不能据此判断“没有项目笔记”；普通回答已经生成而保存失败时，回答仍显示，并提示会话未保存。并发冲突不会覆盖其他进程的修改。
 
@@ -220,7 +225,7 @@ AutoPatch-J 不读取 `.env`。请把变量设置到启动 CLI 的 shell 或系�
 
 ### 模型响应不完整或请求达到上限
 
-异常 finish reason 或缺少流结束标记会使本轮失败，不会执行该响应工具或提交未完成草案。额度或循环限制产生的有效草案仍可进入人工审核；界面会区分任务受限和完整完成。必要上下文过大时缩小范围，或使用 `/new` 开始新普通会话。
+异常 finish reason 或缺少流结束标记会使本轮失败，不会执行该响应工具或提交未完成草案。额度或循环限制产生的有效完整提案仍可进入人工审核；界面会区分任务受限和完整完成。必要上下文过大时缩小范围，或使用 `/new` 开始新项目会话。
 
 ## 10. 开发与测试
 

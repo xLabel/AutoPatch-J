@@ -1,26 +1,23 @@
 # Python 编码规范
 
-AutoPatch-J 的日常 Python 开发、修改、审查和重构遵循 [Google Python Style Guide 原文](reference/google/python/pyguide.md)。本页维护阅读入口、项目执行方式与明确例外，不另写一份删减版或译文。需求与设计取舍见[工程指南](ENGINEERING.md)，产品行为见 [SPEC](SPEC.md)。
+AutoPatch-J 的日常 Python 开发、修改、审查和重构遵循 [Google Python Style Guide 原文](reference/GOOGLE_PYTHON_STYLE.md)。本页维护阅读入口、项目执行方式与明确例外，不另写一份删减版或译文。需求与设计取舍见[工程指南](ENGINEERING.md)，产品行为见 [SPEC](SPEC.md)。
 
 ## 1. 依据与适用方式
 
 采用 Google 官方发布的规范，保留每条规则的条件、例外及建议强度。原文的“建议”“考虑”不提升为无条件限制，工具的实现能力也不能反过来定义规范。用户已确认的产品行为与授权边界仍按 [AGENTS](../AGENTS.md) 执行；发现冲突时调查依据，不为消除告警改变业务语义。
 
-| 项目 | 固定依据 |
+| 项目 | 执行入口 |
 |---|---|
-| 上游 | [google/styleguide](https://github.com/google/styleguide/tree/572c673d9058242c049fbc8248b17029726c7afa) |
-| 提交 | `572c673d9058242c049fbc8248b17029726c7afa` |
-| 获取日期 | 2026-10-28 |
-| 官方配置 | [根 .pylintrc](../.pylintrc)，原文件名为 `pylintrc`，内容不改写 |
+| 官方配置 | [根 .pylintrc](../.pylintrc)，内容与固定上游版本一致 |
 | 配置参数 | 排版、类型检查和开发依赖在 [pyproject.toml](../pyproject.toml)；Pylint 补充参数见本页命令 |
 
-原件、许可和逐字节校验值见[来源说明](reference/google/python/NOTICE.md)。第三方原文及配置不承接本项目规则改写；升级须审查上游差异、许可、引用与工具适配，并更新固定提交和哈希，不在检查时自动下载最新版。
+固定上游版本、获取日期、本地名称映射、许可及原始与适配后哈希统一见[来源说明](reference/README.md)。本地指南仅适配一处附件链接，规范正文不改写或翻译；第三方资料不承接本项目规则改写。升级须审查上游差异、许可、引用与工具适配，并在来源说明更新固定提交和哈希，不在检查时自动下载最新版。
 
 本项目执行约定：
 
 - 保持 Python 3.14+。原文较新语法、工具或 Google 内部构建示例按本项目能力采用等价方式，不据此提高运行版本或增加内部工具依赖。
 - 自有注释和 docstring 用中文清楚表达，技术标识保留英文；按适用条件使用 `Args`、`Returns`、`Yields`、`Raises`、`Attributes`。不机械补充签名已充分表达的重复说明。
-- 明确豁免原文 [§3.8.2](reference/google/python/pyguide.md#s3.8.2-comments-in-modules) 对自有源码版权和许可头的要求；本约定不为项目选择许可证。第三方许可及已有声明须保留。
+- 明确豁免原文 [§3.8.2](reference/GOOGLE_PYTHON_STYLE.md#s3.8.2-comments-in-modules) 对自有源码版权和许可头的要求；本约定不为项目选择许可证。第三方许可及已有声明须保留。
 - function tool 的对外名称遵守产品契约中的 `FunctionToolName`，与 Python 函数或变量命名分别判断，不能为统一命名改变工具 schema。
 
 ## 2. 按任务阅读原文
@@ -29,14 +26,14 @@ AutoPatch-J 的日常 Python 开发、修改、审查和重构遵循 [Google Pyt
 
 | 本次涉及 | 阅读入口 | 在本项目重点核对 |
 |---|---|---|
-| 工具检查、抑制 | [§2.1 Lint](reference/google/python/pyguide.md#s2.1-lint) | 告警依据、局部抑制原因，不能通过全局关闭掩盖问题 |
-| 导入与模块边界 | [§2.2](reference/google/python/pyguide.md#s2.2-imports)、[§2.3](reference/google/python/pyguide.md#s2.3-packages)、[§3.13](reference/google/python/pyguide.md#s3.13-imports-formatting) | 导入对象、完整路径、分组顺序与原文例外 |
-| 异常、可变状态、默认参数 | [§2.4](reference/google/python/pyguide.md#s2.4-exceptions)、[§2.5](reference/google/python/pyguide.md#s2.5-global-state)、[§2.12](reference/google/python/pyguide.md#s2.12-default-argument-values) | 保留真实失败和状态所有权，不共享意外可变默认值 |
-| 文件、连接及后台任务 | [§3.11](reference/google/python/pyguide.md#s3.11-files-sockets-closeables)、[§2.18](reference/google/python/pyguide.md#s2.18-threading) | SQLite、LLM client、文件与 worker 的创建、移交和关闭责任 |
-| 命名、注释与 docstring | [§3.16](reference/google/python/pyguide.md#s3.16-naming)、[§3.8](reference/google/python/pyguide.md#s3.8-comments-and-docstrings) | 名称在调用处的语义、必要副作用和使用条件，不复述代码 |
-| 排版、字符串与日志 | [§3.2](reference/google/python/pyguide.md#s3.2-line-length)、[§3.10](reference/google/python/pyguide.md#s3.10-strings)、[§3.10.1](reference/google/python/pyguide.md#s3.10.1-logging) | Black 结果之外的行长例外、字符串构造和日志调用 |
-| 入口、函数组织 | [§3.17](reference/google/python/pyguide.md#s3.17-main)、[§3.18](reference/google/python/pyguide.md#s3.18-function-length) | 导入时副作用、可测试职责；约 40 行是考虑拆分的提示，不是硬上限 |
-| 类型与公开接口 | [§2.21](reference/google/python/pyguide.md#s2.21-typed-code)、[§3.19](reference/google/python/pyguide.md#s3.19-type-annotations) | 新增或修改公开 API 的标注与类型检查，以及协议、外部 JSON 和已有抑制的边界 |
+| 工具检查、抑制 | [§2.1 Lint](reference/GOOGLE_PYTHON_STYLE.md#s2.1-lint) | 告警依据、局部抑制原因，不能通过全局关闭掩盖问题 |
+| 导入与模块边界 | [§2.2](reference/GOOGLE_PYTHON_STYLE.md#s2.2-imports)、[§2.3](reference/GOOGLE_PYTHON_STYLE.md#s2.3-packages)、[§3.13](reference/GOOGLE_PYTHON_STYLE.md#s3.13-imports-formatting) | 导入对象、完整路径、分组顺序与原文例外 |
+| 异常、可变状态、默认参数 | [§2.4](reference/GOOGLE_PYTHON_STYLE.md#s2.4-exceptions)、[§2.5](reference/GOOGLE_PYTHON_STYLE.md#s2.5-global-state)、[§2.12](reference/GOOGLE_PYTHON_STYLE.md#s2.12-default-argument-values) | 保留真实失败和状态所有权，不共享意外可变默认值 |
+| 文件、连接及后台任务 | [§3.11](reference/GOOGLE_PYTHON_STYLE.md#s3.11-files-sockets-closeables)、[§2.18](reference/GOOGLE_PYTHON_STYLE.md#s2.18-threading) | SQLite、LLM client、文件与 worker 的创建、移交和关闭责任 |
+| 命名、注释与 docstring | [§3.16](reference/GOOGLE_PYTHON_STYLE.md#s3.16-naming)、[§3.8](reference/GOOGLE_PYTHON_STYLE.md#s3.8-comments-and-docstrings) | 名称在调用处的语义、必要副作用和使用条件，不复述代码 |
+| 排版、字符串与日志 | [§3.2](reference/GOOGLE_PYTHON_STYLE.md#s3.2-line-length)、[§3.10](reference/GOOGLE_PYTHON_STYLE.md#s3.10-strings)、[§3.10.1](reference/GOOGLE_PYTHON_STYLE.md#s3.10.1-logging) | Black 结果之外的行长例外、字符串构造和日志调用 |
+| 入口、函数组织 | [§3.17](reference/GOOGLE_PYTHON_STYLE.md#s3.17-main)、[§3.18](reference/GOOGLE_PYTHON_STYLE.md#s3.18-function-length) | 导入时副作用、可测试职责；约 40 行是考虑拆分的提示，不是硬上限 |
+| 类型与公开接口 | [§2.21](reference/GOOGLE_PYTHON_STYLE.md#s2.21-typed-code)、[§3.19](reference/GOOGLE_PYTHON_STYLE.md#s3.19-type-annotations) | 新增或修改公开 API 的标注与类型检查，以及协议、外部 JSON 和已有抑制的边界 |
 
 docstring 按公开 API、非平凡规模或非显然逻辑等原文条件判断；同时核对测试模块、重写方法等适用例外，不要求为每个私有函数机械补文档或注解。类型标注不能代替外部输入的运行时校验。
 

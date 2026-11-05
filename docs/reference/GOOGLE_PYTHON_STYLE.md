@@ -22,7 +22,7 @@ Python is the main dynamic language used at Google. This style guide is a list
 of *dos and don'ts* for Python programs.
 
 To help you format code correctly, we've created a
-[settings file for Vim](google_python_style.vim). For Emacs, the default
+[settings file for Vim](https://github.com/google/styleguide/blob/572c673d9058242c049fbc8248b17029726c7afa/google_python_style.vim). For Emacs, the default
 settings should be fine.
 
 Many teams use the [Black](https://github.com/psf/black) or
