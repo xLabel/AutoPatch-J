@@ -231,6 +231,7 @@ class SymbolIndex:
             ) from exc
         entries = []
         stale = set()
+        source_hashes: dict[pathlib.Path, str] = {}
         for row in rows:
             entry = symbols.SymbolIndexEntry(
                 *row[:-1], source_has_errors=bool(row[-1])
@@ -240,12 +241,13 @@ class SymbolIndex:
             )
             if not path.exists():
                 raise FileNotFoundError(entry.path)
-            if (
-                entry.source_sha256
-                and hashlib.sha256(path.read_bytes()).hexdigest()
-                != entry.source_sha256
-            ):
-                stale.add(entry.path)
+            if entry.source_sha256:
+                if path not in source_hashes:
+                    source_hashes[path] = hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
+                if source_hashes[path] != entry.source_sha256:
+                    stale.add(entry.path)
             entries.append(entry)
         return symbols.SymbolSearchResult(
             entries,

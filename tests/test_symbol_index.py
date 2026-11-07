@@ -324,3 +324,46 @@ def test_unbuilt_index_is_distinct_from_successful_empty_build(tmp_path):
     restarted = symbol_index.SymbolIndex(tmp_path)
     assert restarted.get_stats() == {"total": 0}
     assert restarted.search("A").total == 0
+
+
+def test_search_hashes_each_real_file_once_per_page(tmp_path, monkeypatch):
+    path = tmp_path / "A.java"
+    path.write_bytes(
+        "\n".join(f"class Item{i} {{}}" for i in range(25)).encode()
+    )
+    index = symbol_index.SymbolIndex(tmp_path)
+    index.rebuild_index()
+    reads = []
+    original = pathlib.Path.read_bytes
+
+    def read(source):
+        if source == path:
+            reads.append(source)
+        return original(source)
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", read)
+    first = index.search("Item", kinds=["class"])
+    assert first.total == 25 and first.next_offset == 20
+    assert [item.name for item in first.entries] == [
+        f"Item{i}" for i in range(20)
+    ]
+    assert not first.stale_paths and len(reads) == 1
+    second = index.search("Item", first.next_offset, ["class"])
+    assert second.total == 25 and second.next_offset is None
+    assert [item.name for item in second.entries] == [
+        f"Item{i}" for i in range(20, 25)
+    ]
+    assert len(reads) == 2
+    path.write_bytes(b"class Changed {}")
+    changed = index.search("Item", kinds=["class"])
+    assert len(changed.entries) == 20 and changed.stale_paths == ("A.java",)
+    assert len(reads) == 3
+
+    def failed(source):
+        if source == path:
+            raise PermissionError("source unreadable")
+        return original(source)
+
+    monkeypatch.setattr(pathlib.Path, "read_bytes", failed)
+    with pytest.raises(PermissionError, match="source unreadable"):
+        index.search("Item", kinds=["class"])

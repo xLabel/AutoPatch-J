@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from collections.abc import Awaitable
 import re
@@ -11,6 +12,7 @@ from typing import override
 
 from prompt_toolkit import completion
 from prompt_toolkit import document as prompt_toolkit_document
+from prompt_toolkit.application import current
 
 from autopatch_j.cli import commands
 from autopatch_j.core.project import symbols
@@ -21,7 +23,7 @@ class AutoPatchCompleter(completion.Completer):
 
     职责边界：
     1. 输入 '/' 时补全系统命令。
-    2. 输入 '@' 时基于本地索引补全文件、目录、类或方法。
+    2. 输入 '@' 时基于本地索引补全文件、目录。
     3. 只补全输入线索，不选择任务或授权写入范围。
     """
 
@@ -58,14 +60,41 @@ class AutoPatchCompleter(completion.Completer):
         complete_event: completion.CompleteEvent,
     ) -> AsyncGenerator[completion.Completion]:
         """隔离后台补全故障，不结束原生 prompt 或丢弃用户输入。"""
-        try:
-            for candidate in self.get_completions(document, complete_event):
+        if document.text_before_cursor.startswith("/"):
+            for candidate in self._command_completions(document):
                 yield candidate
+            return
+        mention = self._path_mention(document, complete_event)
+        if not mention:
+            return
+        # 原生 buffer 丢弃过期候选；故障标记和回调也必须绑定原输入会话。
+        app = current.get_app_or_none()
+        buffer = app.current_buffer if app is not None else None
+        state = buffer.complete_state if buffer is not None else None
+
+        def is_current() -> bool:
+            return app is None or (
+                app.is_running
+                and buffer is not None
+                and buffer.document == document
+                and buffer.complete_state is state
+            )
+
+        try:
+            results = await asyncio.to_thread(self.search_func, mention[1:])
         except Exception as exc:  # pylint: disable=broad-exception-caught
+            if not is_current():
+                return
             self.path_completion_failed = True
             if self.on_error is None:
                 raise
             await self.on_error("路径补全", exc)
+            return
+        if not is_current():
+            return
+        self.path_completion_failed = False
+        for candidate in self._path_completions(mention, results):
+            yield candidate
 
     @override
     def get_completions(
@@ -74,6 +103,19 @@ class AutoPatchCompleter(completion.Completer):
         complete_event: completion.CompleteEvent,
     ) -> Iterable[completion.Completion]:
         """按游标返回已注册命令或文件、目录候选；不把类方法作为范围入口。"""
+        if document.text_before_cursor.startswith("/"):
+            yield from self._command_completions(document)
+            return
+        mention = self._path_mention(document, complete_event)
+        if mention:
+            results = self.search_func(mention[1:])
+            self.path_completion_failed = False
+            yield from self._path_completions(mention, results)
+
+    def _command_completions(
+        self,
+        document: prompt_toolkit_document.Document,
+    ) -> Iterable[completion.Completion]:
         text = document.text_before_cursor
 
         # --- 场景 A: 系统指令补全 (/) ---
@@ -110,29 +152,29 @@ class AutoPatchCompleter(completion.Completer):
                         )
             return
 
-        # --- 场景 B: 代码上下文补全 (@) ---
-        mention_match = document.get_word_before_cursor(
-            pattern=self.mention_pattern
-        )
-        if mention_match.startswith("@"):
-            if (
-                self.path_completion_failed
-                and not complete_event.completion_requested
-            ):
-                return
-            query = mention_match[1:]
-            results = self.search_func(query)
-            self.path_completion_failed = False
+    def _path_mention(
+        self,
+        document: prompt_toolkit_document.Document,
+        complete_event: completion.CompleteEvent,
+    ) -> str:
+        mention = document.get_word_before_cursor(pattern=self.mention_pattern)
+        if not mention.startswith("@") or (
+            self.path_completion_failed
+            and not complete_event.completion_requested
+        ):
+            return ""
+        return mention
 
-            for entry in results:
-                if entry.kind not in {"file", "dir"}:
-                    continue
-                display_meta = f"{entry.kind} | {entry.path}"
-                display_text = f"{entry.name}"
-
+    @staticmethod
+    def _path_completions(
+        mention: str,
+        results: list[symbols.SymbolIndexEntry],
+    ) -> Iterable[completion.Completion]:
+        for entry in results:
+            if entry.kind in {"file", "dir"}:
                 yield completion.Completion(
                     entry.path,
-                    start_position=-len(mention_match) + 1,
-                    display=display_text,
-                    display_meta=display_meta,
+                    start_position=-len(mention) + 1,
+                    display=entry.name,
+                    display_meta=f"{entry.kind} | {entry.path}",
                 )
