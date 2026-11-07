@@ -1,12 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1160" role="img" aria-labelledby="title description">
-  <title id="title">AutoPatch-J CI/CD 工作流</title>
-  <desc id="description">业务代码推送后，AutoPatch-J 作为现有 CI/CD 流水线中的插件生成并验证修复补丁，创建 MR 或 PR 交由用户审核。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" role="img" aria-labelledby="title description">
+  <title id="title">AutoPatch-J 持续代码修复愿景</title>
+  <desc id="description">演进规划：代码变更通过现有 CI/CD 触发 AutoPatch-J，Agent 结合项目规范与长期项目记忆，完成代码取证、缺陷判断、补丁生成和验证，将修复以 MR 或 PR 交付人工评审。验证结果和评审意见用于继续修订；通过语言与扫描工具扩展支持更多工程场景。</desc>
 
   <defs>
     <filter id="rough" x="-4%" y="-4%" width="108%" height="108%">
       <feTurbulence type="fractalNoise" baseFrequency="0.009 0.021" numOctaves="2" seed="17" result="noise"/>
       <feDisplacementMap in="SourceGraphic" in2="noise" scale="2.5" xChannelSelector="R" yChannelSelector="G"/>
     </filter>
+    <marker id="arrow" viewBox="0 0 16 16" refX="13" refY="8" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M3 2 Q8 5 13 8 Q8 11 3 14" fill="none" stroke="#303338" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <marker id="accent-arrow" viewBox="0 0 16 16" refX="13" refY="8" markerWidth="14" markerHeight="14" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M3 2 Q8 5 13 8 Q8 11 3 14" fill="none" stroke="#13795f" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
   </defs>
 
   <style>
@@ -17,138 +23,105 @@
       font-size: 32px;
       font-weight: 600;
     }
+    .title { font-size: 44px; }
+    .brand { font-size: 46px; }
+    .small { font-size: 27px; }
+    .stage-text { font-size: 28px; }
     .accent-text { fill: #0c684f; }
     .panel {
       fill: #f5f6f7;
-      fill-opacity: 0.68;
       stroke: #303338;
       stroke-width: 2.4;
       stroke-linecap: round;
       stroke-linejoin: round;
       vector-effect: non-scaling-stroke;
     }
-    .label-bg { fill: #f5f6f7; }
-    .tree {
-      fill: none;
-      stroke: #303338;
-      stroke-width: 2.35;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
-    }
-    .accent-tree {
-      fill: none;
-      stroke: #13795f;
-      stroke-width: 3;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
-    }
-    .arrow-line {
+    .core { fill: #edf5f1; stroke: #13795f; stroke-width: 3; }
+    .stage { stroke: #13795f; stroke-width: 2.2; }
+    .line {
       fill: none;
       stroke: #303338;
       stroke-width: 2.6;
       stroke-linecap: round;
       stroke-linejoin: round;
       vector-effect: non-scaling-stroke;
+      marker-end: url(#arrow);
     }
-    .accent-arrow-line {
-      fill: none;
-      stroke: #13795f;
-      stroke-width: 3;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
-    }
-    .arrow-tip {
-      fill: none;
-      stroke: #303338;
-      stroke-width: 2.2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
-    }
-    .accent-arrow-tip {
-      fill: none;
-      stroke: #13795f;
-      stroke-width: 2.5;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      vector-effect: non-scaling-stroke;
-    }
+    .accent-line { stroke: #13795f; stroke-width: 3; marker-end: url(#accent-arrow); }
+    .dashed { stroke-dasharray: 9 9; }
     .rough { filter: url(#rough); }
 
     @media (prefers-color-scheme: dark) {
-      .canvas { fill: #181b20; }
+      .canvas, .panel { fill: #181b20; }
       .text { fill: #f1eee7; }
       .accent-text { fill: #8ce0c7; }
-      .panel { fill: #181b20; stroke: #d9d5cc; }
-      .label-bg { fill: #181b20; }
-      .tree, .arrow-line { stroke: #d9d5cc; }
-      .accent-tree, .accent-arrow-line { stroke: #63c9ac; }
-      .arrow-tip { stroke: #d9d5cc; }
-      .accent-arrow-tip { stroke: #63c9ac; }
+      .panel { stroke: #d9d5cc; }
+      .core { fill: #172c27; stroke: #63c9ac; }
+      .stage { stroke: #63c9ac; }
+      .line { stroke: #d9d5cc; }
+      .accent-line { stroke: #63c9ac; }
+      #arrow path { stroke: #d9d5cc; }
+      #accent-arrow path { stroke: #63c9ac; }
     }
   </style>
 
-  <rect class="canvas" width="1400" height="1160" rx="18"/>
+  <rect class="canvas" width="1600" height="1100" rx="18"/>
+  <text class="text title" x="800" y="80" text-anchor="middle">Agent 驱动的持续代码修复</text>
+  <path class="panel rough" d="M1330 38 Q1429 34 1532 40 L1534 93 Q1431 98 1328 92 Z"/>
+  <text class="text small" x="1430" y="76" text-anchor="middle">演进规划</text>
 
-  <g transform="translate(120 0)">
+  <!-- Project knowledge supports the Agent, independently of pipeline triggers. -->
+  <path class="panel rough" d="M494 185 Q800 178 1107 186 L1110 300 Q799 307 491 299 Z"/>
+  <text class="text" x="800" y="231" text-anchor="middle">项目知识</text>
+  <text class="text" x="800" y="278" text-anchor="middle">项目规范 · 长期项目记忆</text>
+  <path class="line dashed" d="M800 310 Q796 340 800 373"/>
 
-  <!-- Repository event -->
-  <text class="text" x="105" y="58">业务代码 git push</text>
-  <path class="arrow-line" d="M245 78 C238 89 251 101 243 112 C239 118 244 126 244 133"/>
-  <path class="arrow-tip" d="M232 122 C236 128 240 136 244 141 C248 135 253 127 257 121"/>
+  <!-- The existing delivery pipeline is an entry point, not a replacement platform. -->
+  <path class="panel rough" d="M68 421 Q208 415 347 422 L351 665 Q208 672 65 663 Z"/>
+  <text class="text" x="208" y="471" text-anchor="middle">工程入口</text>
+  <text class="text" x="208" y="541" text-anchor="middle">代码变更</text>
+  <text class="text" x="208" y="602" text-anchor="middle">现有 CI/CD</text>
+  <path class="line accent-line" d="M360 550 Q396 545 435 550"/>
+  <text class="text small" x="398" y="525" text-anchor="middle">触发</text>
 
-  <text class="text" x="105" y="170">仓库 push event / webhook</text>
-  <text class="text" x="105" y="205">GitHub Actions: on: push</text>
-  <path class="arrow-line" d="M245 225 C251 236 238 247 246 257 C250 263 245 269 245 275"/>
-  <path class="arrow-tip" d="M233 264 C237 270 241 278 245 283 C249 277 254 269 258 263"/>
+  <!-- AutoPatch-J is the visual center: investigation, judgment, patch and verification. -->
+  <path class="panel core rough" d="M451 387 Q799 378 1148 387 L1154 715 Q800 723 447 714 Z"/>
+  <text class="text brand accent-text" x="800" y="459" text-anchor="middle">AutoPatch-J</text>
 
-  <!-- Existing CI/CD workflow -->
-  <path class="panel rough" d="M84 288 C246 276 413 294 575 284 C710 276 846 296 976 282 C989 421 970 560 985 698 C993 773 970 851 982 920 C764 938 547 911 331 929 C246 936 160 914 78 925 C68 767 91 610 73 454 C68 393 91 337 84 288 Z"/>
-  <rect class="label-bg" x="260" y="258" width="550" height="54" rx="8"/>
-  <text class="text" x="535" y="297" text-anchor="middle">现有 CI/CD Workflow / Runner</text>
+  <path class="panel stage rough" d="M477 525 Q540 522 603 526 L606 599 Q540 604 475 599 Z"/>
+  <text class="text stage-text" x="540" y="572" text-anchor="middle">代码取证</text>
+  <path class="line accent-line" d="M614 563 Q624 560 636 563"/>
 
-  <!-- Pipeline sibling items -->
-  <path class="tree rough" d="M140 340 C133 424 148 507 138 590 C145 676 134 765 141 850"/>
-  <path class="tree rough" d="M140 355 C151 348 163 361 177 355"/>
-  <path class="tree rough" d="M140 402 C151 408 164 396 177 402"/>
-  <path class="tree rough" d="M140 449 C152 443 164 455 177 449"/>
-  <path class="tree rough" d="M140 496 C151 502 165 490 177 496"/>
-  <path class="accent-tree rough" d="M140 543 C152 537 164 549 177 543"/>
-  <path class="tree rough" d="M140 837 C152 843 164 831 177 837"/>
+  <path class="panel stage rough" d="M647 525 Q710 521 773 526 L776 599 Q710 604 645 599 Z"/>
+  <text class="text stage-text" x="710" y="572" text-anchor="middle">缺陷判断</text>
+  <path class="line accent-line" d="M784 563 Q794 566 806 563"/>
 
-  <text class="text" x="190" y="363">Checkout 业务代码</text>
-  <text class="text" x="190" y="410">Build 插件</text>
-  <text class="text" x="190" y="457">Test 插件</text>
-  <text class="text" x="190" y="504">Code Quality / Security 插件</text>
-  <text class="text accent-text" x="190" y="551">AutoPatch-J 插件  ← 直接加入现有流水线</text>
+  <path class="panel stage rough" d="M817 525 Q880 522 943 526 L946 599 Q880 604 815 599 Z"/>
+  <text class="text stage-text" x="880" y="572" text-anchor="middle">补丁生成</text>
+  <path class="line accent-line" d="M954 563 Q964 560 976 563"/>
 
-  <!-- AutoPatch-J result branches -->
-  <path class="accent-tree rough" d="M245 575 C237 595 251 615 243 635 C238 651 250 668 245 683"/>
-  <path class="tree rough" d="M245 603 C257 596 271 610 284 603"/>
-  <path class="accent-tree rough" d="M245 658 C258 665 271 651 284 658"/>
+  <path class="panel stage rough" d="M987 525 Q1050 521 1113 526 L1116 599 Q1050 604 985 599 Z"/>
+  <text class="text stage-text" x="1050" y="572" text-anchor="middle">补丁验证</text>
 
-  <text class="text" x="295" y="611">未发现问题 → 结束当前步骤，流水线继续</text>
-  <text class="text accent-text" x="295" y="666">发现问题</text>
-  <text class="text accent-text" x="350" y="717">→ 生成并验证修复补丁</text>
-  <text class="text accent-text" x="350" y="761">→ 创建并 push 修复分支</text>
-  <text class="text accent-text" x="350" y="805">→ 创建 MR / PR</text>
+  <path class="line accent-line" d="M1050 609 L1050 638 Q1051 660 1027 660 L563 660 Q540 660 540 637 L540 609"/>
+  <text class="text small accent-text" x="800" y="643" text-anchor="middle">验证反馈 · 继续修订</text>
 
-  <text class="text" x="190" y="845">其他现有插件与步骤</text>
+  <!-- Repairs are delivered for human review; no unattended merge is implied. -->
+  <path class="line accent-line" d="M1163 550 Q1199 545 1234 550"/>
+  <path class="panel rough" d="M1248 421 Q1389 415 1530 422 L1534 665 Q1389 672 1245 663 Z"/>
+  <text class="text" x="1390" y="471" text-anchor="middle">协作交付</text>
+  <text class="text accent-text" x="1390" y="530" text-anchor="middle">MR / PR</text>
+  <text class="text" x="1390" y="581" text-anchor="middle">人工评审</text>
+  <text class="text small" x="1390" y="632" text-anchor="middle">合并 / 修订</text>
 
-  <!-- Review -->
-  <path class="accent-arrow-line" d="M530 932 C522 943 537 953 528 963 C524 969 530 976 530 983"/>
-  <path class="accent-arrow-tip" d="M517 971 C521 977 526 985 530 990 C534 984 539 976 543 970"/>
-  <text class="text" x="530" y="1013" text-anchor="middle">用户审核 MR / PR</text>
-  <path class="tree rough" d="M530 1032 C537 1044 523 1056 531 1067 C535 1072 527 1075 530 1077 C489 1070 448 1083 405 1076"/>
-  <path class="tree rough" d="M530 1077 C571 1084 613 1069 655 1076"/>
-  <path class="arrow-line" d="M405 1076 C398 1085 411 1095 403 1104 C401 1109 405 1113 405 1116"/>
-  <path class="arrow-tip" d="M393 1096 C397 1102 401 1110 405 1115 C409 1109 414 1101 418 1095"/>
-  <path class="arrow-line" d="M655 1076 C662 1085 649 1095 657 1104 C659 1109 655 1113 655 1116"/>
-  <path class="arrow-tip" d="M643 1096 C647 1102 651 1110 655 1115 C659 1109 664 1101 668 1095"/>
-  <text class="text" x="405" y="1140" text-anchor="middle">合并</text>
-  <text class="text" x="655" y="1140" text-anchor="middle">退回</text>
-  </g>
+  <path class="line accent-line dashed" d="M1390 678 L1390 773 Q1391 804 1359 804 L1071 804 Q1040 805 1040 774 L1040 725"/>
+  <text class="text small accent-text" x="1230" y="783" text-anchor="middle">评审反馈</text>
+
+  <!-- Language and scanner integrations extend the same repair capabilities. -->
+  <path class="panel rough" d="M368 901 Q800 893 1230 902 L1234 1045 Q800 1052 365 1044 Z"/>
+  <text class="text" x="800" y="947" text-anchor="middle">语言与工具扩展</text>
+  <text class="text" x="580" y="1008" text-anchor="middle">多语言源码</text>
+  <text class="text" x="1010" y="1008" text-anchor="middle">多种静态分析工具</text>
+  <path class="line dashed" d="M560 891 Q554 817 560 725"/>
+  <text class="text small" x="580" y="817">按需接入</text>
 </svg>
