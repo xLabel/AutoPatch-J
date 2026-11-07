@@ -21,15 +21,26 @@ class Record(pydantic.BaseModel):
 class Replacement(Record):
     """非空匹配原文与允许为空的替换文本。"""
 
-    old_text: pydantic.StrictStr = pydantic.Field(min_length=1)
-    new_text: pydantic.StrictStr
+    old_text: pydantic.StrictStr = pydantic.Field(
+        min_length=1,
+        description="非空的精确原文，须在前一项替换的结果中恰好匹配一次。",
+    )
+    new_text: pydantic.StrictStr = pydantic.Field(
+        description="替换文本；空字符串表示删除匹配内容，不删除文件。"
+    )
 
 
 class FileEdit(Record):
     """一个已有文件的有序替换，前项输出是后项的匹配输入。"""
 
-    path: pydantic.StrictStr = pydantic.Field(min_length=1)
-    replacements: tuple[Replacement, ...] = pydantic.Field(min_length=1)
+    path: pydantic.StrictStr = pydantic.Field(
+        min_length=1,
+        description="已有且获准写入文件的仓库相对路径，不带 @；每个文件只出现一次。",
+    )
+    replacements: tuple[Replacement, ...] = pydantic.Field(
+        min_length=1,
+        description="非空的有序替换；每项在前一项输出上匹配，不能并行匹配原始文件。",
+    )
 
 
 class Check(Record):

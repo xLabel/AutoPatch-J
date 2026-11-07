@@ -102,7 +102,7 @@ class ProjectTools:
 
         Args:
             goal: 当前用户的具体修复目标，不能替换另一项待审任务。
-            write_paths: 需要修改的确切已有文件，读取权限与此独立。
+            write_paths: 需要修改的确切已有文件，仓库相对路径，不带 @；空列表只建立调查任务，读取权限独立。
         """
         self.context.state = self.context.repair.start(
             self.context.state, goal, tuple(write_paths)
@@ -111,7 +111,11 @@ class ProjectTools:
 
     @correction
     def request_write_scope(self, paths: list[Text]) -> str:
-        """请求增加确切写文件；必须等用户 allow，不能把 @ 阅读理解成授权。"""
+        """请求增加确切写文件；必须等用户 allow，不能把 @ 阅读理解成授权。
+
+        Args:
+            paths: 非空的已有文件列表，使用仓库相对路径，不带 @；不接受目录。
+        """
         self.context.state = self.context.repair.request_scope(
             self.context.state, tuple(paths)
         )
@@ -141,7 +145,11 @@ class ProjectTools:
         )
 
     async def scan_java(self, paths: list[Text]) -> ScanObservation:
-        """扫描明确的 Java 文件或目录；失败不是零 finding，零 finding 也不能否定用户缺陷。"""
+        """扫描明确的 Java 文件或目录；失败不是零 finding，零 finding 也不能否定用户缺陷。
+
+        Args:
+            paths: 非空的仓库相对 Java 文件或目录列表，不带 @；用 . 指定项目根目录。
+        """
         try:
             record = await asyncio.to_thread(
                 self.context.evidence.scan, tuple(paths)
@@ -157,13 +165,22 @@ class ProjectTools:
     def get_scan_findings(
         self, scan_id: Text, offset: Offset = 0
     ) -> ScanObservation:
-        """按页读取已有扫描候选，不重新扫描。"""
+        """按页读取已有扫描候选，不重新扫描。
+
+        Args:
+            scan_id: scan_java 返回的完整扫描 ID，32 位小写十六进制。
+            offset: 从 0 开始的候选偏移，默认 0；续页使用返回的 next_offset，每页最多 20 项。
+        """
         record = self.context.evidence.load(scan_id)
         return self._scan_page(record, offset)
 
     @correction
     def get_finding_detail(self, finding_handle: Text) -> FindingDetail:
-        """读取原始 finding 绑定及当前源码；源码已变时证据明确标为过期。"""
+        """读取原始 finding 绑定及当前源码；源码已变时证据明确标为过期。
+
+        Args:
+            finding_handle: 扫描返回的完整 handle，格式为 <scan_id>:F<正整数>；不是规则 ID 或指纹。
+        """
         target, finding = self.context.evidence.finding(finding_handle)
         path = repo_path.resolve_source_path(
             self.context.repo_root, finding.path
@@ -183,7 +200,12 @@ class ProjectTools:
 
     @correction
     def read_source_context(self, path: Text, line: Line = 1) -> ReadEvidence:
-        """读取目标行前 20 后 80 行及适用 AGENTS；不扩大写权限。"""
+        """读取目标行前 20 后 80 行及适用 AGENTS；不扩大写权限。
+
+        Args:
+            path: 已有文件的仓库相对路径，不带 @；可读取 Java 及规范等文本文件。
+            line: 从 1 开始的目标行号，默认 1；续读时根据实际返回范围选取下一目标行。
+        """
         return ReadEvidence(
             self.context.source_reader.read(path, max(1, line - 20), line + 80),
             self.context.source_reader.read_guidance(path),
@@ -191,7 +213,12 @@ class ProjectTools:
 
     @correction
     def read_source_block(self, path: Text, line: Line) -> ReadEvidence:
-        """读取所在 Java 方法、构造器或类型；返回原生识别范围及源码语法诊断。"""
+        """读取所在 Java 方法、构造器或类型；返回原生识别范围及源码语法诊断。
+
+        Args:
+            path: 已有 Java 文件的仓库相对路径，不带 @；无需 Java 编译通过。
+            line: 从 1 开始的目标行号，用于定位包含该行的语法块。
+        """
         return ReadEvidence(
             self.context.source_reader.read(path, line, mode="block"),
             self.context.source_reader.read_guidance(path),
@@ -199,7 +226,11 @@ class ProjectTools:
 
     @correction
     def read_source_file(self, path: Text) -> ReadEvidence:
-        """读取文件，截断时按返回行号继续 read_source_context；规范按引用渐进阅读。"""
+        """读取文件，截断时按返回行号继续 read_source_context；规范按引用渐进阅读。
+
+        Args:
+            path: 已有文本文件的仓库相对路径，不带 @；最多 300 行或 30000 字符，单个物理行完整保留。
+        """
         return ReadEvidence(
             self.context.source_reader.read(path, mode="file"),
             self.context.source_reader.read_guidance(path),
@@ -209,7 +240,15 @@ class ProjectTools:
     def search_symbols(
         self, query: Text, offset: Offset = 0, kinds: list[Text] | None = None
     ) -> symbols.SymbolSearchResult:
-        """每页最多 20 个名称定位；按 next_offset 续读，旧索引不证明当前引用。"""
+        """每页最多 20 个名称定位；按 next_offset 续读，旧索引不证明当前引用。
+
+        Args:
+            query: 名称的字面子串，忽略大小写；空字符串匹配所有名称，不支持通配或正则。
+            offset: 从 0 开始的结果偏移，默认 0；续页使用返回的 next_offset。
+            kinds: 默认 null 查询所有种类；[] 不匹配任何项。
+                已知种类为 file、dir、class、interface、enum、record、
+                annotation、constructor、method。
+        """
         return self.context.symbol_index.search(query, offset, kinds)
 
     @correction
@@ -220,6 +259,11 @@ class ProjectTools:
 
         按 next_offset 续读，核对 complete/warnings/excerpt_truncated，
         再读取当前源码确认接收者和调用约定；结果不是已解析调用图。
+
+        Args:
+            name: 区分大小写的简单名称，不传限定名、括号、通配或正则；Disk 查询 new Disk() 和 Disk::new。
+            paths: 非空的仓库相对 Java 文件或目录列表，不带 @；用 . 指定项目根目录。
+            offset: 从 0 开始的结果偏移，默认 0；续页使用返回的 next_offset。
         """
         return java_references.search(
             self.context.repo_root,
@@ -257,9 +301,11 @@ class ProjectTools:
         """新建或修订当前问题的完整提案；替换按文件内顺序匹配，不写源码。
 
         Args:
-            edits: 每个文件只能出现一次，每项 old_text 非空且在前一项结果中恰好匹配一次。
+            edits: 当前问题的全部文件修改，每个文件只能出现一次；
+                path 为已有文件的仓库相对路径，不带 @，replacements 按数组顺序匹配。
             rationale: 缺陷依据、完整修复理由和未验证事项；辅助文件属于同一项修复。
-            finding_handle: 扫描证据句柄；非扫描发现可省略，修订继承已有绑定。
+            finding_handle: 扫描返回的完整 <scan_id>:F<正整数> 句柄；
+                默认 null，非扫描发现可省略，修订继承已有绑定。
         """
         current = self.context.state
         target = (
@@ -281,7 +327,14 @@ class ProjectTools:
         reason: Text,
         finding_handle: Text | None = None,
     ) -> str:
-        """明确登记不修改、证据不足或执行失败；不能以无补丁推导失败。"""
+        """明确登记不修改、证据不足或执行失败；不能以无补丁推导失败。
+
+        Args:
+            outcome: no_change 表示无需修改，insufficient_evidence 表示证据或要求未明确，
+                execution_failure 表示主动登记的执行失败结论。
+            reason: 非空的具体依据或失败原因；真实运行故障由程序停止本轮。
+            finding_handle: 扫描返回的完整 <scan_id>:F<正整数> 句柄；默认 null，非扫描发现可省略。
+        """
         if finding_handle:
             self.context.evidence.finding(finding_handle)
         current = self.context.state
