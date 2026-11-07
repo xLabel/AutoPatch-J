@@ -11,6 +11,7 @@ import pathlib
 from autopatch_j.core import finding as core_finding
 from autopatch_j.core.project import repo_path
 from autopatch_j.core.project import source_reader
+from autopatch_j.core.project import source_text
 from autopatch_j.scanners import models
 
 _FINGERPRINT_VERSION = b"autopatch-j-finding-v1"
@@ -63,13 +64,13 @@ def build_semgrep_scan_result(
             scope, targets, "Semgrep results 字段结构不符合预期。"
         )
 
-    reader = source_reader.SourceReader(repo_root)
+    sources: dict[pathlib.Path, tuple[source_text.SourceText, list[str]]] = {}
     prepared: list[_PreparedFinding] = []
     try:
         for index, item in enumerate(raw_results, start=1):
             if not isinstance(item, dict):
                 raise ValueError(f"第 {index} 个 result 不是 JSON object。")
-            prepared.append(_prepare_finding(item, repo_root, reader))
+            prepared.append(_prepare_finding(item, repo_root, sources))
     except (OSError, TypeError, UnicodeError, ValueError) as exc:
         return _error_result(
             scope, targets, f"Semgrep finding 证据不完整：{exc}"
@@ -102,7 +103,7 @@ def build_semgrep_scan_result(
 def _prepare_finding(
     item: Mapping[str, object],
     repo_root: pathlib.Path,
-    reader: source_reader.SourceReader,
+    sources: dict[pathlib.Path, tuple[source_text.SourceText, list[str]]],
 ) -> _PreparedFinding:
     """校验单个 Semgrep finding 的路径、区域与当前源码字节证据。"""
     check_id = normalize_check_id(_required_text(item, "check_id"))
@@ -123,7 +124,13 @@ def _prepare_finding(
         start_offset=_required_nested_int(item, "start", "offset"),
         end_offset=_required_nested_int(item, "end", "offset"),
     )
-    source_bytes = source_path.read_bytes()
+    if source_path not in sources:
+        decoded = source_text.read(source_path)
+        sources[source_path] = decoded, decoded.content.splitlines(
+            keepends=True
+        )
+    decoded, lines = sources[source_path]
+    source_bytes = decoded.raw_bytes
     _validate_region(region, source_bytes)
     matched_bytes = _normalize_line_endings(
         source_bytes[region.start_offset : region.end_offset]
@@ -132,8 +139,12 @@ def _prepare_finding(
     extra = item.get("extra", {})
     if not isinstance(extra, dict):
         raise ValueError("extra 字段不是 JSON object。")
-    snippet = reader.read(
-        finding_path, region.start_line, region.inclusive_end_line
+    snippet = source_reader.read_lines(
+        finding_path,
+        lines,
+        decoded.encoding,
+        region.start_line,
+        region.inclusive_end_line,
     ).code.strip()
     base_hash = _build_base_hash(
         engine="semgrep",

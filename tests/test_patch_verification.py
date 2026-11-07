@@ -1,5 +1,6 @@
 """有序编辑后的目标足迹、辅助文件和真实扫描证据边界。"""
 
+from typing import Literal
 from unittest import mock
 
 import pytest
@@ -12,7 +13,9 @@ from autopatch_j.core.repair import service
 from autopatch_j.scanners import models as scan_models
 
 
-def scanner_result(findings=(), status="ok"):
+def scanner_result(
+    findings=(), status: Literal["ok", "error", "skipped"] = "ok"
+):
     return scan_models.ScanResult(
         "semgrep",
         ["A.java"],

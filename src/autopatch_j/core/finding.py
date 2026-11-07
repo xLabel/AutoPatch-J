@@ -2,26 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-import dataclasses
 import pathlib
 import re
 
 import pydantic
+from pydantic import dataclasses
 
-from autopatch_j.core import json_data
 
-
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(
+    config=pydantic.ConfigDict(extra="forbid"), frozen=True, slots=True
+)
 class SourceRegion:
     """源码中的半开区间；行列从 1 开始，字节偏移从 0 开始。"""
 
-    start_line: int
-    start_column: int
-    end_line: int
-    end_column: int
-    start_offset: int
-    end_offset: int
+    start_line: pydantic.StrictInt
+    start_column: pydantic.StrictInt
+    end_line: pydantic.StrictInt
+    end_column: pydantic.StrictInt
+    start_offset: pydantic.StrictInt
+    end_offset: pydantic.StrictInt
 
     def __post_init__(self) -> None:
         if (
@@ -60,37 +59,16 @@ class SourceRegion:
             and other.start_offset < self.end_offset
         )
 
-    def to_dict(self) -> dict[str, pydantic.JsonValue]:
-        """返回精确源码证据的 JSON 表示，保留偏移和坐标语义。"""
-        return {
-            "start_line": self.start_line,
-            "start_column": self.start_column,
-            "end_line": self.end_line,
-            "end_column": self.end_column,
-            "start_offset": self.start_offset,
-            "end_offset": self.end_offset,
-        }
 
-    @classmethod
-    def from_dict(cls, data: Mapping[str, object]) -> SourceRegion:
-        """从 JSON 字段恢复并校验精确源码证据，拒绝非法类型或区域。"""
-        return cls(
-            start_line=_required_int(data, "start_line"),
-            start_column=_required_int(data, "start_column"),
-            end_line=_required_int(data, "end_line"),
-            end_column=_required_int(data, "end_column"),
-            start_offset=_required_int(data, "start_offset"),
-            end_offset=_required_int(data, "end_offset"),
-        )
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(
+    config=pydantic.ConfigDict(extra="forbid"), frozen=True, slots=True
+)
 class FindingIdentity:
     """可持久化的 finding 身份。"""
 
-    fingerprint: str
-    check_id: str
-    path: str
+    fingerprint: pydantic.StrictStr
+    check_id: pydantic.StrictStr
+    path: pydantic.StrictStr
     region: SourceRegion
 
     def __post_init__(self) -> None:
@@ -117,38 +95,3 @@ class FindingIdentity:
             raise ValueError(
                 "finding path 必须是安全的 repo-relative POSIX 文件路径。"
             )
-
-    def to_dict(self) -> dict[str, pydantic.JsonValue]:
-        """返回精确源码证据的 JSON 表示，保留偏移和坐标语义。"""
-        return {
-            "fingerprint": self.fingerprint,
-            "check_id": self.check_id,
-            "path": self.path,
-            "region": self.region.to_dict(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: Mapping[str, object]) -> FindingIdentity:
-        """从 JSON 字段恢复并校验精确源码证据，拒绝非法类型或区域。"""
-        return cls(
-            fingerprint=_required_string(data, "fingerprint"),
-            check_id=_required_string(data, "check_id"),
-            path=_required_string(data, "path"),
-            region=SourceRegion.from_dict(
-                json_data.object_fields(data["region"])
-            ),
-        )
-
-
-def _required_int(data: Mapping[str, object], key: str) -> int:
-    value = data[key]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{key} 必须是整数。")
-    return value
-
-
-def _required_string(data: Mapping[str, object], key: str) -> str:
-    value = data[key]
-    if not isinstance(value, str):
-        raise TypeError(f"{key} 必须是字符串。")
-    return value

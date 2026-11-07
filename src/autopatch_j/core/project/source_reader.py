@@ -76,26 +76,15 @@ class SourceReader:
             mode_label = mode
             if mode == "file":
                 start_line, end_line = 1, total
-        requested_end = min(
-            end_line if end_line is not None else start_line + 99, total
+        selected = read_lines(
+            full_path.relative_to(self.repo_root).as_posix(),
+            lines,
+            decoded.encoding,
+            start_line,
+            end_line if total else None,
         )
-        actual_end = min(requested_end, start_line + 299)
-        selected = lines[start_line - 1 : actual_end]
-        while (
-            len(selected) > 1
-            and sum(map(len, selected)) > MAX_SOURCE_CHARACTERS
-        ):
-            selected.pop()
-        code = "".join(selected)
-        actual_end = start_line + len(selected) - 1
-        return SourceRead(
-            path=full_path.relative_to(self.repo_root).as_posix(),
-            code=code,
-            start_line=start_line,
-            end_line=actual_end,
-            total_lines=total,
-            truncated=actual_end < requested_end,
-            encoding=decoded.encoding,
+        return dataclasses.replace(
+            selected,
             mode=mode_label,
             source_has_errors=source_has_errors,
             syntax_issues=syntax_issues,
@@ -128,3 +117,36 @@ class SourceReader:
                     )
                 )
         return result
+
+
+def read_lines(
+    path: str,
+    lines: list[str],
+    encoding: str,
+    start_line: int = 1,
+    end_line: int | None = None,
+) -> SourceRead:
+    """从已有无损行选取有界片段；不修改输入，也不访问文件。"""
+    if start_line < 1 or (end_line is not None and end_line < start_line):
+        raise SourceReadError(error_messages.INVALID_LINES)
+    total = len(lines)
+    if total and start_line > total:
+        raise SourceReadError(error_messages.line_out_of_range(total))
+    requested_end = min(
+        end_line if end_line is not None else start_line + 99, total
+    )
+    actual_end = min(requested_end, start_line + 299)
+    selected = lines[start_line - 1 : actual_end]
+    characters = sum(map(len, selected))
+    while len(selected) > 1 and characters > MAX_SOURCE_CHARACTERS:
+        characters -= len(selected.pop())
+    actual_end = start_line + len(selected) - 1
+    return SourceRead(
+        path=path,
+        code="".join(selected),
+        start_line=start_line,
+        end_line=actual_end,
+        total_lines=total,
+        truncated=actual_end < requested_end,
+        encoding=encoding,
+    )

@@ -3,6 +3,7 @@
 from collections.abc import Collection
 import pathlib
 import re
+from typing import Annotated, Self
 import uuid
 
 import pydantic
@@ -21,9 +22,23 @@ from autopatch_j.scanners import models as scan_models
 class ScanRecord(models.Record):
     """一次完整扫描结果及扫描前后保持一致的各文件指纹。"""
 
-    id: str
+    id: Annotated[pydantic.StrictStr, pydantic.Field(pattern=r"^[0-9a-f]{32}$")]
     result: scan_models.ScanResult
-    source_hashes: dict[str, str]
+    source_hashes: dict[
+        pydantic.StrictStr,
+        Annotated[
+            pydantic.StrictStr, pydantic.Field(pattern=r"^[0-9a-f]{64}$")
+        ],
+    ]
+
+    @pydantic.model_validator(mode="after")
+    def validate_evidence(self) -> Self:
+        """成功快照必须为每个 finding 保留源码指纹。"""
+        if self.result.status != "ok" or any(
+            item.path not in self.source_hashes for item in self.result.findings
+        ):
+            raise ValueError(error_messages.INVALID_SCAN_EVIDENCE)
+        return self
 
 
 class EvidenceService:
@@ -108,10 +123,13 @@ class EvidenceService:
         if re.fullmatch(r"[0-9a-f]{32}", scan_id) is None:
             raise models.RepairError(error_messages.missing_scan(scan_id))
         try:
-            return ScanRecord.model_validate_json(
+            record = ScanRecord.model_validate_json(
                 (self.directory / f"{scan_id}.json").read_bytes()
             )
-        except pydantic.ValidationError as exc:
+            if record.id != scan_id:
+                raise ValueError("扫描记录身份与请求不一致。")
+            return record
+        except ValueError as exc:
             raise errors.OperationError(
                 error_messages.corrupted_scan(scan_id)
             ) from exc

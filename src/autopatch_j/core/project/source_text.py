@@ -18,7 +18,11 @@ class SourceText:
 
 def read(path: pathlib.Path) -> SourceText:
     """优先 UTF-8，其次 GBK；无法无损解码时明确失败。"""
-    raw = path.read_bytes()
+    return decode(path.read_bytes(), path)
+
+
+def decode(raw: bytes, path: pathlib.Path) -> SourceText:
+    """无损解码已有字节，保留编码和换行证据，不再读取文件。"""
     newline = (
         "\r\n"
         if b"\r\n" in raw
