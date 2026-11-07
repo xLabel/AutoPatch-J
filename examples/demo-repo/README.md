@@ -12,13 +12,16 @@
 
 ## 推荐操作
 
-在仓库根目录启动 AutoPatch-J 后，可以依次尝试：
+在本演示目录启动 AutoPatch-J 后，可以依次尝试：
 
 ```text
 /init
-@LegacyConfig.java 检查代码
+@src/main/java/demo/LegacyConfig.java 检查代码，核实问题后准备一项修复
+allow
 为什么这么改？
 apply
 ```
 
-也可以使用 `/status` 查看工作台状态，或使用 `/doctor` 排查 LLM、扫描器和本地索引是否可用。
+界面提出确切文件的写范围申请后才输入 `allow`；完整提案出现后可以解释或修订，确认后输入 `apply`。扫描候选未必需要修改，应以源码和业务契约判断。
+
+使用 `/status` 查看模型配置、扫描器和索引状态，`/scanner` 查看扫描器信息。源码变化后再次执行 `/init` 刷新索引；已就绪扫描器不会重装。

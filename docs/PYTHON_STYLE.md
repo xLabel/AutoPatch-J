@@ -81,6 +81,12 @@ Pyrefly 采用显式 `default` preset、Python 3.14 目标、`src` 与仓库根�
 
 不使用 baseline、批量忽略或 `exit-zero` 获得通过。必要抑制按原文定向说明理由；已有抑制须纳入结果解释，不能把其屏蔽的内容说成检查通过。
 
+需要核对生产源码接口时，可定向运行 `python -m pyrefly check --preset strict src/autopatch_j --min-severity=warn`，按实际诊断审查，不据此批量修改全局 preset 或要求测试代码全部 strict。
+
+涉及安装与资源交付时，在临时目录通过 `python -m pip wheel --no-deps --wheel-dir <临时目录> .` 构建 wheel，使用隔离构建准备后端；再在临时虚拟环境按 `constraints.txt` 安装构建产物。从仓库外核对包来源、两个 Python CLI 入口、内置规则资源和无 Key 时保留诊断交互、拒绝模型请求的行为，避免 editable install 掩盖打包遗漏。此检查在本地执行，不混入默认网络隔离测试，不调用真实模型；临时构建产物不提交。
+
+涉及模块删除或移动时，核对 wheel 清单没有已删除模块，不能只看源码目录。为避免已有 `build/` 缓存混入旧文件，可将当前打包输入复制到全新临时目录后构建，不复制构建缓存或旧 egg-info；保留尚未提交的新源码，不用 Git 历史代替当前产物。
+
 ## 4. 编码与审查
 
 1. **编码前**：明确需求和验收，沿本次调用链定位，阅读相关原文及条件、例外；代码现状不自动成为未来设计要求。

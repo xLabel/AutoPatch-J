@@ -42,7 +42,7 @@ AutoPatch-J 是面向 Java 仓库的 Python CLI Agent，源码在 `src/autopatch
 - 行为变更增加或更新有意义的聚焦 pytest，按需求独立确定预期。代码和测试均可纠错，不能相互自证或倒推需求；具体测试、关联问题检查与验收要求见[工程指南](docs/ENGINEERING.md#5-测试审查与自检)。
 - 主助手负责调查、自检、必要修正和适用验证。代码写完、链接有效或测试通过，都不能单独证明符合用户目标；独立复核是补充。报告区分通过、失败、跳过及未验证，说明未完成验证影响的结论。
 
-安装测试依赖：`python -m pip install -c constraints.txt -e '.[test]'`。通常先跑相关聚焦测试，如 `pytest tests/test_source_read_tools.py -q`；行为变更后运行 `pytest -q` 确定性完整回归。纯文档变更按影响检查语义、链接、锚点、引用与 `git diff --check`，不机械新增测试；已获批准的验证范围仍须完成。
+安装测试依赖：`python -m pip install -c constraints.txt -e '.[test]'`。通常先跑相关聚焦测试，如 `pytest tests/test_source_reader.py -q`；行为变更后运行 `pytest -q` 确定性完整回归。纯文档变更按影响检查语义、链接、锚点、引用与 `git diff --check`，不机械新增测试；已获批准的验证范围仍须完成。
 
 真实 LLM 集成测试仅在用户明确要求或同意**本次运行**后使用 `pytest -q --run-live-llm`，并在确定性测试通过后执行。配置存在、一般测试授权或“完整测试”均不表示同意；未运行时报告必须直接注明“真实 LLM 集成测试：未运行”。默认测试隔离机制与产品验证边界见 SPEC。
 
