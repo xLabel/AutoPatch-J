@@ -78,15 +78,17 @@ CLI 启动目录就是目标项目根，不向上猜 Git 根。项目状态在 `
 | `assess_issue` | `outcome, reason, finding_handle?`；明确登记不修改、证据不足或执行失败 |
 | 官方 Memory 四工具 | SDK 原生 notebook 参数，见第 7 节 |
 
-`FunctionToolName` 定义对外名称；schema 来自注解和 docstring。行号拒绝 bool、字符串及小数，未知参数拒绝。工具串行执行，模型没有源码写入、批准范围、apply、discard 或任务清空工具。业务输入可纠正错误经 SDK `ModelRetry` 同轮反馈，不由 CLI 重跑整个 Agent；纠错及请求额度统一见[第 6.2 节](#62-请求额度上下文与正常结束)。
+`FunctionToolName` 定义对外名称；schema 来自注解、字段描述和 docstring，不维护另一份手工 schema。参数说明包含仓库相对路径（不带交互输入的 `@`）、行号、分页、筛选、扫描句柄及有序精确替换；默认值与可空性沿用实际签名。行号拒绝 bool、字符串及小数，未知参数拒绝。工具串行执行，模型没有源码写入、批准范围、apply、discard 或任务清空工具。业务输入可纠正错误经 SDK `ModelRetry` 同轮反馈，不由 CLI 重跑整个 Agent；纠错及请求额度统一见[第 6.2 节](#62-请求额度上下文与正常结束)。
 
-声明索引保存精确位置、源码中的签名、词法所属类型及原文件指纹，不进行 Java 类型求解。Tree-sitter 保留原生容错解析，不要求 Java 编译通过；源码有语法错误时仍返回原生识别的声明和引用，附 `source_has_errors` 与必要语法位置诊断，不宣称结构或语义完备。索引把该标记保存到 Java 文件记录及各声明，即使没有声明也保留，重启不丢失。行/全文和 AST 块读取供 Agent 独立选择，互不自动替代。相同行的重载和嵌套同名声明分别定位；返回行列从 1 开始，列按 Unicode 字符计数，不将解析用的 UTF-8 偏移当作原文件 byte offset。尚未构建索引时不创建或发布空表，搜索和统计明确提示 `/init`；成功构建后真正为空的索引可以正常返回零结果。缓存表结构不适用时提示 `/init` 显式重建自身缓存表，不迁移会话、Memory 或修复状态。完整遍历和提取后才事务替换缓存；解析器、读取或数据库故障立即报错并停止当前操作及依赖流程，不跳过文件、发布部分索引或在本次运行中回退旧快照；旧数据库保留仅为数据保护，不是故障后的替代证据。CLI 补全先限定 file/dir，再取有限候选。补全后台任务遇到真实故障时安全报告、保留当前输入及游标，暂停自动路径补全；Tab 明确重试，成功或 `/init` 成功后恢复，命令补全仍可用。不退出 CLI，不刷屏、不显示交互库默认的“按回车继续”。输入历史读写故障同样停止对应历史操作并报告，独立输入仍可使用。
+声明索引保存精确位置、源码中的签名、词法所属类型及原文件指纹，不进行 Java 类型求解。Tree-sitter 保留原生容错解析，不要求 Java 编译通过；源码有语法错误时仍返回原生识别的声明和引用，附 `source_has_errors` 与必要语法位置诊断，不宣称结构或语义完备。索引把该标记保存到 Java 文件记录及各声明，即使没有声明也保留，重启不丢失。行/全文和 AST 块读取供 Agent 独立选择，互不自动替代。相同行的重载和嵌套同名声明分别定位；返回行列从 1 开始，列按 Unicode 字符计数，不将解析用的 UTF-8 偏移当作原文件 byte offset。尚未构建索引时不创建或发布空表，搜索和统计明确提示 `/init`；成功构建后真正为空的索引可以正常返回零结果。缓存表结构不适用时提示 `/init` 显式重建自身缓存表，不迁移会话、Memory 或修复状态。完整遍历和提取后才事务替换缓存；解析器、读取或数据库故障立即报错并停止当前操作及依赖流程，不跳过文件、发布部分索引或在本次运行中回退旧快照；旧数据库保留仅为数据保护，不是故障后的替代证据。索引查询每页在调用内按真实文件复用指纹核对，不跨页缓存。CLI 补全先限定 file/dir，再取有限候选；阻塞查询交工作线程，SQLite 连接在该线程创建和关闭，输入解析、渲染、标记与报错留在活动输入事件循环。输入变化、取消或离开 prompt 后不发布过期结果或错误；已经开始的只读线程调用完成后按原生事件循环机制收尾，不强制中止线程。补全后台任务遇到真实故障时安全报告、保留当前输入及游标，暂停自动路径补全；Tab 明确重试，成功或 `/init` 成功后恢复，命令补全仍可用。不退出 CLI，不刷屏、不显示交互库默认的“按回车继续”。输入历史读写故障同样停止对应历史操作并报告，独立输入仍可使用。
 
 Java 引用查询复用官方 Java tags 和必要补充查询，覆盖方法调用、方法/构造器引用、实例化及显式继承/实现。名称为区分大小写的完整简单名，不作子串、限定名、通配或正则展开；例如 `Disk` 匹配 `new Disk()`、`Disk::new`，限定或泛型类型取末级简单名。每页最多 20 项，整页源码片段合计不超过项目已有的 30000 字符预算；`excerpt_truncated` 不表示缺少参数或接收者，应按来源读取完整上下文。`complete` 仅表示本次合格文件范围已完整查询且没有语法诊断；有续页或语法错误时不宣称不存在引用。不可读文件或解析器故障使整次查询失败，不返回跳过故障文件的部分证据。注释、字符串中的伪调用不算调用。跨页实时解析，不冻结快照或维护长期引用缓存，不承诺完整调用图。
 
 扫描和引用查询共用 Java 路径展开：目录遍历过滤配置忽略目录，显式文件仍按源码读取边界准入；逐项复核真实仓库路径并排除项目状态目录。读取、定位或返回引用均不扩大写权限。
 
 ### 3.3 项目规范与长期知识
+
+系统指引仍为单个字符串，按职责与工作方式、证据与判断、任务和人工审核、规范与当前要求、长期记忆、执行事实与结果报告六组组织。具体参数格式由实际工具说明提供；原生 Memory 和摘要指引保持 SDK 默认，逐请求注入当前用户和业务绑定。
 
 根目录 AGENTS 作为正式规范来源注入，读取源码时带回目标祖先 AGENTS；长文截断必须继续读取。用户明确提供或规范明确引用的其他规则文件按需读取，不扫描所有 Markdown。
 
@@ -103,6 +105,8 @@ managed Semgrep 使用内置 Java 规则，运行版本和超时见 `AppConfig`�
 成功 payload 必须包含 list 类型 `results`、`errors`，且 errors 为空；进程、JSON、结构或任一 finding 证据出错则整次失败，不登记部分成功或冒充零 finding。证据登记还比较扫描前后文件指纹，变化则拒绝。无 Java 文件表示未扫描。
 
 finding 包含规则、repo-relative path、fingerprint 及精确半开区域：行列从 1 开始、byte offset 从 0 开始。对外句柄为 `<scan_id>:F<n>`，不依赖隐式“当前扫描”，新扫描不重绑旧句柄。扫描快照与每文件原始指纹一起保存，起草关联补丁前再核对当前源码。
+
+证据类型共用 Pydantic 字段校验，构造、扫描 JSON 恢复和修复状态嵌套恢复均拒绝非法整数、字符串、容器及未知字段；合法的嵌套字典恢复保持可用。成功快照要求 `ok`、合法扫描 ID 和 SHA-256、每个 finding 对应的源码指纹；读取时核对请求 ID，损坏文件保留并报错。结果归一化在单次调用内按真实文件复用原始 bytes、无损文本和行信息，区域、指纹与片段取自同份内容；扫描前后的独立读取仍保留，不跨操作缓存源码。
 
 Optional 规则约束 `java.util.Optional` 接收者；空值调用 get 抛出的是 `NoSuchElementException`，仍须判断其他前置条件和保护。Random 只在安全敏感用途下考虑 SecureRandom；可复现模拟不据此直接判错。构造参数是否拒绝 null 依业务契约判断。静态候选不等于必须修改。
 
@@ -241,10 +245,10 @@ Python 报错文案集中在 [error_messages](../src/autopatch_j/error_messages.
 | 任务、提案与状态 | [领域模型](../src/autopatch_j/core/repair/models.py)、[业务入口](../src/autopatch_j/core/repair/service.py)、[存储](../src/autopatch_j/core/repair/store.py) | [完整提案与失败恢复](../tests/test_repair.py) |
 | 执行反馈与证据新鲜度 | [事实投影](../src/autopatch_j/core/repair/status.py) | [实际模型请求、重启与压缩](../tests/test_repair_status.py) |
 | 字节准备与原子写入 | [文件操作](../src/autopatch_j/core/repair/files.py) | [字节、预检与 IO 故障](../tests/test_repair.py) |
-| 扫描证据与验证 | [证据](../src/autopatch_j/core/repair/evidence.py)、[复扫](../src/autopatch_j/core/repair/verification.py)、[语法](../src/autopatch_j/core/repair/checks.py) | [目标足迹及误报判断](../tests/test_patch_verification.py)、[SDK 完整闭环](../tests/test_repair_integration.py)、[语法](../tests/test_java_syntax.py) |
-| 统一 Agent 与 SDK | [Agent](../src/autopatch_j/agent/agent.py)、[运行能力](../src/autopatch_j/agent/capabilities.py)、[工具](../src/autopatch_j/tools/project.py) | [运行边界](../tests/test_agent_runtime.py)、[上下文与记忆](../tests/test_agent_context.py)、[会话续接](../tests/test_conversations.py)、[笔记管理](../tests/test_project_memory.py) |
+| 扫描证据与验证 | [证据](../src/autopatch_j/core/repair/evidence.py)、[复扫](../src/autopatch_j/core/repair/verification.py)、[语法](../src/autopatch_j/core/repair/checks.py) | [快照校验与状态恢复](../tests/test_scan_evidence.py)、[目标足迹及误报判断](../tests/test_patch_verification.py)、[SDK 完整闭环](../tests/test_repair_integration.py)、[语法](../tests/test_java_syntax.py) |
+| 统一 Agent 与 SDK | [Agent](../src/autopatch_j/agent/agent.py)、[运行能力](../src/autopatch_j/agent/capabilities.py)、[工具](../src/autopatch_j/tools/project.py) | [工具契约与分派](../tests/test_tool_contract.py)、[运行边界](../tests/test_agent_runtime.py)、[上下文与记忆](../tests/test_agent_context.py)、[会话续接](../tests/test_conversations.py)、[笔记管理](../tests/test_project_memory.py) |
 | 读取与规范来源 | [源码](../src/autopatch_j/core/project/source_reader.py) | [读取和祖先规范](../tests/test_source_reader.py) |
 | Java 声明与引用 | [声明](../src/autopatch_j/core/project/java_symbols.py)、[引用](../src/autopatch_j/core/project/java_references.py)、[索引](../src/autopatch_j/core/project/symbol_index.py) | [真实声明与分页](../tests/test_symbol_index.py)、[引用、归属及故障](../tests/test_java_references.py) |
-| 人工交互 | [输入](../src/autopatch_j/cli/input_router.py)、[主循环](../src/autopatch_j/cli/app.py) | [实际 CLI](../tests/test_cli_commands.py) |
+| 人工交互 | [输入](../src/autopatch_j/cli/input_router.py)、[主循环](../src/autopatch_j/cli/app.py) | [实际 CLI](../tests/test_cli_commands.py)、[异步补全与取消](../tests/test_completion_async.py) |
 | 配置、资源与维护 | [应用运行时](../src/autopatch_j/application/runtime.py)、[配置](../src/autopatch_j/config.py) | [本地能力与维护](../tests/test_application.py)、[扫描器探测与安装](../tests/test_scanner_runtime.py) |
 | 真实集成 | [授权门禁](../tests/conftest.py) | [业务判断与续接](../tests/test_live_sdk.py)、[CLI 修复与记忆复用](../tests/test_live_workflow.py)、[执行反馈与引用取证](../tests/test_live_agent_evidence.py)，默认不运行 |
