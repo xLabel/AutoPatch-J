@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import importlib
 import pathlib
 
 from rich import table as rich_table
 from rich import text as rich_text
 
-from autopatch_j.cli import render
-from autopatch_j.cli import runtime as cli_runtime
 from autopatch_j import config
+from autopatch_j import error_messages
+from autopatch_j.application import runtime as project_runtime
+from autopatch_j.cli import render
+from autopatch_j.core.project import symbol_index
 from autopatch_j.scanners import catalog
 from autopatch_j.scanners import models
 
@@ -18,12 +19,19 @@ from autopatch_j.scanners import models
 class StatusPresenter:
     """展示项目状态，不承载命令业务判断。"""
 
-    def __init__(self, renderer: render.CliRenderer) -> None:
+    def __init__(
+        self,
+        renderer: render.CliRenderer,
+        settings: config.AppConfig,
+        scanners: catalog.ScannerCatalog,
+    ) -> None:
         self.renderer = renderer
+        self.settings = settings
+        self.scanners = scanners
 
     def render_status(
         self,
-        runtime: cli_runtime.CliRuntime | None,
+        runtime: project_runtime.ProjectRuntime | None,
         repo_root: pathlib.Path | None,
     ) -> None:
         """展示配置、工作台与本地依赖状态，不发起模型调用。"""
@@ -41,24 +49,22 @@ class StatusPresenter:
         )
         table.add_row(
             self._label("LLM API Key"),
-            self._value(
-                "已配置" if config.GLOBAL_CONFIG.llm_api_key else "缺失"
-            ),
+            self._value("已配置" if self.settings.llm_api_key else "缺失"),
         )
         table.add_row(
             self._label("LLM Base URL"),
-            self._value(config.GLOBAL_CONFIG.llm_base_url or "缺失"),
+            self._value(self.settings.llm_base_url or "缺失"),
         )
         table.add_row(
             self._label("LLM 模型"),
-            self._value(config.GLOBAL_CONFIG.llm_model or "缺失"),
+            self._value(self.settings.llm_model or "缺失"),
         )
         table.add_row(
             self._label("Provider Profile"),
             self._value("Pydantic AI / OpenAI Chat Completions"),
         )
         try:
-            profile = config.GLOBAL_CONFIG.resolve_llm_context_profile()
+            profile = self.settings.resolve_llm_context_profile()
         except ValueError as exc:
             table.add_row(self._label("LLM 容量"), self._value(str(exc)))
         else:
@@ -72,15 +78,32 @@ class StatusPresenter:
             )
         table.add_row(
             self._label("调试模式"),
-            self._value("开启" if config.GLOBAL_CONFIG.debug_mode else "关闭"),
+            self._value("开启" if self.settings.debug_mode else "关闭"),
+        )
+        table.add_row(
+            self._label("单轮模型请求上限"),
+            self._value(
+                str(self.settings.llm_request_limit)
+                if self.settings.llm_request_limit is not None
+                else "无限制"
+            ),
+        )
+        table.add_row(
+            self._label("LLM 就绪"),
+            self._value(self.settings.llm_unavailable_reason() or "配置有效"),
         )
         table.add_row(self._label("Semgrep"), self._scanner_status(repo_root))
-        table.add_row(
-            self._label("Tree-sitter"), self._value(self._tree_sitter_status())
-        )
+        table.add_row(self._label("Tree-sitter"), self._value("ok"))
 
         if runtime is not None:
-            self._add_workspace_rows(table, runtime)
+            try:
+                self._add_workspace_rows(table, runtime)
+            # 诊断保留独立配置项，无法读取的项目项明确标为失败。
+            except Exception:  # pylint: disable=broad-exception-caught
+                table.add_row(
+                    self._label("项目状态"),
+                    self._value(error_messages.STATE_UNAVAILABLE),
+                )
 
         self.renderer.print_panel(
             table,
@@ -89,25 +112,30 @@ class StatusPresenter:
         )
 
     def _add_workspace_rows(
-        self, table: rich_table.Table, runtime: cli_runtime.CliRuntime
+        self, table: rich_table.Table, runtime: project_runtime.ProjectRuntime
     ) -> None:
         """向状态表加入持久工作台与符号提取诊断。"""
         state = runtime.repair.store.load()
         table.add_row(self._label("修复任务"), self._value(state.status))
+        if state.last_apply_error:
+            table.add_row(
+                self._label("上次应用失败"), self._value(state.last_apply_error)
+            )
         table.add_row(
             self._label("写范围"),
             self._value("、".join(state.write_paths) or "未授权"),
         )
 
-        stats = runtime.symbol_indexer.get_stats()
-        stats_text = self._format_symbol_stats(stats)
+        try:
+            stats_text = self._format_symbol_stats(
+                runtime.symbol_index.get_stats()
+            )
+        except symbol_index.IndexNotReadyError as exc:
+            stats_text = str(exc)
         table.add_row(self._label("符号索引"), self._value(stats_text))
-        table.add_row(
-            self._label("符号提取"), self._symbol_extract_status(runtime)
-        )
 
     def _scanner_status(self, repo_root: pathlib.Path | None) -> rich_text.Text:
-        scanner = catalog.DEFAULT_SCANNER_CATALOG.get("semgrep")
+        scanner = self.scanners.get("semgrep")
         if scanner is None:
             return self._value("未注册")
         scanner_meta = scanner.get_meta(repo_root)
@@ -128,7 +156,7 @@ class StatusPresenter:
         table.add_column("版本", justify="center")
         table.add_column("说明")
 
-        for scanner in catalog.DEFAULT_SCANNER_CATALOG.implemented():
+        for scanner in self.scanners.all():
             meta = scanner.get_meta(repo_root)
             table.add_row(
                 self._scanner_label(meta.name.value),
@@ -153,19 +181,6 @@ class StatusPresenter:
         if meta.availability == "unavailable":
             return f"[yellow]● {meta.status}[/yellow]"
         return f"[dim]● {meta.status}[/dim]"
-
-    def _symbol_extract_status(
-        self, runtime: cli_runtime.CliRuntime
-    ) -> rich_text.Text:
-        symbol_status = runtime.symbol_indexer.fetch_symbol_extract_status()
-        if symbol_status["mode"] != "degraded":
-            return self._value("正常")
-
-        status_text = rich_text.Text("已降级", style=render.DECISION_STYLE)
-        last_error = symbol_status["last_error"] or ""
-        if last_error:
-            status_text.append(f" ({last_error})", style=render.MUTED_STYLE)
-        return status_text
 
     def _format_symbol_stats(self, stats: dict[str, int]) -> str:
         """将索引计数格式化为终端诊断文本。"""
@@ -195,14 +210,6 @@ class StatusPresenter:
         if not parts:
             parts = ["文件:0"]
         return " | ".join(parts) + f" (总计:{stats.get("total", 0)})"
-
-    def _tree_sitter_status(self) -> str:
-        try:
-            for module_name in ("tree_sitter", "tree_sitter_java"):
-                importlib.import_module(module_name)
-        except ImportError as exc:
-            return f"缺失 ({exc.name})"
-        return "ok"
 
     def _label(self, text: str) -> rich_text.Text:
         return rich_text.Text(text, style=f"bold {render.SYSTEM_STYLE}")

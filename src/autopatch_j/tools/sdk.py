@@ -3,14 +3,14 @@
 from pydantic_ai import tools
 from pydantic_ai import toolsets
 
-from autopatch_j.agent import session
+from autopatch_j.agent import run_context
 from autopatch_j.tools import names
 from autopatch_j.tools import project
 
 
 def build_toolset(
-    context: session.AgentSession,
-) -> toolsets.FunctionToolset[session.AgentSession]:
+    context: run_context.AgentRunContext,
+) -> toolsets.FunctionToolset[run_context.AgentRunContext]:
     business = project.ProjectTools(context)
     memory_names = {
         "search_memory",
@@ -24,7 +24,6 @@ def build_toolset(
                 getattr(business, name.value),
                 name=name.value,
                 sequential=True,
-                max_retries=2,
             )
             for name in names.FunctionToolName
             if name.value not in memory_names

@@ -4,9 +4,12 @@ import dataclasses
 import pathlib
 from typing import Literal
 
+from autopatch_j import error_messages
 from autopatch_j.core.project import java_blocks
 from autopatch_j.core.project import repo_path
 from autopatch_j.core.project import source_text
+
+MAX_SOURCE_CHARACTERS = 30_000
 
 
 class SourceReadError(ValueError):
@@ -15,7 +18,7 @@ class SourceReadError(ValueError):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SourceRead:
-    """实际源码及行范围、截断、编码和无损解码事实。"""
+    """无损源码及实际行范围、截断、编码和语法诊断。"""
 
     path: str
     code: str
@@ -24,9 +27,9 @@ class SourceRead:
     total_lines: int
     truncated: bool
     encoding: str
-    lossless: bool
     mode: str = "lines"
-    notice: str | None = None
+    source_has_errors: bool | None = None
+    syntax_issues: tuple[str, ...] = ()
 
 
 class SourceReader:
@@ -45,21 +48,30 @@ class SourceReader:
     ) -> SourceRead:
         """按 300 行及 30000 字符预算读取；单个物理行完整保留，可继续请求后续行。"""
         if start_line < 1 or (end_line is not None and end_line < start_line):
-            raise SourceReadError("行号必须从 1 开始，结束行不能早于开始行。")
+            raise SourceReadError(error_messages.INVALID_LINES)
         full_path = repo_path.resolve_source_path(self.repo_root, path)
+        if mode == "block" and full_path.suffix.lower() != ".java":
+            raise SourceReadError(error_messages.JAVA_BLOCK_ONLY)
         decoded = source_text.read(full_path)
         content = decoded.content
         lines = content.splitlines(keepends=True)
         total = len(lines)
         if total and start_line > total:
-            raise SourceReadError(f"行号超出文件范围，共 {total} 行。")
-        notice = None
-        if mode == "block" and full_path.suffix.lower() == ".java":
+            raise SourceReadError(error_messages.line_out_of_range(total))
+        source_has_errors = None
+        syntax_issues = ()
+        if mode == "block":
             block = java_blocks.JavaBlockExtractor().extract(
                 content, start_line
             )
+            if block is None:
+                raise SourceReadError(error_messages.BLOCK_NOT_FOUND)
             start_line, end_line = block.start_line, block.end_line
-            mode_label, notice = block.mode, block.error
+            mode_label = "java_block"
+            source_has_errors, syntax_issues = (
+                block.source_has_errors,
+                block.syntax_issues,
+            )
         else:
             mode_label = mode
             if mode == "file":
@@ -69,7 +81,10 @@ class SourceReader:
         )
         actual_end = min(requested_end, start_line + 299)
         selected = lines[start_line - 1 : actual_end]
-        while len(selected) > 1 and sum(map(len, selected)) > 30_000:
+        while (
+            len(selected) > 1
+            and sum(map(len, selected)) > MAX_SOURCE_CHARACTERS
+        ):
             selected.pop()
         code = "".join(selected)
         actual_end = start_line + len(selected) - 1
@@ -81,12 +96,12 @@ class SourceReader:
             total_lines=total,
             truncated=actual_end < requested_end,
             encoding=decoded.encoding,
-            lossless=decoded.safe_to_write,
             mode=mode_label,
-            notice=notice,
+            source_has_errors=source_has_errors,
+            syntax_issues=syntax_issues,
         )
 
-    def guidance(self, path: str = ".") -> list[SourceRead]:
+    def read_guidance(self, path: str = ".") -> list[SourceRead]:
         """只发现根目录和目标祖先的 AGENTS.md，其余规范按明确引用读取。"""
         target = repo_path.resolve_source_path(self.repo_root, path)
         directory = target if target.is_dir() else target.parent

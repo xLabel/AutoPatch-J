@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from collections.abc import Awaitable
 import re
 from typing import Callable
 from typing import Iterable
@@ -24,9 +26,13 @@ class AutoPatchCompleter(completion.Completer):
     """
 
     def __init__(
-        self, search_func: Callable[[str], list[symbols.SymbolIndexEntry]]
+        self,
+        search_func: Callable[[str], list[symbols.SymbolIndexEntry]],
+        on_error: Callable[[str, Exception], Awaitable[None]] | None = None,
     ) -> None:
         self.search_func = search_func
+        self.on_error = on_error
+        self.path_completion_failed = False
         # 预编译正则，支持双前缀识别
         self.mention_pattern = re.compile(r"@[^\s@]*")
         self.command_pattern = re.compile(r"/[\w]*")
@@ -44,6 +50,22 @@ class AutoPatchCompleter(completion.Completer):
             for command in commands.CLI_COMMANDS
             if command.subcommands
         }
+
+    @override
+    async def get_completions_async(
+        self,
+        document: prompt_toolkit_document.Document,
+        complete_event: completion.CompleteEvent,
+    ) -> AsyncGenerator[completion.Completion]:
+        """隔离后台补全故障，不结束原生 prompt 或丢弃用户输入。"""
+        try:
+            for candidate in self.get_completions(document, complete_event):
+                yield candidate
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.path_completion_failed = True
+            if self.on_error is None:
+                raise
+            await self.on_error("路径补全", exc)
 
     @override
     def get_completions(
@@ -93,8 +115,14 @@ class AutoPatchCompleter(completion.Completer):
             pattern=self.mention_pattern
         )
         if mention_match.startswith("@"):
+            if (
+                self.path_completion_failed
+                and not complete_event.completion_requested
+            ):
+                return
             query = mention_match[1:]
             results = self.search_func(query)
+            self.path_completion_failed = False
 
             for entry in results:
                 if entry.kind not in {"file", "dir"}:

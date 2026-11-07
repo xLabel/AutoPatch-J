@@ -1,4 +1,4 @@
-"""环境配置、默认模型和项目状态目录；导入时读取配置快照。"""
+"""显式读取的不可变配置；无效输入由界面报告，不伪造有效默认配置。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,11 @@ import dataclasses
 import os
 import pathlib
 from typing import Final
+from urllib import parse
 
+from pydantic_ai import usage
+
+from autopatch_j import error_messages
 from autopatch_j.llm import context_window
 
 SEMGREP_RULE_RELATIVE_PATH: Final = "scanners/resources/semgrep/rules/java.yml"
@@ -41,52 +45,56 @@ def get_project_state_dir(repo_root: pathlib.Path) -> pathlib.Path:
     return state_dir
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class AppConfig:
-    """全局配置中心：统一管理 LLM、扫描器和路径相关配置。"""
+    """一次启动的配置快照，保存模型错误但不以默认容量代替无效输入。"""
 
-    # LLM 配置
-    # Key 必填；Base URL 有默认值，指向标准 Chat Completions 服务。
-    llm_api_key: str
-    llm_base_url: str
-
-    # 默认使用 deepseek-flash；如供应商支持，也可切换为 qwen-max 等 OpenAI 兼容模型名。
-    llm_model: str
-
-    # 模型 context 容量；未知模型必须显式配置 window 与运行输出上限。
-    llm_context_window: int | None
-    llm_max_output_tokens: int | None
-
-    # 仅 "true" 开启调试输出。
-    debug_mode: bool
-
-    # 扫描器配置
-    semgrep_version: str
-    semgrep_install_lock_timeout: int
-    scanner_timeout: int
-
-    # 索引器配置
-    ignored_dirs: set[str] = dataclasses.field(
-        default_factory=lambda: set(IGNORED_DIRS)
+    llm_api_key: str = dataclasses.field(default="", repr=False)
+    llm_base_url: str = "https://api.deepseek.com"
+    llm_model: str = "deepseek-flash"
+    llm_context_window: int | None = None
+    llm_max_output_tokens: int | None = None
+    llm_request_limit: int | None = dataclasses.field(
+        default_factory=lambda: usage.UsageLimits().request_limit
     )
-
-    # 审计配置
+    llm_config_error: str | None = None
+    debug_mode: bool = False
+    semgrep_version: str = "1.160.0"
+    semgrep_install_lock_timeout: int = 600
+    scanner_timeout: int = 300
+    ignored_dirs: frozenset[str] = IGNORED_DIRS
 
     @classmethod
     def from_env(cls) -> "AppConfig":
-        """读取当前进程环境并校验数字配置；不会读取 .env 文件。"""
+        """只在显式调用时读取环境；错误只含变量名，不保存无效原值。"""
+        errors: list[str] = []
+
+        def capacity(name: str) -> int | None:
+            try:
+                return cls._optional_positive_int_env(name)
+            except ValueError as exc:
+                errors.append(str(exc))
+                return None
+
+        window = capacity("AUTOPATCH_LLM_CONTEXT_WINDOW")
+        output = capacity("AUTOPATCH_LLM_MAX_OUTPUT_TOKENS")
+        try:
+            request_limit = cls._request_limit_env()
+        except ValueError as exc:
+            errors.append(str(exc))
+            request_limit = usage.UsageLimits().request_limit
         return cls(
             llm_api_key=os.getenv("AUTOPATCH_LLM_API_KEY", ""),
             llm_base_url=os.getenv(
                 "AUTOPATCH_LLM_BASE_URL", "https://api.deepseek.com"
             ).rstrip("/"),
-            llm_model=os.getenv("AUTOPATCH_LLM_MODEL", "deepseek-flash"),
-            llm_context_window=cls._optional_positive_int_env(
-                "AUTOPATCH_LLM_CONTEXT_WINDOW"
-            ),
-            llm_max_output_tokens=cls._optional_positive_int_env(
-                "AUTOPATCH_LLM_MAX_OUTPUT_TOKENS"
-            ),
+            llm_model=os.getenv(
+                "AUTOPATCH_LLM_MODEL", "deepseek-flash"
+            ).strip(),
+            llm_context_window=window,
+            llm_max_output_tokens=output,
+            llm_request_limit=request_limit,
+            llm_config_error="；".join(errors) if errors else None,
             debug_mode=os.getenv("AUTOPATCH_DEBUG", "false").lower() == "true",
             semgrep_version="1.160.0",
             semgrep_install_lock_timeout=600,
@@ -94,26 +102,69 @@ class AppConfig:
         )
 
     def is_llm_ready(self) -> bool:
-        """检查 LLM 必要配置是否就绪"""
-        return bool(self.llm_api_key and self.llm_base_url)
+        """检查完整模型配置，不发送请求。"""
+        return self.llm_unavailable_reason() is None
+
+    def llm_unavailable_reason(self) -> str | None:
+        """返回可公开展示的配置问题；不回显凭据或非法输入。"""
+        try:
+            self.resolve_llm_context_profile()
+        except ValueError as exc:
+            return str(exc)
+        if not self.llm_api_key.strip():
+            return error_messages.API_KEY_REQUIRED
+        try:
+            url = parse.urlsplit(self.llm_base_url)
+            valid_url = url.scheme in {"http", "https"} and bool(url.hostname)
+            _ = url.port  # urlsplit 在访问端口时才校验端口是否合法。
+        except ValueError:
+            valid_url = False
+        if not valid_url:
+            return error_messages.INVALID_BASE_URL
+        if not self.llm_model.strip():
+            return error_messages.EMPTY_MODEL
+        return None
 
     def get_missing_llm_message(self) -> str:
         """获取配置指引"""
-        return (
-            "LLM 核心配置缺失。请确保已设置以下环境变量：\n"
-            "1. AUTOPATCH_LLM_API_KEY\n"
-            "2. AUTOPATCH_LLM_BASE_URL\n"
-            f"3. AUTOPATCH_LLM_MODEL (可选，默认 "
-            f"{self.llm_model})"
-        )
+        return self.llm_unavailable_reason() or "LLM 配置已就绪。"
 
     def resolve_llm_context_profile(self) -> context_window.ModelContextProfile:
         """解析模型容量；未知部署缺少显式容量时拒绝启动请求。"""
+        if self.llm_config_error:
+            raise ValueError(self.llm_config_error)
+        if self.llm_request_limit is not None and (
+            not isinstance(self.llm_request_limit, int)
+            or isinstance(self.llm_request_limit, bool)
+            or self.llm_request_limit <= 0
+        ):
+            raise ValueError(
+                error_messages.positive_integer(
+                    "AUTOPATCH_LLM_REQUEST_LIMIT", allow_none=True
+                )
+            )
+        if not self.llm_model.strip():
+            raise ValueError(error_messages.EMPTY_MODEL)
         return context_window.resolve_context_profile(
             model=self.llm_model,
             context_window=self.llm_context_window,
             max_output_tokens=self.llm_max_output_tokens,
         )
+
+    @staticmethod
+    def _request_limit_env() -> int | None:
+        name = "AUTOPATCH_LLM_REQUEST_LIMIT"
+        raw = os.getenv(name)
+        if raw is None or not raw.strip():
+            return usage.UsageLimits().request_limit
+        if raw.strip().lower() == "none":
+            return None
+        try:
+            return AppConfig._optional_positive_int_env(name)
+        except ValueError as exc:
+            raise ValueError(
+                error_messages.positive_integer(name, allow_none=True)
+            ) from exc
 
     @staticmethod
     def _optional_positive_int_env(name: str) -> int | None:
@@ -123,10 +174,7 @@ class AppConfig:
         try:
             value = int(raw)
         except ValueError as exc:
-            raise ValueError(f"{name} 必须是正整数") from exc
+            raise ValueError(error_messages.positive_integer(name)) from exc
         if value <= 0:
-            raise ValueError(f"{name} 必须是正整数")
+            raise ValueError(error_messages.positive_integer(name))
         return value
-
-
-GLOBAL_CONFIG = AppConfig.from_env()

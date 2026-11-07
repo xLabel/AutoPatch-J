@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pathlib
 
+from autopatch_j import error_messages
+
 PROJECT_STATE_DIR_NAME = ".autopatch-j"
 
 
@@ -38,14 +40,14 @@ def resolve_repo_path(repo_root: pathlib.Path, path: str) -> pathlib.Path:
     normalized = normalize_repo_path(path)
     candidate = pathlib.Path(normalized)
     if candidate.is_absolute() or "\x00" in normalized:
-        raise UnsafeRepoPathError(f"路径必须是仓库内相对路径：{path}")
+        raise UnsafeRepoPathError(error_messages.unsafe_path(path))
 
     repo_abs = repo_root.resolve()
     target_abs = (repo_abs / normalized).resolve()
     try:
         target_abs.relative_to(repo_abs)
     except ValueError as exc:
-        raise UnsafeRepoPathError(f"路径超出项目根目录范围：{path}") from exc
+        raise UnsafeRepoPathError(error_messages.unsafe_path(path)) from exc
     return target_abs
 
 
@@ -54,7 +56,7 @@ def resolve_source_path(repo_root: pathlib.Path, path: str) -> pathlib.Path:
     target = resolve_repo_path(repo_root, path)
     relative = to_repo_relative_path(repo_root, target)
     if is_project_state_path(relative):
-        raise UnsafeRepoPathError(f"项目状态目录不属于源码范围：{path}")
+        raise UnsafeRepoPathError(error_messages.unsafe_path(path))
     return target
 
 
@@ -75,4 +77,6 @@ def to_repo_relative_path(repo_root: pathlib.Path, path: pathlib.Path) -> str:
     try:
         return target_abs.relative_to(repo_abs).as_posix()
     except ValueError as exc:
-        raise UnsafeRepoPathError(f"路径超出项目根目录范围：{path}") from exc
+        raise UnsafeRepoPathError(
+            error_messages.unsafe_path(str(path))
+        ) from exc

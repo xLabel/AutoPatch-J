@@ -3,6 +3,8 @@
 import pathlib
 import uuid
 
+from autopatch_j import error_messages
+from autopatch_j.core import errors
 from autopatch_j.core.project import repo_path
 from autopatch_j.core.repair import files
 from autopatch_j.core.repair import models
@@ -27,10 +29,12 @@ class RepairService:
         for name in paths:
             path = repo_path.resolve_source_path(self.root, name)
             if not path.is_file():
-                raise models.RepairError(f"写范围必须明确到已有文件：{name}")
+                raise models.RepairError(
+                    error_messages.scope_file_required(name)
+                )
             relative = path.relative_to(self.root).as_posix()
             if relative in result:
-                raise models.RepairError(f"重复文件或别名：{name}")
+                raise models.RepairError(error_messages.duplicate_file(name))
             result.append(relative)
         return tuple(result)
 
@@ -39,11 +43,11 @@ class RepairService:
     ) -> models.RepairState:
         """准备新任务及待用户确认的写范围，不应用源码修改。"""
         if state.status not in {"idle", "applied", "assessed"}:
-            raise models.RepairError(
-                "当前任务尚未结束。请继续处理，或由用户明确 discard/abort/new 后再开始另一项任务。"
-            )
+            raise models.RepairError(error_messages.TASK_ACTIVE)
         if not goal.strip():
-            raise models.RepairError("修复目标不能为空。")
+            raise models.RepairError(
+                error_messages.empty_requirement("修复目标")
+            )
         return models.RepairState(
             version=state.version,
             task_id=uuid.uuid4().hex,
@@ -58,9 +62,9 @@ class RepairService:
     ) -> models.RepairState:
         """返回追加写权限申请的候选状态，已有授权不变。"""
         if state.status not in {"investigating", "pending"}:
-            raise models.RepairError("当前任务不接受范围调整。")
+            raise models.RepairError(error_messages.TASK_NOT_EDITABLE)
         if not paths:
-            raise models.RepairError("写范围申请必须包含至少一个确切文件。")
+            raise models.RepairError(error_messages.EMPTY_SCOPE)
         normalized = self.normalize_paths(paths)
         additions = tuple(
             path for path in normalized if path not in state.write_paths
@@ -78,7 +82,7 @@ class RepairService:
                 "investigating",
                 "pending",
             }:
-                raise models.RepairError("没有待确认的写范围。")
+                raise models.RepairError(error_messages.NO_SCOPE)
             updated = store.changed(
                 current,
                 version=current.version + 1,
@@ -101,29 +105,24 @@ class RepairService:
     ) -> models.RepairState:
         """完整准备后一次替换提案，任何失败均保留原候选和原待审提案。"""
         if state.status not in {"investigating", "pending"}:
-            raise models.RepairError(
-                "请先明确当前修复任务；应用中或中断的任务不能修订。"
-            )
+            raise models.RepairError(error_messages.TASK_NOT_EDITABLE)
         if not edits or not rationale.strip():
-            raise models.RepairError("提案需要文件修改和具体理由。")
+            raise models.RepairError(error_messages.INCOMPLETE_PROPOSAL)
         paths = self.normalize_paths(tuple(item.path for item in edits))
-        if any(path not in state.write_paths for path in paths):
+        unauthorized = [path for path in paths if path not in state.write_paths]
+        if unauthorized:
             raise models.RepairError(
-                "提案包含未授权的写路径。请先 request_write_scope 并等待用户 allow；读取文件不表示允许修改。"
+                error_messages.unauthorized_file("、".join(unauthorized))
             )
         if state.proposal is not None and state.proposal.target != target:
-            raise models.RepairError(
-                "修订不能更换当前问题或 finding 绑定；请先明确结束当前提案。"
-            )
+            raise models.RepairError(error_messages.TARGET_CHANGED)
         prepared = tuple(files.prepare_file(self.root, edit) for edit in edits)
         if target is not None:
             path = repo_path.resolve_source_path(
                 self.root, target.identity.path
             )
             if files.digest(path.read_bytes()) != target.source_sha256:
-                raise models.RepairError(
-                    "扫描证据对应的源码已变化，请重新扫描并核查。"
-                )
+                raise models.RepairError(error_messages.STALE_SCAN)
         proposal = models.Proposal(
             id=uuid.uuid4().hex,
             task_id=state.task_id or "",
@@ -139,6 +138,7 @@ class RepairService:
             progress=(),
             checks=(),
             assessment=None,
+            last_apply_error=None,
         )
 
     def assess(
@@ -149,9 +149,7 @@ class RepairService:
             state.status != "investigating"
             or state.issue_id != assessment.issue_id
         ):
-            raise models.RepairError(
-                "判断必须绑定当前调查中的问题，不能替代待审提案。"
-            )
+            raise models.RepairError(error_messages.INVALID_ASSESSMENT)
         return store.changed(
             state,
             assessment=assessment,
@@ -186,15 +184,46 @@ class RepairService:
             store.require_current(current, expected)
             self.store.save(models.RepairState(version=current.version + 1))
 
-    def reset(self, expected: models.RepairState) -> None:
-        """显式重置任务和可重建索引，保留锁、笔记、会话、导出和未知用户文件。"""
-        with self.store.locked() as current:
-            store.require_current(current, expected)
-            self.store.save(models.RepairState(version=current.version + 1))
-            index = self.store.directory / "index.db"
-            if index.is_symlink():
-                raise models.RepairError("索引文件是软链接，未清理。")
-            index.unlink(missing_ok=True)
+    def update_task_requirements(
+        self,
+        state: models.RepairState,
+        additions: tuple[str, ...],
+        removals: tuple[str, ...],
+        user_text: str,
+    ) -> models.RepairState:
+        """原子修订当前有效要求；新增摘自用户原文，撤回不得伪造已有项。"""
+        if state.status not in {"investigating", "pending"}:
+            raise models.RepairError(error_messages.NO_ACTIVE_TASK)
+        added = tuple(dict.fromkeys(item.strip() for item in additions))
+        removed = frozenset(item.strip() for item in removals)
+        if "" in added or "" in removed:
+            raise models.RepairError(
+                error_messages.empty_requirement("任务要求")
+            )
+        unquoted = tuple(item for item in added if item not in user_text)
+        if unquoted:
+            raise models.RepairError(
+                error_messages.unquoted_requirement("、".join(unquoted))
+            )
+        if removed.difference(state.constraints):
+            raise models.RepairError(error_messages.UNKNOWN_REQUIREMENT)
+        if removed.intersection(added):
+            raise models.RepairError(error_messages.OVERLAPPING_REQUIREMENTS)
+        requirements = tuple(
+            dict.fromkeys(
+                (
+                    *[
+                        item
+                        for item in state.constraints
+                        if item not in removed
+                    ],
+                    *added,
+                )
+            )
+        )
+        if requirements == state.constraints:
+            return state
+        return store.changed(state, constraints=requirements)
 
     def apply(self, expected: models.RepairState) -> models.ApplyResult:
         """完整预检通过才记 applying；逐文件保存进度，首次故障即停止。"""
@@ -202,7 +231,9 @@ class RepairService:
             store.require_current(current, expected)
             if current.status != "pending" or current.proposal is None:
                 raise models.RepairError(
-                    "仅当前完整待审提案可应用；中断状态须人工核查并结束，不能重放。"
+                    error_messages.INTERRUPTED_APPLY
+                    if current.status in {"applying", "interrupted"}
+                    else error_messages.NO_PROPOSAL
                 )
             proposal = current.proposal
             try:
@@ -217,10 +248,28 @@ class RepairService:
                         != proposal.target.source_sha256
                     ):
                         raise models.RepairError("扫描目标已变化。")
-            except (OSError, ValueError) as exc:
+            except (
+                OSError,
+                models.RepairError,
+                repo_path.UnsafeRepoPathError,
+            ) as exc:
+                message = f"完整预检失败，未写任何文件：{exc}"
+                rejected = store.changed(
+                    current,
+                    version=current.version + 1,
+                    last_apply_error=message,
+                )
+                try:
+                    self.store.save(rejected)
+                except OSError as save_error:
+                    raise errors.OperationError(
+                        message + f"；拒绝原因未保存：{save_error}"
+                    ) from exc
+                if isinstance(exc, OSError):
+                    raise errors.OperationError(message) from exc
                 return models.ApplyResult(
                     status="rejected",
-                    message=f"完整预检失败，未写任何文件：{exc}",
+                    message=message,
                 )
             progress = tuple(
                 models.FileProgress(path=item.path, status="not_written")
@@ -231,20 +280,39 @@ class RepairService:
                 version=current.version + 1,
                 status="applying",
                 progress=progress,
+                last_apply_error=None,
             )
             self.store.save(current)  # 失败则不得写源码。
             for index, item in enumerate(proposal.files):
+                write_started = False
                 try:
                     self._preflight(item)
                     path = repo_path.resolve_source_path(self.root, item.path)
+                    write_started = True
                     files.atomic_write(
                         path,
                         item.candidate,
                         expected=item.original,
                         mode=item.permission_mode,
                     )
-                except (OSError, ValueError) as exc:
-                    return self._interrupted(current, f"写入停止：{exc}")
+                except (
+                    OSError,
+                    models.RepairError,
+                    repo_path.UnsafeRepoPathError,
+                ) as exc:
+                    if write_started:
+                        progress = list(current.progress)
+                        progress[index] = models.FileProgress(
+                            path=item.path, status="uncertain"
+                        )
+                        current = store.changed(
+                            current, progress=tuple(progress)
+                        )
+                    self._interrupted(
+                        current,
+                        error_messages.apply_interrupted(item.path, str(exc)),
+                        exc,
+                    )
                 updated_progress = list(current.progress)
                 updated_progress[index] = models.FileProgress(
                     path=item.path, status="written"
@@ -255,14 +323,11 @@ class RepairService:
                 try:
                     self.store.save(current)
                 except OSError as exc:
-                    return models.ApplyResult(
-                        status="interrupted",
-                        message=(
-                            f"源码已写入 {item.path}，进度保存失败；"
-                            f"磁盘任务仍阻断，须核查后结束：{exc}"
-                        ),
-                        progress=current.progress,
-                    )
+                    raise errors.OperationError(
+                        error_messages.progress_not_saved(item.path)
+                        + "\n"
+                        + self._progress_message(current)
+                    ) from exc
             current = store.changed(
                 current,
                 status="applied",
@@ -273,13 +338,33 @@ class RepairService:
             try:
                 self.store.save(current)
             except OSError as exc:
-                return models.ApplyResult(
-                    status="interrupted",
-                    message=f"所有源码已写入，最终审核状态保存失败；未执行验证：{exc}",
-                    progress=current.progress,
-                )
+                raise errors.OperationError(
+                    error_messages.APPLIED_STATE_NOT_SAVED
+                    + "\n"
+                    + self._progress_message(current)
+                ) from exc
         # 源码及 applied 事实已提交；复扫在锁外执行，避免扫描期间占用业务写锁。
-        checks = verification.verify(self.root, proposal, self.scanner)
+        try:
+            checks = verification.verify(self.root, proposal, self.scanner)
+        except (OSError, RuntimeError, ValueError) as exc:
+            message = (
+                str(exc)
+                if isinstance(exc, errors.OperationError)
+                else error_messages.failed("源码已应用，但复扫", "程序内部错误")
+            )
+            try:
+                with self.store.locked() as latest:
+                    store.require_current(latest, current)
+                    self.store.save(
+                        store.changed(
+                            current,
+                            last_apply_error=message,
+                            version=current.version + 1,
+                        )
+                    )
+            except OSError, models.StateConflict, errors.OperationError:
+                message += "\n" + error_messages.FAILURE_NOT_SAVED
+            raise errors.OperationError(message) from exc
         try:
             with self.store.locked() as latest:
                 store.require_current(latest, current)
@@ -288,13 +373,14 @@ class RepairService:
                         current, checks=checks, version=current.version + 1
                     )
                 )
-        except (OSError, models.StateConflict) as exc:
-            return models.ApplyResult(
-                status="applied",
-                message=f"源码已应用；验证结果未保存，未覆盖后续任务：{exc}",
-                progress=current.progress,
-                checks=checks,
-            )
+        except models.StateConflict as exc:
+            raise models.StateConflict(
+                error_messages.APPLIED_CHECKS_CONFLICT
+            ) from exc
+        except (OSError, errors.OperationError) as exc:
+            raise errors.OperationError(
+                error_messages.failed("源码已应用，但验证结果保存", str(exc))
+            ) from exc
         return models.ApplyResult(
             status="applied",
             message="完整提案已应用。",
@@ -320,8 +406,16 @@ class RepairService:
                     message = "当前 bytes 等于原始基线。"
                 else:
                     message = "当前 bytes 既非基线也非结果，可能有外部修改。"
-            except (OSError, ValueError) as exc:
-                message = f"无法核查：{exc}"
+            except (
+                OSError,
+                models.RepairError,
+                repo_path.UnsafeRepoPathError,
+            ) as exc:
+                raise errors.OperationError(
+                    error_messages.source_unavailable(item.path, str(exc))
+                    + "\n"
+                    + self._progress_message(state)
+                ) from exc
             recorded = next(
                 (row for row in state.progress if row.path == item.path),
                 models.FileProgress(path=item.path, status="uncertain"),
@@ -341,25 +435,35 @@ class RepairService:
             str(path) != item.resolved_path
             or path.read_bytes() != item.original
         ):
-            raise models.RepairError(
-                f"{item.path} 路径或完整源码基线已变化，请重新准备并审核提案。"
-            )
+            raise models.RepairError(error_messages.preflight_failed(item.path))
         if (
             files.digest(item.original) != item.original_sha256
             or files.digest(item.candidate) != item.candidate_sha256
         ):
-            raise models.RepairError(f"{item.path} 提案 bytes 与指纹不一致。")
+            raise models.RepairError(error_messages.proposal_invalid(item.path))
 
     def _interrupted(
-        self, state: models.RepairState, message: str
-    ) -> models.ApplyResult:
-        interrupted = store.changed(state, status="interrupted")
+        self, state: models.RepairState, message: str, cause: Exception
+    ) -> None:
+        interrupted = store.changed(
+            state, status="interrupted", last_apply_error=message
+        )
         try:
             self.store.save(interrupted)
         except OSError:
-            message += "；中断状态未保存，磁盘 applying 状态仍阻止重放。"
-        return models.ApplyResult(
-            status="interrupted",
-            message=message + " 未自动回滚，请核查写入事实后 abort/new。",
-            progress=state.progress,
+            message += "\n" + error_messages.FAILURE_NOT_SAVED
+        raise errors.OperationError(
+            message
+            + "\n"
+            + self._progress_message(state)
+            + "\n"
+            + error_messages.NOT_ROLLED_BACK
+        ) from cause
+
+    @staticmethod
+    def _progress_message(state: models.RepairState) -> str:
+        return error_messages.write_progress(
+            [row.path for row in state.progress if row.status == "written"],
+            [row.path for row in state.progress if row.status == "not_written"],
+            [row.path for row in state.progress if row.status == "uncertain"],
         )

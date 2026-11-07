@@ -7,7 +7,7 @@ import pathlib
 import subprocess
 from typing import override
 
-from autopatch_j import config as autopatch_j_config
+from autopatch_j import error_messages
 from autopatch_j.scanners import contracts
 from autopatch_j.scanners import models
 from autopatch_j.scanners.semgrep import results
@@ -22,8 +22,12 @@ class SemgrepScanner(contracts.StaticScanner):
 
     name = models.ScannerName.SEMGREP
 
-    def __init__(self) -> None:
+    def __init__(
+        self, *, required_version: str = "1.160.0", timeout: int = 300
+    ) -> None:
         self.config = default_semgrep_config()
+        self.required_version = required_version
+        self.timeout = timeout
 
     @property
     def label(self) -> str:
@@ -53,11 +57,17 @@ class SemgrepScanner(contracts.StaticScanner):
                 findings=[],
             )
 
-        resolved_binary = self.resolve_binary(repo_root)
-        if resolved_binary is None:
-            return self.missing_binary_result(
-                scope=list(scope), targets=targets
+        status = self.probe()
+        if status.status != "ready" or status.binary is None:
+            return models.ScanResult(
+                engine="semgrep",
+                scope=list(scope),
+                targets=targets,
+                status="error",
+                message=status.message,
+                findings=[],
             )
+        resolved_binary = status.binary
 
         command = [
             resolved_binary,
@@ -67,7 +77,7 @@ class SemgrepScanner(contracts.StaticScanner):
             self.config,
             *self._command_targets(repo_root, targets),
         ]
-        timeout = autopatch_j_config.GLOBAL_CONFIG.scanner_timeout
+        timeout = self.timeout
         try:
             completed = subprocess.run(
                 command,
@@ -121,7 +131,7 @@ class SemgrepScanner(contracts.StaticScanner):
                 scope=list(scope),
                 targets=targets,
                 status="error",
-                message="Semgrep 输出不是有效 JSON，请检查扫描器运行时状态。",
+                message=error_messages.INVALID_SCAN_OUTPUT,
                 findings=[],
             )
         if not isinstance(payload, dict):
@@ -130,7 +140,7 @@ class SemgrepScanner(contracts.StaticScanner):
                 scope=list(scope),
                 targets=targets,
                 status="error",
-                message="Semgrep 输出 JSON 结构不符合预期，请检查扫描器运行时状态。",
+                message=error_messages.INVALID_SCAN_OUTPUT,
                 findings=[],
             )
         return results.build_semgrep_scan_result(
@@ -140,66 +150,26 @@ class SemgrepScanner(contracts.StaticScanner):
             targets=targets,
         )
 
-    def resolve_binary(
-        self, repo_root: pathlib.Path | None = None
-    ) -> str | None:
-        """选择当前实际可用的 Semgrep 程序，缺失时返回 None。"""
-        resolved = self.resolve_binary_with_source(repo_root)
-        return resolved[0] if resolved is not None else None
-
-    def resolve_binary_with_source(
-        self, repo_root: pathlib.Path | None = None
-    ) -> tuple[str, str] | None:
-        """返回可执行程序及来源标签，不自动安装。"""
-        del repo_root
-        user_runtime = runtime.resolve_managed_semgrep_binary()
-        if user_runtime is not None:
-            return user_runtime, "AutoPatch-J 管理的 Semgrep"
-        return None
-
     @override
     def get_meta(
         self, repo_root: pathlib.Path | None = None
     ) -> models.ScannerMeta:
         """返回 Semgrep 当前实际可用性及版本信息。"""
-        resolved = self.resolve_binary_with_source(repo_root)
-        if resolved is None:
-            return models.ScannerMeta(
-                name=self.name,
-                is_implemented=True,
-                status="未就绪 (Runtime Missing)",
-                version=autopatch_j_config.GLOBAL_CONFIG.semgrep_version,
-                description="核心扫描引擎，支持自定义 Java 安全规则集。",
-                availability="unavailable",
-                reason="AutoPatch-J 管理的 Semgrep 缺失或不可执行，请执行 /init。",
-            )
-
+        del repo_root
+        status = self.probe()
         return models.ScannerMeta(
             name=self.name,
             is_implemented=True,
-            status="就绪 (Ready)",
-            version=autopatch_j_config.GLOBAL_CONFIG.semgrep_version,
+            status=status.status,
+            version=status.actual_version or "未确认",
             description="核心扫描引擎，支持自定义 Java 安全规则集。",
-            availability="ready",
-            reason=resolved[1],
+            availability="ready" if status.status == "ready" else "unavailable",
+            reason=f"要求版本 {status.required_version}；{status.message}",
         )
 
-    def missing_binary_result(
-        self, scope: list[str], targets: list[str]
-    ) -> models.ScanResult:
-        """构造扫描器不可用结果，不将其当作零 finding。"""
-        message = (
-            "AutoPatch-J 管理的 Semgrep 缺失或不可执行。请执行"
-            " /init 初始化 scanner runtime。"
-        )
-        return models.ScanResult(
-            engine="semgrep",
-            scope=scope,
-            targets=targets,
-            status="error",
-            message=message,
-            findings=[],
-        )
+    def probe(self) -> runtime.RuntimeStatus:
+        """状态展示与扫描共享同一个版本探测入口，不缓存历史就绪结论。"""
+        return runtime.probe_managed_semgrep(self.required_version)
 
     def _command_targets(
         self, repo_root: pathlib.Path, targets: list[str]

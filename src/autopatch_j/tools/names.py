@@ -8,7 +8,7 @@ class FunctionToolName(enum.StrEnum):
 
     START_REPAIR = "start_repair"
     REQUEST_WRITE_SCOPE = "request_write_scope"
-    RECORD_CONSTRAINT = "record_constraint"
+    UPDATE_TASK_REQUIREMENTS = "update_task_requirements"
     SCAN = "scan_java"
     GET_SCAN_FINDINGS = "get_scan_findings"
     GET_FINDING_DETAIL = "get_finding_detail"
@@ -16,7 +16,9 @@ class FunctionToolName(enum.StrEnum):
     READ_SOURCE_BLOCK = "read_source_block"
     READ_SOURCE_CONTEXT = "read_source_context"
     SEARCH_SYMBOLS = "search_symbols"
+    SEARCH_JAVA_REFERENCES = "search_java_references"
     GET_PROPOSAL = "get_proposal"
+    GET_REPAIR_STATUS = "get_repair_status"
     ASSESS_ISSUE = "assess_issue"
     PROPOSE_PATCH = "propose_patch"
     MEMORY_SEARCH = "search_memory"

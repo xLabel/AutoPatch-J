@@ -42,6 +42,50 @@ rules:
     languages: [java]
     severity: WARNING
 
+  # --- 经典正确性候选 ---
+  # 以下候选模式依据 Java 官方语义独立编写，需由 Agent 核实业务意图。
+  - id: autopatch-j.java.correctness.string-reference-equality
+    patterns:
+      - pattern-either:
+          - pattern: (String $LEFT) == $RIGHT
+          - pattern: (java.lang.String $LEFT) == $RIGHT
+          - pattern: (String $LEFT) != $RIGHT
+          - pattern: (java.lang.String $LEFT) != $RIGHT
+      - pattern-not: $LEFT == null
+      - pattern-not: $LEFT != null
+      - pattern-not: null == $RIGHT
+      - pattern-not: null != $RIGHT
+    message: String 的 ==/!= 比较引用身份；若业务要比较内容则可能错误。先核实值比较、驻留或身份比较意图及 null 语义，不直接机械替换。
+    languages: [java]
+    severity: WARNING
+    metadata:
+      references:
+        - https://docs.oracle.com/javase/specs/jls/se25/html/jls-15.html#jls-15.21.3
+
+  - id: autopatch-j.java.correctness.bigdecimal-floating-constructor
+    pattern-either:
+      - pattern: new BigDecimal((double $VALUE))
+      - pattern: new java.math.BigDecimal((double $VALUE))
+      - pattern: new BigDecimal((float $VALUE))
+      - pattern: new java.math.BigDecimal((float $VALUE))
+    message: 浮点值构造 BigDecimal 会保留二进制浮点的实际值，可能偏离预期十进制金额。核实精度、scale 和数据来源后再选择修复，不能一律替换构造方式。
+    languages: [java]
+    severity: WARNING
+    metadata:
+      references:
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/math/BigDecimal.html
+
+  - id: autopatch-j.java.correctness.direct-thread-run
+    pattern-either:
+      - pattern: (Thread $THREAD).run()
+      - pattern: (java.lang.Thread $THREAD).run()
+    message: 直接调用 Thread.run 不会启动新线程；核实这里是否确实需要异步执行，显式同步执行不能据此直接判错。
+    languages: [java]
+    severity: WARNING
+    metadata:
+      references:
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Thread.html#run()
+
   # --- 3. 资源管理 (Resource Management) ---
   - id: autopatch-j.java.resources.unclosed-io-stream
     patterns:

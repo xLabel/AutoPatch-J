@@ -2,6 +2,8 @@
 
 import dataclasses
 
+from autopatch_j import error_messages
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ModelContextProfile:
@@ -32,17 +34,13 @@ def resolve_context_profile(
     """已知模型使用官方容量，未知部署必须明确给出容量。"""
     if model.strip() in {"deepseek-flash", "deepseek-v4-pro"}:
         if context_window is not None or max_output_tokens is not None:
-            raise ValueError("内置 DeepSeek profile 不接受容量覆盖")
+            raise ValueError(error_messages.FIXED_MODEL_CAPACITY)
         return ModelContextProfile(model, 1_048_576, 393_216)
     if context_window is None or max_output_tokens is None:
-        raise ValueError(
-            "未知模型须同时设置 AUTOPATCH_LLM_CONTEXT_WIN"
-            "DOW 和 AUTOPATCH_LLM_MAX_OUTPUT_TOKE"
-            "NS"
-        )
+        raise ValueError(error_messages.UNKNOWN_MODEL_CAPACITY)
     profile = ModelContextProfile(
         model, context_window, max_output_tokens, max_output_tokens
     )
     if max_output_tokens <= 0 or profile.input_capacity <= 0:
-        raise ValueError("模型容量必须为输出和安全余量保留足够空间")
+        raise ValueError(error_messages.INSUFFICIENT_CAPACITY)
     return profile

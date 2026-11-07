@@ -33,7 +33,7 @@ class FileEdit(Record):
 
 
 class Check(Record):
-    """独立验证证据；未执行或不可用不能转换为通过。"""
+    """独立验证证据；未执行不能转换为通过，运行故障另行抛出。"""
 
     kind: str
     status: Literal["passed", "failed", "unverified", "skipped"]
@@ -134,6 +134,7 @@ class RepairState(Record):
         progress: 逐文件写入事实，中断后不能据此自动重放。
         assessment: 当前明确的问题判断，不从缺少提案推断失败。
         checks: 应用后的独立验证结论。
+        last_apply_error: 当前提案最近一次预检或写入中断的主因。
     """
 
     version: pydantic.StrictInt = pydantic.Field(default=0, ge=0)
@@ -156,10 +157,15 @@ class RepairState(Record):
     progress: tuple[FileProgress, ...] = ()
     assessment: Assessment | None = None
     checks: tuple[Check, ...] = ()
+    last_apply_error: str | None = None
 
     @pydantic.model_validator(mode="after")
     def validate_binding(self) -> RepairState:
         """拒绝失去任务身份、提案身份或写入记录的持久状态。"""
+        if self.last_apply_error is not None and (
+            not self.last_apply_error.strip() or self.proposal is None
+        ):
+            raise ValueError("应用失败原因必须非空且绑定当前提案。")
         if self.status == "idle" and (
             self.task_id or self.proposal or self.write_paths
         ):
@@ -210,7 +216,7 @@ class RepairState(Record):
 class ApplyResult(Record):
     """当前应用事实与验证证据，不把部分写入描述为整体成功。"""
 
-    status: Literal["applied", "rejected", "interrupted"]
+    status: Literal["applied", "rejected"]
     message: str
     progress: tuple[FileProgress, ...] = ()
     checks: tuple[Check, ...] = ()

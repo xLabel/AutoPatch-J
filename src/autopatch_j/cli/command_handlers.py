@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import pathlib
-import sqlite3
 from typing import Protocol
 
 from pydantic_ai_harness import memory as sdk_memory
 from rich import table
 
+from autopatch_j import config
+from autopatch_j import error_messages
+from autopatch_j.application import runtime as project_runtime
 from autopatch_j.cli import commands
 from autopatch_j.cli import render
-from autopatch_j.cli import runtime as cli_runtime
 from autopatch_j.cli import status_presenter
+from autopatch_j.core import memory as core_memory
 from autopatch_j.core.repair import models
-from autopatch_j.scanners.semgrep import runtime as semgrep_runtime
+from autopatch_j.scanners import catalog
 
 
 class CliHostActions(Protocol):
@@ -26,7 +28,10 @@ class CliHostActions(Protocol):
     cwd: pathlib.Path
     repo_root: pathlib.Path | None
     renderer: render.CliRenderer
-    runtime: cli_runtime.CliRuntime | None
+    runtime: project_runtime.ProjectRuntime | None
+    settings: config.AppConfig
+    scanners: catalog.ScannerCatalog
+    runtime_unavailable_reason: str
 
     def initialize_runtime(self, repo_root: pathlib.Path) -> None:
         """为目标项目装配运行时并交还旧资源。"""
@@ -92,21 +97,18 @@ class CommandHandlers:
         runtime = self._require_runtime()
         if runtime is None:
             return
-        self.host.reset_project_state(
-            self.displayed_state or runtime.repair.store.load()
-        )
+        self.host.reset_project_state(self._require_displayed())
         self.host.renderer.print_success(
             "项目工作台已重置；项目会话、项目笔记、导出和终端历史已保留。"
-            "如需清空 Memory，请执行 /memory clear --"
-            "confirm。"
+            "如需清空 Memory，请执行 /memory clear --confirm。"
         )
 
     def handle_scanners(self, args: list[str] | None = None) -> None:
         """展示实际扫描器实现及可用性，不触发安装。"""
         del args
-        status_presenter.StatusPresenter(self.host.renderer).render_scanners(
-            self.host.repo_root
-        )
+        status_presenter.StatusPresenter(
+            self.host.renderer, self.host.settings, self.host.scanners
+        ).render_scanners(self.host.repo_root)
 
     def handle_quit(self, args: list[str] | None = None) -> None:
         """完成退出收尾，再结束 CLI 进程。"""
@@ -126,20 +128,29 @@ class CommandHandlers:
         if runtime is None:
             return
 
-        status, _ = semgrep_runtime.install_managed_semgrep_runtime()
-        self.host.renderer.print_step(f"扫描器运行时自检: {status}")
-
-        stats = runtime.symbol_indexer.rebuild_index()
+        outcome = runtime.initialize()
         self.host.renderer.print_success(
-            f"初始化完成，索引 {stats.get("total", 0)} 项"
+            f"扫描器 {outcome.scanner.status}：{outcome.scanner.message}"
         )
-
-        if stats.get("class", 0) == 0 and stats.get("method", 0) == 0:
+        stats = outcome.index_stats
+        self.host.renderer.print_success(
+            f"索引重建完成，共 {stats.get("total", 0)} 项"
+        )
+        if not any(
+            stats.get(kind, 0)
+            for kind in (
+                "class",
+                "interface",
+                "enum",
+                "record",
+                "constructor",
+                "method",
+            )
+        ):
             self.host.renderer.print_panel(
                 "[bold yellow]索引构建完成，但未提取到任何 Java"
                 " 类或方法！[/]\n"
-                "这似乎不是一个标准的 Java 源码项目，AutoPatch-J"
-                " 的大模型上下文感知能力将严重受限。",
+                "请检查所选目录及 Java 源码；当前仍可使用文件读取能力。",
                 title="警告",
                 style="bold yellow",
             )
@@ -147,21 +158,11 @@ class CommandHandlers:
     def handle_status(self, args: list[str] | None = None) -> None:
         """展示当前配置和工作台诊断，不发送模型请求。"""
         del args
-        status_presenter.StatusPresenter(self.host.renderer).render_status(
-            self.host.runtime, self.host.repo_root
-        )
-
-    def handle_reindex(self, args: list[str] | None = None) -> None:
-        """重建当前项目符号索引，保留会话和审核工作台。"""
-        del args
-        runtime = self._require_runtime()
-        if runtime is None:
-            return
-        self.host.renderer.print_step("正在重新构建索引...")
-        stats = runtime.symbol_indexer.rebuild_index()
-        self.host.renderer.print_success(
-            f"索引刷新完成，累计 {stats.get("total", 0)} 项"
-        )
+        status_presenter.StatusPresenter(
+            self.host.renderer, self.host.settings, self.host.scanners
+        ).render_status(self.host.runtime, self.host.repo_root)
+        if self.host.runtime is None:
+            self.host.renderer.print_error(self.host.runtime_unavailable_reason)
 
     def handle_new(self, args: list[str] | None = None) -> None:
         """归档项目会话、清理待审草案和临时要求，保留长期笔记。"""
@@ -170,8 +171,7 @@ class CommandHandlers:
         if runtime is None:
             return
 
-        runtime.repair.end(self.displayed_state or runtime.repair.store.load())
-        conversation_id = runtime.model_runtime.run(runtime.conversations.new())
+        conversation_id = runtime.new_conversation(self._require_displayed())
         self.host.renderer.print_success(
             f"已开启新项目会话：{conversation_id}；项目笔记已保留。"
         )
@@ -194,7 +194,11 @@ class CommandHandlers:
             elif command == "show" and len(rest) <= 1:
                 item = run(notebook.show(rest[0] if rest else "MEMORY.md"))
                 renderer.print_agent_text(
-                    item.content if item else "未找到该笔记。"
+                    item.content
+                    if item
+                    else error_messages.missing_note(
+                        rest[0] if rest else "MEMORY.md"
+                    )
                 )
             elif command == "forget" and len(rest) == 1:
                 run(notebook.forget(rest[0]))
@@ -210,22 +214,29 @@ class CommandHandlers:
                 destination = run(notebook.export())
                 renderer.print_success(f"项目笔记已导出：{destination}")
             else:
-                renderer.print_error(
-                    "用法：/memory status|list|show [path]|"
-                    "forget <path>|clear --confirm|expor"
-                    "t"
-                )
+                renderer.print_error(error_messages.MEMORY_USAGE)
         except (
-            sqlite3.DatabaseError,
-            OSError,
-            LookupError,
-            ValueError,
+            core_memory.MemoryInputError,
             sdk_memory.MemoryConflictError,
         ) as exc:
-            renderer.print_error(f"Memory 操作未完成：{exc}")
+            for note in getattr(exc, "__notes__", ()):
+                renderer.print_plain(note)
+            renderer.print_error(
+                error_messages.MEMORY_CONFLICT
+                if isinstance(exc, sdk_memory.MemoryConflictError)
+                else str(exc)
+            )
 
-    def _require_runtime(self) -> cli_runtime.CliRuntime | None:
-        if self.host.runtime is None:
-            self.host.renderer.print_error("系统未初始化，请先执行 /init")
+    def _require_displayed(self) -> models.RepairState:
+        if self.displayed_state is None:
+            raise models.RepairError(error_messages.REVIEW_REQUIRED)
+        return self.displayed_state
+
+    def _require_runtime(self) -> project_runtime.ProjectRuntime | None:
+        if self.host.runtime is None or self.host.runtime.model_runtime.closed:
+            self.host.renderer.print_error(
+                self.host.runtime_unavailable_reason
+                or error_messages.RUNTIME_CLOSED
+            )
             return None
         return self.host.runtime

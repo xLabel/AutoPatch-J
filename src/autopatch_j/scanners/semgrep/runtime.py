@@ -4,19 +4,88 @@ from __future__ import annotations
 
 from collections.abc import Generator
 import contextlib
+import dataclasses
 import os
 import pathlib
+import re
 import subprocess
 import sys
+from typing import Literal
 
+import certifi
 import filelock
 
-try:
-    import certifi
-except ImportError:
-    certifi = None
-
 from autopatch_j import config
+from autopatch_j import error_messages
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class RuntimeStatus:
+    """受管程序的实际探测结果；配置版本不能充当探测版本。"""
+
+    status: Literal["missing", "broken", "version_mismatch", "ready"]
+    required_version: str
+    actual_version: str | None = None
+    binary: str | None = None
+    message: str = ""
+
+
+def probe_managed_semgrep(required_version: str) -> RuntimeStatus:
+    """有限时运行受管程序 --version；不安装或改用系统程序。"""
+    binary = resolve_managed_semgrep_binary()
+    if binary is None:
+        return RuntimeStatus(
+            "missing",
+            required_version,
+            message=error_messages.SCANNER_UNAVAILABLE,
+        )
+    env = os.environ.copy()
+    env["SEMGREP_ENABLE_VERSION_CHECK"] = "0"
+    env["SEMGREP_SEND_METRICS"] = "off"
+    try:
+        completed = subprocess.run(
+            [binary, "--version"],
+            capture_output=True,
+            encoding="utf-8",
+            timeout=10,
+            check=False,
+            env=env,
+        )
+    except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+        return RuntimeStatus(
+            "broken",
+            required_version,
+            binary=binary,
+            message=f"版本探测失败：{exc}",
+        )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()[:2000]
+        return RuntimeStatus(
+            "broken",
+            required_version,
+            binary=binary,
+            message=f"版本探测退出 {completed.returncode}：{detail}",
+        )
+    actual = completed.stdout.strip()
+    if re.fullmatch(r"\d+\.\d+\.\d+[a-zA-Z0-9.+-]*", actual) is None:
+        return RuntimeStatus(
+            "broken",
+            required_version,
+            binary=binary,
+            message="版本探测未返回可识别的 Semgrep 版本。",
+        )
+    if actual != required_version:
+        label = actual[:200] or "空输出"
+        return RuntimeStatus(
+            "version_mismatch",
+            required_version,
+            actual[:200],
+            binary,
+            f"要求 {required_version}，实际探测为 {label}；请执行 /init。",
+        )
+    return RuntimeStatus(
+        "ready", required_version, actual, binary, "受管 Semgrep 版本已核实。"
+    )
 
 
 def resolve_managed_semgrep_binary() -> str | None:
@@ -84,52 +153,55 @@ def semgrep_rules_path() -> pathlib.Path:
 
 
 def install_managed_semgrep_runtime(
-    version: str = config.GLOBAL_CONFIG.semgrep_version,
+    version: str,
     python_executable: str = sys.executable,
-) -> tuple[str, str]:
-    """持有系统互斥锁安装固定版本，取得锁后复检已安装状态。"""
-    if resolve_managed_semgrep_binary() is not None:
-        return (
-            "ok",
-            f"AutoPatch-J 管理的 Semgrep 已存在：{managed_semgrep_binary_path()}",
-        )
+    *,
+    lock_timeout: int = 600,
+) -> RuntimeStatus:
+    """显式准备用户级受管程序，锁内复检并验证安装后的实际版本。
 
+    Args:
+        version: 要求的准确 Semgrep 版本。
+        python_executable: 创建受管虚拟环境的解释器。
+        lock_timeout: 安装互斥锁的最长等待秒数。
+
+    Returns:
+        实际探测结果或安装失败原因；命令完成不等于程序就绪。
+
+    Raises:
+        OSError: 创建目录失败或安装锁等待超时，未伪装成安装成功。
+    """
     semgrep_runtime_dir().mkdir(parents=True, exist_ok=True)
-    with semgrep_install_lock():
-        if resolve_managed_semgrep_binary() is not None:
-            return (
-                "ok",
-                f"AutoPatch-J 管理的 Semgrep 已存在：{managed_semgrep_binary_path()}",
-            )
+    with semgrep_install_lock(lock_timeout):
+        current = probe_managed_semgrep(version)
+        if current.status == "ready":
+            return current
 
         venv_result = run_setup_command(
             [python_executable, "-m", "venv", str(semgrep_venv_dir())]
         )
         if venv_result is not None:
-            return venv_result
+            return RuntimeStatus("broken", version, message=venv_result)
 
         pip_executable = semgrep_venv_bin_dir() / (
             "pip.exe" if os.name == "nt" else "pip"
         )
         install_result = run_setup_command(
-            [str(pip_executable), "install", "--quiet", f"semgrep=={version}"]
+            [
+                str(pip_executable),
+                "install",
+                "--quiet",
+                "--upgrade",
+                "--force-reinstall",
+                f"semgrep=={version}",
+            ]
         )
         if install_result is not None:
-            return install_result
-    if resolve_managed_semgrep_binary() is None:
-        return (
-            "error",
-            f"Semgrep 安装完成，但未在预期路径找到可执行文件：{managed_semgrep_binary_path()}",
-        )
-    return (
-        "ok",
-        f"已安装 AutoPatch-J 管理的 Semgrep "
-        f"{version}"
-        f"：{managed_semgrep_binary_path()}",
-    )
+            return RuntimeStatus("broken", version, message=install_result)
+        return probe_managed_semgrep(version)
 
 
-def run_setup_command(command: list[str]) -> tuple[str, str] | None:
+def run_setup_command(command: list[str]) -> str | None:
     """捕获安装命令的进程失败和启动异常，返回可显示的失败原因。"""
     try:
         subprocess.run(
@@ -140,9 +212,9 @@ def run_setup_command(command: list[str]) -> tuple[str, str] | None:
         )
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or str(exc)).strip()
-        return "error", f"Semgrep 运行时初始化失败：{detail}"
+        return f"Semgrep 运行时初始化失败：{detail[:2000]}"
     except OSError as exc:
-        return "error", f"Semgrep 运行时初始化失败：{exc}"
+        return f"Semgrep 运行时初始化失败：{exc}"
     return None
 
 
@@ -154,7 +226,9 @@ def semgrep_install_lock(
     lock_path = semgrep_install_lock_path()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     # OS 锁随进程退出自动释放；残留文件本身不表示仍被占用。
-    with filelock.FileLock(str(lock_path), timeout=timeout_seconds):
+    with filelock.FileLock(
+        str(lock_path), timeout=timeout_seconds, preserve_lock_file=True
+    ):
         yield
 
 
@@ -188,12 +262,10 @@ def build_semgrep_subprocess_env(repo_root: pathlib.Path) -> dict[str, str]:
     env.setdefault("SEMGREP_SEND_METRICS", "off")
     env.setdefault("SEMGREP_ENABLE_VERSION_CHECK", "0")
 
-    cert_file = detect_certifi_bundle()
-    if cert_file is not None:
-        env.setdefault("SSL_CERT_FILE", cert_file)
+    env.setdefault("SSL_CERT_FILE", detect_certifi_bundle())
     return env
 
 
-def detect_certifi_bundle() -> str | None:
-    """可选取得 certifi 证书路径；缺失时沿用子进程默认信任配置。"""
-    return certifi.where() if certifi is not None else None
+def detect_certifi_bundle() -> str:
+    """取得固定依赖 certifi 的证书路径。"""
+    return certifi.where()

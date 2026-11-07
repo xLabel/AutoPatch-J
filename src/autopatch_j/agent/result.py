@@ -5,11 +5,10 @@ import enum
 
 
 class RunStatus(enum.StrEnum):
-    """完整、受限、失败与取消分别表达，受限不冒充完成。"""
+    """完整、受限与取消分别表达，故障以异常终止，受限不冒充完成。"""
 
     COMPLETED = "completed"
     LIMITED = "limited"
-    FAILED = "failed"
     CANCELLED = "cancelled"
 
 

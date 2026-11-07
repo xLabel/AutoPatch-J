@@ -8,6 +8,8 @@ import filelock
 import pydantic
 
 from autopatch_j import config
+from autopatch_j import error_messages
+from autopatch_j.core import errors
 from autopatch_j.core.repair import files
 from autopatch_j.core.repair import models
 
@@ -19,7 +21,7 @@ class RepairStore:
         self.root = root.resolve()
         self.directory = config.get_project_state_dir(self.root)
         if self.directory.resolve() != self.root / ".autopatch-j":
-            raise models.RepairError("项目状态目录不能重定向到其他位置。")
+            raise models.RepairError(error_messages.STATE_REDIRECTED)
         self.path = self.directory / "repair.json"
         self.lock = filelock.FileLock(
             self.directory / "repair.lock", timeout=5, preserve_lock_file=True
@@ -40,9 +42,7 @@ class RepairStore:
         try:
             return models.RepairState.model_validate_json(payload)
         except pydantic.ValidationError as exc:
-            raise models.RepairError(
-                "修复状态损坏或 schema 无效，请保留文件并人工核查，未自动清空。"
-            ) from exc
+            raise errors.OperationError(error_messages.STATE_CORRUPTED) from exc
 
     def save(self, state: models.RepairState) -> None:
         """由业务入口持锁调用；保存同一领域对象，不创建第二套快照。"""
@@ -68,6 +68,4 @@ def require_current(
         expected.issue_id,
         expected.status,
     ) or current.proposal != expected.proposal:
-        raise models.StateConflict(
-            "任务或提案版本已变化，请重新查看；未覆盖其他运行的结果。"
-        )
+        raise models.StateConflict(error_messages.STATE_CONFLICT)

@@ -7,8 +7,9 @@ import sys
 
 import pytest
 
+from autopatch_j.core import errors
 from autopatch_j.core import finding
-from autopatch_j.core.repair import checks
+from autopatch_j.core.project import java_ast
 from autopatch_j.core.repair import files
 from autopatch_j.core.repair import models
 from autopatch_j.core.repair import service
@@ -124,7 +125,12 @@ def test_multifile_preflight_rejects_before_any_write(tmp_path):
     result = repair.apply(state)
     assert result.status == "rejected"
     assert (tmp_path / "A.java").read_text() == "class A { int n = 1; }"
-    assert repair.store.load() == state
+    persisted = repair.store.load()
+    assert persisted.version == state.version + 1
+    assert persisted.last_apply_error == result.message
+    assert persisted.proposal == state.proposal
+    assert persisted.status == "pending" and not persisted.progress
+    assert persisted.write_paths == state.write_paths
 
 
 def test_multifile_second_write_failure_stops_and_survives_restart(
@@ -149,12 +155,21 @@ def test_multifile_second_write_failure_stops_and_survives_restart(
         real_write(path, content, **kwargs)
 
     monkeypatch.setattr(files, "atomic_write", fail_second)
-    result = repair.apply(state)
-    assert result.status == "interrupted"
-    assert [row.status for row in result.progress] == ["written", "not_written"]
+    with pytest.raises(errors.OperationError, match="locked file") as caught:
+        repair.apply(state)
+    assert "已写入：A.java" in str(caught.value) and "待核查：B.java" in str(
+        caught.value
+    )
     restarted = service.RepairService(tmp_path)
     persisted = restarted.store.load()
     assert persisted.status == "interrupted"
+    assert (
+        persisted.last_apply_error == "应用中断：B.java写入失败，locked file。"
+    )
+    assert [(row.path, row.status) for row in persisted.progress] == [
+        ("A.java", "written"),
+        ("B.java", "uncertain"),
+    ]
     assert "n = 2" in (tmp_path / "A.java").read_text()
     assert "n = 1" in (tmp_path / "B.java").read_text()
     with pytest.raises(models.RepairError):
@@ -175,9 +190,9 @@ def test_postwrite_save_failure_keeps_disk_blocked_and_reports_actual_write(
         real_save(value)
 
     monkeypatch.setattr(repair.store, "save", fail_after_write)
-    result = repair.apply(state)
-    assert result.status == "interrupted"
-    assert result.progress[0].status == "written"
+    with pytest.raises(errors.OperationError, match="进度保存失败") as caught:
+        repair.apply(state)
+    assert "已写入" in str(caught.value)
     persisted = service.RepairService(tmp_path).store.load()
     assert persisted.status == "applying"
     assert "等于提案结果" in repair.inspect(persisted)[0].message
@@ -234,7 +249,7 @@ def test_stale_run_and_simultaneous_apply_are_serialized(tmp_path):
 def test_invalid_state_is_not_silently_empty(tmp_path):
     repair = service.RepairService(tmp_path)
     repair.store.path.write_text('{"broken": true}')
-    with pytest.raises(models.RepairError, match="状态损坏"):
+    with pytest.raises(errors.OperationError, match="状态损坏"):
         repair.store.load()
 
 
@@ -311,7 +326,7 @@ def test_unsafe_text_and_unencodable_revision_keep_source(tmp_path):
     path = tmp_path / "A.java"
     path.write_bytes("// 中文\nclass A { int n = 1; }".encode("gbk"))
     repair, state = task(tmp_path)
-    with pytest.raises(UnicodeEncodeError):
+    with pytest.raises(models.RepairError, match="无法表示替换内容"):
         repair.prepare(
             state, (edit("A.java", ("n = 1", "n = 1; // 😀")),), "bad encoding"
         )
@@ -321,16 +336,21 @@ def test_unsafe_text_and_unencodable_revision_keep_source(tmp_path):
     assert path.read_bytes() == b"\x00binary"
 
 
-def test_unavailable_syntax_remains_unverified_after_restart(
+def test_parser_failure_cannot_create_an_applicable_proposal(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(
-        checks, "tree_sitter_import_error", ImportError("missing")
-    )
-    repair, state = pending(tmp_path)
-    assert state.proposal is not None
-    assert state.proposal.files[0].syntax.status == "unverified"
-    assert service.RepairService(repair.root).store.load() == state
+    (tmp_path / "A.java").write_text("class A { int n = 1; }")
+    repair, state = task(tmp_path)
+
+    def failed(*unused_args):
+        raise RuntimeError("parser failure")
+
+    monkeypatch.setattr(java_ast.tree_sitter, "Parser", failed)
+    with pytest.raises(errors.OperationError, match="parser failure"):
+        repair.prepare(state, (edit("A.java", ("n = 1", "n = 2")),), "fix")
+    assert service.RepairService(tmp_path).store.load() == state
+    assert state.proposal is None
+    assert b"n = 1" in (tmp_path / "A.java").read_bytes()
 
 
 def test_pending_revision_cannot_switch_target_binding(tmp_path):
@@ -345,7 +365,7 @@ def test_pending_revision_cannot_switch_target_binding(tmp_path):
         ),
         source_sha256=files.digest((tmp_path / "A.java").read_bytes()),
     )
-    with pytest.raises(models.RepairError, match="绑定"):
+    with pytest.raises(models.RepairError, match="不能更换当前问题"):
         repair.prepare(
             state, (edit("A.java", ("n = 1", "n = 2")),), "switch issue", target
         )
@@ -402,9 +422,8 @@ def test_final_state_save_failure_reports_all_written_without_replay(
         real_save(value)
 
     monkeypatch.setattr(repair.store, "save", fail_final)
-    outcome = repair.apply(state)
-    assert outcome.status == "interrupted"
-    assert outcome.progress[0].status == "written"
+    with pytest.raises(errors.OperationError, match="应用状态保存失败"):
+        repair.apply(state)
     restored = service.RepairService(tmp_path).store.load()
     assert restored.status == "applying"
     assert restored.progress[0].status == "written"

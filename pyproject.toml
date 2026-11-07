@@ -20,6 +20,7 @@ dependencies = [
   "prompt_toolkit",
   "rich",
   "socksio",
+  "certifi",
   "tree-sitter>=0.25.0",
   "tree-sitter-java>=0.23.0",
 ]
@@ -36,7 +37,7 @@ dev = [
 ]
 
 [project.scripts]
-autopatch-j = "autopatch_j.cli.app:main"
+autopatch-j = "autopatch_j.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

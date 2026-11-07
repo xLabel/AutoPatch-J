@@ -41,8 +41,8 @@ CLI_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand(
         name="/init",
         handler_name="handle_init",
-        help_description="初始化当前目录为 Java 项目并建立索引",
-        completion_description="初始化项目环境",
+        help_description="准备扫描器并建立或刷新项目索引",
+        completion_description="准备环境并刷新索引",
     ),
     CliCommand(
         name="/status",
@@ -55,12 +55,6 @@ CLI_COMMANDS: tuple[CliCommand, ...] = (
         handler_name="handle_scanners",
         help_description="查看扫描器状态",
         completion_description="查看扫描器状态",
-    ),
-    CliCommand(
-        name="/reindex",
-        handler_name="handle_reindex",
-        help_description="重建本地代码符号索引",
-        completion_description="刷新代码符号索引",
     ),
     CliCommand(
         name="/reset",

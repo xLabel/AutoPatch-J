@@ -57,9 +57,7 @@ def test_live_llm_requires_flag_and_green_preceding_tests() -> None:
 
 
 def test_live_llm_preflight_rejects_missing_configuration() -> None:
-    config = dataclasses.replace(
-        autopatch_j_config.GLOBAL_CONFIG, llm_api_key=""
-    )
+    config = dataclasses.replace(autopatch_j_config.AppConfig(), llm_api_key="")
 
     # 直接测试排序与授权门禁，确保禁止网络请求的条件准确。
     # pylint: disable-next=protected-access
@@ -82,17 +80,10 @@ def test_endpoint_summary_excludes_credentials_path_and_query() -> None:
     assert label == "https://llm.example.test"
 
 
-def test_regular_tests_fail_closed_before_real_openai_client_creation(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        autopatch_j_config.GLOBAL_CONFIG, "llm_api_key", "configured-for-test"
-    )
-    monkeypatch.setattr(
-        autopatch_j_config.GLOBAL_CONFIG, "llm_model", "deepseek-flash"
-    )
+def test_regular_tests_fail_closed_before_real_openai_client_creation() -> None:
+    settings = autopatch_j_config.AppConfig(llm_api_key="configured-for-test")
 
     with pytest.raises(
         AssertionError, match="普通测试禁止创建真实 OpenAI client"
     ):
-        factory.build_model_runtime()
+        factory.build_model_runtime(settings)

@@ -5,6 +5,7 @@ import types
 
 from autopatch_j.scanners import catalog as scanners_catalog
 from autopatch_j.scanners import models
+from autopatch_j.scanners.semgrep import runtime
 from autopatch_j.scanners.semgrep import scanner as semgrep_scanner_module
 from autopatch_j.scanners.semgrep import targets
 
@@ -50,7 +51,11 @@ def test_semgrep_scanner_reports_invalid_json_output(
     java_file = tmp_path / "Demo.java"
     java_file.write_text("class Demo {}", encoding="utf-8")
     scanner = semgrep_scanner_module.SemgrepScanner()
-    monkeypatch.setattr(scanner, "resolve_binary", lambda repo_root: "semgrep")
+    monkeypatch.setattr(
+        scanner,
+        "probe",
+        lambda: runtime.RuntimeStatus("ready", "1.160.0", "1.160.0", "semgrep"),
+    )
     monkeypatch.setattr(
         semgrep_scanner_module.subprocess,
         "run",
@@ -62,7 +67,7 @@ def test_semgrep_scanner_reports_invalid_json_output(
     result = scanner.scan(tmp_path, ["Demo.java"])
 
     assert result.status == "error"
-    assert "不是有效 JSON" in result.message
+    assert "返回的数据格式无效" in result.message
 
 
 def test_semgrep_scanner_rejects_empty_json_output(
@@ -71,7 +76,11 @@ def test_semgrep_scanner_rejects_empty_json_output(
     java_file = tmp_path / "Demo.java"
     java_file.write_text("class Demo {}", encoding="utf-8")
     scanner = semgrep_scanner_module.SemgrepScanner()
-    monkeypatch.setattr(scanner, "resolve_binary", lambda repo_root: "semgrep")
+    monkeypatch.setattr(
+        scanner,
+        "probe",
+        lambda: runtime.RuntimeStatus("ready", "1.160.0", "1.160.0", "semgrep"),
+    )
     monkeypatch.setattr(
         semgrep_scanner_module.subprocess,
         "run",
@@ -93,7 +102,13 @@ def test_semgrep_scanner_reports_missing_runtime_as_scan_result(
     java_file = tmp_path / "Demo.java"
     java_file.write_text("class Demo {}", encoding="utf-8")
     scanner = semgrep_scanner_module.SemgrepScanner()
-    monkeypatch.setattr(scanner, "resolve_binary", lambda repo_root: None)
+    monkeypatch.setattr(
+        scanner,
+        "probe",
+        lambda: runtime.RuntimeStatus(
+            "missing", "1.160.0", message="Semgrep 缺失"
+        ),
+    )
 
     result = scanner.scan(tmp_path, ["Demo.java"])
 
@@ -104,7 +119,9 @@ def test_semgrep_scanner_reports_missing_runtime_as_scan_result(
 
 
 def test_scanner_catalog_exposes_only_executable_scanners():
-    catalog = scanners_catalog.ScannerCatalog.default()
+    catalog = scanners_catalog.ScannerCatalog.default(
+        version="1.160.0", timeout=300
+    )
     assert [scanner.name for scanner in catalog.all()] == [
         models.ScannerName.SEMGREP
     ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 
+from autopatch_j import error_messages
 from autopatch_j.cli import command_handlers
 from autopatch_j.cli import commands
 from autopatch_j.cli import render
@@ -27,8 +28,8 @@ class CommandRouter:
         """按注册信息解析和分派命令；无效参数只报告错误。"""
         try:
             parts = shlex.split(raw_cmd)
-        except ValueError as exc:
-            self.renderer.print_error(f"命令解析失败：{exc}")
+        except ValueError:
+            self.renderer.print_error(error_messages.INVALID_COMMAND)
             return
         if not parts:
             return
@@ -37,12 +38,12 @@ class CommandRouter:
 
         command = commands.CLI_COMMAND_BY_NAME.get(cmd)
         if command is None:
-            self.renderer.print_error(f"未知命令：{cmd}")
+            self.renderer.print_error(error_messages.unknown_command(cmd))
             return
 
         args = parts[1:]
         if args and not command.accepts_arguments:
-            self.renderer.print_error(f"命令 {cmd} 不接受参数")
+            self.renderer.print_error(error_messages.unexpected_arguments(cmd))
             return
 
         getattr(self.handlers, command.handler_name)(args)

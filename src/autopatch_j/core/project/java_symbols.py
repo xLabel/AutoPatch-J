@@ -2,17 +2,7 @@
 
 from __future__ import annotations
 
-import pathlib
-
-tree_sitter_import_error: ImportError | None = None
-try:
-    import tree_sitter
-    import tree_sitter_java
-except ImportError as exc:
-    tree_sitter_import_error = exc
-
-
-from autopatch_j.core.project import source_text
+from autopatch_j.core.project import java_ast
 from autopatch_j.core.project import symbols
 
 
@@ -23,52 +13,43 @@ class JavaSymbolExtractor:
     """
 
     def extract(
-        self, rel_path: str, full_path: pathlib.Path, mtime: float
+        self, rel_path: str, source: java_ast.JavaSource, mtime: float
     ) -> list[symbols.SymbolIndexEntry]:
-        """从单个 Java 文件提取类型、构造器和方法；错误交索引层记录降级。"""
-        entries: list[symbols.SymbolIndexEntry] = []
-        if tree_sitter_import_error is not None:
-            raise tree_sitter_import_error
-
-        content = source_text.read(full_path).content
-        language = tree_sitter.Language(tree_sitter_java.language())
-        parser = tree_sitter.Parser(language)
-        tree = parser.parse(content.encode("utf-8"))
-
-        query = tree_sitter.Query(
-            language,
-            """
-            (class_declaration name: (identifier) @class.name)
-            (method_declaration name: (identifier) @method.name)
-            (interface_declaration name: (identifier) @interface.name)
-            (enum_declaration name: (identifier) @enum.name)
-            (record_declaration name: (identifier) @record.name)
-            (constructor_declaration name: (identifier) @constructor.name)
-            """,
-        )
-        captures = tree_sitter.QueryCursor(query).captures(tree.root_node)
-        kind_by_tag = {
-            "class.name": "class",
-            "method.name": "method",
-            "interface.name": "interface",
-            "enum.name": "enum",
-            "record.name": "record",
-            "constructor.name": "constructor",
-        }
-
-        for tag, nodes in captures.items():
-            for node in nodes:
-                name = node.text
-                if name is None:
-                    raise ValueError("Tree-sitter 未提供符号文本")
-                entries.append(
-                    symbols.SymbolIndexEntry(
-                        path=rel_path,
-                        name=name.decode("utf-8"),
-                        kind=kind_by_tag.get(tag, "symbol"),
-                        line=node.start_point[0] + 1,
-                        container=rel_path,
-                        mtime=mtime,
+        """提取原生解析识别的声明，不宣称语法或语义完备。"""
+        # 官方 tags 覆盖 class/interface/method，补充本项目已有类型和构造器。
+        pattern = """
+        (enum_declaration) @definition.enum
+        (record_declaration) @definition.record
+        (constructor_declaration) @definition.constructor
+        (compact_constructor_declaration) @definition.constructor
+        (annotation_type_declaration) @definition.annotation
+        """
+        entries = []
+        for _, captures in source.tag_matches(pattern):
+            for tag, nodes in captures.items():
+                if not tag.startswith("definition."):
+                    continue
+                for node in nodes:
+                    name = node.child_by_field_name("name")
+                    if name is None:
+                        continue
+                    line, column = source.point(name)
+                    end_line, end_column = source.point(node, end=True)
+                    entries.append(
+                        symbols.SymbolIndexEntry(
+                            path=rel_path,
+                            name=java_ast.text(name),
+                            kind=tag.removeprefix("definition."),
+                            line=line,
+                            column=column,
+                            end_line=end_line,
+                            end_column=end_column,
+                            owner=java_ast.owner(node, source),
+                            signature=source.signature(node),
+                            mtime=mtime,
+                            source_sha256=source.source_sha256,
+                            source_has_errors=source.source_has_errors,
+                        )
                     )
-                )
+        entries.sort(key=lambda item: (item.line, item.column, item.kind))
         return entries

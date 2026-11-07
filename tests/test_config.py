@@ -2,7 +2,41 @@
 
 from __future__ import annotations
 
+import dataclasses
+
+import pytest
+
 from autopatch_j import config as autopatch_j_config
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, 50),
+        ("", 50),
+        ("  ", 50),
+        ("7", 7),
+        (" none ", None),
+        ("NONE", None),
+    ],
+)
+def test_request_limit_uses_native_default_or_explicit_override(
+    monkeypatch, raw, expected
+):
+    if raw is None:
+        monkeypatch.delenv("AUTOPATCH_LLM_REQUEST_LIMIT", raising=False)
+    else:
+        monkeypatch.setenv("AUTOPATCH_LLM_REQUEST_LIMIT", raw)
+    settings = autopatch_j_config.AppConfig.from_env()
+    assert settings.llm_request_limit == expected
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "1.5", "bad", "true"])
+def test_invalid_request_limit_disables_only_model(monkeypatch, raw):
+    monkeypatch.setenv("AUTOPATCH_LLM_REQUEST_LIMIT", raw)
+    settings = autopatch_j_config.AppConfig.from_env()
+    assert not settings.is_llm_ready()
+    assert "AUTOPATCH_LLM_REQUEST_LIMIT" in settings.get_missing_llm_message()
 
 
 def test_app_config_reads_llm_environment(monkeypatch) -> None:
@@ -18,7 +52,7 @@ def test_app_config_reads_llm_environment(monkeypatch) -> None:
     assert config.llm_model == "custom-model"
     assert config.llm_context_window is None
     assert config.debug_mode is True
-    assert config.is_llm_ready() is True
+    assert config.is_llm_ready() is False  # 未知模型尚缺容量。
 
 
 def test_app_config_uses_defaults_and_isolates_ignored_dirs(
@@ -31,7 +65,9 @@ def test_app_config_uses_defaults_and_isolates_ignored_dirs(
 
     first = autopatch_j_config.AppConfig.from_env()
     second = autopatch_j_config.AppConfig.from_env()
-    first.ignored_dirs.add("custom")
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        setattr(first, "debug_mode", True)
+    assert isinstance(first.ignored_dirs, frozenset)
 
     assert first.llm_api_key == ""
     assert first.llm_base_url == "https://api.deepseek.com"
@@ -44,18 +80,6 @@ def test_app_config_uses_defaults_and_isolates_ignored_dirs(
     assert first.debug_mode is False
     assert first.is_llm_ready() is False
     assert "custom" not in second.ignored_dirs
-
-
-def test_app_config_ignores_removed_provider_environment(monkeypatch) -> None:
-    monkeypatch.setenv("AUTOPATCH_LLM_EXTRA_BODY", "{bad json")
-    monkeypatch.setenv("AUTOPATCH_LLM_REASONING_EFFORT", "low")
-    monkeypatch.setenv("AUTOPATCH_LLM_STREAM_DIALECT", "bailian-dsml")
-
-    config = autopatch_j_config.AppConfig.from_env()
-
-    assert not hasattr(config, "llm_extra_body")
-    assert not hasattr(config, "llm_reasoning_effort")
-    assert not hasattr(config, "llm_stream_dialect")
 
 
 def test_app_config_reads_context_overrides(monkeypatch) -> None:
@@ -90,9 +114,7 @@ def test_unknown_model_requires_context_window(monkeypatch) -> None:
 def test_invalid_context_override_fails_configuration(monkeypatch) -> None:
     monkeypatch.setenv("AUTOPATCH_LLM_CONTEXT_WINDOW", "0")
 
-    try:
-        autopatch_j_config.AppConfig.from_env()
-    except ValueError as exc:
-        assert "AUTOPATCH_LLM_CONTEXT_WINDOW" in str(exc)
-    else:
-        raise AssertionError("invalid context window must fail")
+    settings = autopatch_j_config.AppConfig.from_env()
+    assert not settings.is_llm_ready()
+    with pytest.raises(ValueError, match="AUTOPATCH_LLM_CONTEXT_WINDOW"):
+        settings.resolve_llm_context_profile()

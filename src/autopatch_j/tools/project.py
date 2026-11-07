@@ -10,14 +10,17 @@ from typing import Literal
 import pydantic
 import pydantic_ai
 
-from autopatch_j.agent import session
+from autopatch_j import error_messages
+from autopatch_j.agent import run_context
+from autopatch_j.core.project import java_references
 from autopatch_j.core.project import repo_path
 from autopatch_j.core.project import source_reader
+from autopatch_j.core.project import symbol_index
 from autopatch_j.core.project import symbols
 from autopatch_j.core.repair import evidence
 from autopatch_j.core.repair import files
 from autopatch_j.core.repair import models
-from autopatch_j.core.repair import store
+from autopatch_j.core.repair import status
 from autopatch_j.scanners import models as scan_models
 
 Text = Annotated[str, pydantic.Field(strict=True)]
@@ -38,8 +41,8 @@ def correction[**Params, Return](
             models.RepairError,
             repo_path.UnsafeRepoPathError,
             source_reader.SourceReadError,
-            OSError,
-            UnicodeError,
+            symbol_index.IndexNotReadyError,
+            java_references.ReferenceQueryError,
         ) as exc:
             raise pydantic_ai.ModelRetry(str(exc)) from exc
 
@@ -69,7 +72,7 @@ class FindingSummary:
 class ScanObservation:
     """扫描完成或失败的明确结果，不把失败包装成零候选。"""
 
-    status: Literal["ok", "failed"]
+    status: Literal["ok"]
     message: str
     scan_id: str | None = None
     total: int = 0
@@ -90,7 +93,7 @@ class FindingDetail:
 class ProjectTools:
     """绑定本轮暂存状态；所有工具均不写入目标源码。"""
 
-    def __init__(self, context: session.AgentSession) -> None:
+    def __init__(self, context: run_context.AgentRunContext) -> None:
         self.context = context
 
     @correction
@@ -104,7 +107,7 @@ class ProjectTools:
         self.context.state = self.context.repair.start(
             self.context.state, goal, tuple(write_paths)
         )
-        return "任务已准备，写范围尚未授权；请展示范围并等待用户输入 allow。"
+        return "任务已准备，写范围尚未授权；请维护本轮用户要求，展示范围并等待用户输入 allow。"
 
     @correction
     def request_write_scope(self, paths: list[Text]) -> str:
@@ -118,25 +121,24 @@ class ProjectTools:
         return "以下新增文件仍待用户 allow：" + "、".join(pending)
 
     @correction
-    def record_constraint(self, requirement: Text) -> str:
-        """记录用户明确提出的当前任务要求，不写长期笔记，不把询问转成要求。"""
-        current = self.context.state
-        if requirement.strip() not in self.context.user_text:
-            raise models.RepairError(
-                "临时要求只能摘取当前用户原文，不能自行改写或补造。"
-            )
-        if (
-            current.status not in {"investigating", "pending"}
-            or not requirement.strip()
-        ):
-            raise models.RepairError("没有活动任务或要求为空。")
-        self.context.state = store.changed(
-            current,
-            constraints=tuple(
-                dict.fromkeys((*current.constraints, requirement))
-            ),
+    def update_task_requirements(
+        self, additions: list[Text], removals: list[Text]
+    ) -> str:
+        """成功 start_repair 后暂存本轮用户条件；规范和笔记直接作为依据，不在此登记。
+
+        Args:
+            additions: 从绑定 user_request 逐字复制的连续片段，不能改写；没有新增时传空列表。
+            removals: 用户明确撤回或替换的完整旧要求，须在当前有效列表中。
+        """
+        self.context.state = self.context.repair.update_task_requirements(
+            self.context.state,
+            tuple(additions),
+            tuple(removals),
+            self.context.user_text,
         )
-        return "已暂存当前任务要求。"
+        return "当前有效要求：" + "；".join(
+            self.context.state.constraints or ("无",)
+        )
 
     async def scan_java(self, paths: list[Text]) -> ScanObservation:
         """扫描明确的 Java 文件或目录；失败不是零 finding，零 finding 也不能否定用户缺陷。"""
@@ -144,11 +146,8 @@ class ProjectTools:
             record = await asyncio.to_thread(
                 self.context.evidence.scan, tuple(paths)
             )
-        except (OSError, RuntimeError, ValueError) as exc:
-            self.context.notices.append(
-                f"静态扫描失败：{exc}；没有登记为零 finding。"
-            )
-            return ScanObservation(status="failed", message=str(exc))
+        except (models.RepairError, repo_path.UnsafeRepoPathError) as exc:
+            raise pydantic_ai.ModelRetry(str(exc)) from exc
         self.context.notices.append(
             f"静态扫描完成：{len(record.result.findings)} 项候选；不证明代码没有缺陷。"
         )
@@ -174,10 +173,10 @@ class ProjectTools:
             target,
             finding,
             ReadEvidence(
-                self.context.reader.read(
+                self.context.source_reader.read(
                     finding.path, finding.region.start_line, mode="block"
                 ),
-                self.context.reader.guidance(finding.path),
+                self.context.source_reader.read_guidance(finding.path),
             ),
             current,
         )
@@ -186,38 +185,53 @@ class ProjectTools:
     def read_source_context(self, path: Text, line: Line = 1) -> ReadEvidence:
         """读取目标行前 20 后 80 行及适用 AGENTS；不扩大写权限。"""
         return ReadEvidence(
-            self.context.reader.read(path, max(1, line - 20), line + 80),
-            self.context.reader.guidance(path),
+            self.context.source_reader.read(path, max(1, line - 20), line + 80),
+            self.context.source_reader.read_guidance(path),
         )
 
     @correction
     def read_source_block(self, path: Text, line: Line) -> ReadEvidence:
-        """读取所在 Java 方法、构造器或类型；返回实际范围和降级信息。"""
+        """读取所在 Java 方法、构造器或类型；返回原生识别范围及源码语法诊断。"""
         return ReadEvidence(
-            self.context.reader.read(path, line, mode="block"),
-            self.context.reader.guidance(path),
+            self.context.source_reader.read(path, line, mode="block"),
+            self.context.source_reader.read_guidance(path),
         )
 
     @correction
     def read_source_file(self, path: Text) -> ReadEvidence:
         """读取文件，截断时按返回行号继续 read_source_context；规范按引用渐进阅读。"""
         return ReadEvidence(
-            self.context.reader.read(path, mode="file"),
-            self.context.reader.guidance(path),
+            self.context.source_reader.read(path, mode="file"),
+            self.context.source_reader.read_guidance(path),
         )
 
-    def search_symbols(self, query: Text) -> list[symbols.SymbolIndexEntry]:
-        """查 Java 符号，索引只用于定位，结论仍需读当前源码。"""
-        result = []
-        for entry in self.context.symbols.search(query):
-            try:
-                repo_path.resolve_source_path(
-                    self.context.repo_root, entry.path
-                )
-            except repo_path.UnsafeRepoPathError:
-                continue
-            result.append(entry)
-        return result
+    @correction
+    def search_symbols(
+        self, query: Text, offset: Offset = 0, kinds: list[Text] | None = None
+    ) -> symbols.SymbolSearchResult:
+        """每页最多 20 个名称定位；按 next_offset 续读，旧索引不证明当前引用。"""
+        return self.context.symbol_index.search(query, offset, kinds)
+
+    @correction
+    def search_java_references(
+        self, name: Text, paths: list[Text], offset: Offset = 0
+    ) -> java_references.ReferenceSearchResult:
+        """按简单名称精确查当前 Java 语法引用，区分大小写；Disk 匹配 new Disk()/Disk::new。
+
+        按 next_offset 续读，核对 complete/warnings/excerpt_truncated，
+        再读取当前源码确认接收者和调用约定；结果不是已解析调用图。
+        """
+        return java_references.search(
+            self.context.repo_root,
+            name,
+            tuple(paths),
+            offset,
+            ignored_dirs=self.context.ignored_dirs,
+        )
+
+    def get_repair_status(self) -> status.RepairStatus:
+        """读取当前运行的执行事实、待提交标识及证据新鲜度；不复扫或写入。"""
+        return self.context.repair_status()
 
     def get_proposal(self) -> str:
         """读取当前完整提案与校验结果，不修订提案；bytes 不注入提示词。"""
@@ -272,7 +286,7 @@ class ProjectTools:
             self.context.evidence.finding(finding_handle)
         current = self.context.state
         if not reason.strip():
-            raise models.RepairError("判断需要具体依据。")
+            raise models.RepairError(error_messages.EMPTY_ASSESSMENT)
         assessment = models.Assessment(
             issue_id=current.issue_id or "",
             outcome=outcome,

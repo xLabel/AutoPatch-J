@@ -4,6 +4,7 @@ from collections.abc import Awaitable
 from collections.abc import Callable
 import dataclasses
 import json
+from typing import Any
 
 import httpx2 as httpx
 import openai
@@ -32,9 +33,11 @@ class Reply:
 class ScriptedModel:
     """录制 SDK 请求并返回脚本响应；没有网络 transport。"""
 
-    def __init__(self, replies: list[Reply]):
+    def __init__(self, replies: list[Reply]) -> None:
         self.replies = iter(replies)
-        self.requests: list[dict] = []
+        # 原始 SDK wire JSON，业务状态仍由真实组件负责。
+        self.requests: list[dict[str, Any]] = []
+        self.summary_reply: Reply | None = None
         self.before_reply: Callable[[], None] | None = None
         self.before_response: Callable[[], Awaitable[None]] | None = None
 
@@ -43,8 +46,12 @@ class ScriptedModel:
         self.requests.append(body)
         if self.before_reply is not None:
             self.before_reply()
-        reply = next(self.replies)
-        delta: dict = {"content": reply.text}
+        reply = (
+            self.summary_reply
+            if not body.get("stream") and self.summary_reply is not None
+            else next(self.replies)
+        )
+        delta: dict[str, Any] = {"content": reply.text}
         if reply.reasoning:
             delta["reasoning_content"] = reply.reasoning
         if reply.tool:
@@ -87,7 +94,7 @@ class ScriptedModel:
                 {"tool_calls": [{"index": 0, "function": {"arguments": char}}]}
                 for char in encoded
             )
-        chunks: list[dict] = [
+        chunks: list[dict[str, Any]] = [
             {
                 **base,
                 "object": "chat.completion.chunk",
@@ -123,7 +130,6 @@ class ScriptedModel:
         client = AsyncClientClass(
             api_key="offline-placeholder",
             base_url="https://offline.test",
-            max_retries=2,
             http_client=httpx.AsyncClient(
                 transport=httpx.MockTransport(self.async_handle)
             ),

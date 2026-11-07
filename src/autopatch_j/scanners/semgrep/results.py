@@ -63,13 +63,13 @@ def build_semgrep_scan_result(
             scope, targets, "Semgrep results 字段结构不符合预期。"
         )
 
-    code_fetcher = source_reader.SourceReader(repo_root)
+    reader = source_reader.SourceReader(repo_root)
     prepared: list[_PreparedFinding] = []
     try:
         for index, item in enumerate(raw_results, start=1):
             if not isinstance(item, dict):
                 raise ValueError(f"第 {index} 个 result 不是 JSON object。")
-            prepared.append(_prepare_finding(item, repo_root, code_fetcher))
+            prepared.append(_prepare_finding(item, repo_root, reader))
     except (OSError, TypeError, UnicodeError, ValueError) as exc:
         return _error_result(
             scope, targets, f"Semgrep finding 证据不完整：{exc}"
@@ -102,7 +102,7 @@ def build_semgrep_scan_result(
 def _prepare_finding(
     item: Mapping[str, object],
     repo_root: pathlib.Path,
-    code_fetcher: source_reader.SourceReader,
+    reader: source_reader.SourceReader,
 ) -> _PreparedFinding:
     """校验单个 Semgrep finding 的路径、区域与当前源码字节证据。"""
     check_id = normalize_check_id(_required_text(item, "check_id"))
@@ -132,13 +132,9 @@ def _prepare_finding(
     extra = item.get("extra", {})
     if not isinstance(extra, dict):
         raise ValueError("extra 字段不是 JSON object。")
-    fallback_snippet = str(extra.get("lines", "")).strip()
-    snippet = (
-        code_fetcher.read(
-            finding_path, region.start_line, region.inclusive_end_line
-        ).code.strip()
-        or fallback_snippet
-    )
+    snippet = reader.read(
+        finding_path, region.start_line, region.inclusive_end_line
+    ).code.strip()
     base_hash = _build_base_hash(
         engine="semgrep",
         check_id=check_id,

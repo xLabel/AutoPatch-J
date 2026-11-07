@@ -2,10 +2,14 @@
 
 from unittest import mock
 
+import pytest
+
+from autopatch_j import config as autopatch_j_config
 from autopatch_j.agent import result
+from autopatch_j.application import runtime as project_runtime
 from autopatch_j.cli import input_router
 from autopatch_j.cli import render
-from autopatch_j.cli import runtime as cli_runtime
+from autopatch_j.core import errors
 from autopatch_j.core import finding
 from autopatch_j.scanners import models
 from tests import sdk_fakes
@@ -52,7 +56,9 @@ def test_scan_evidence_proposal_review_and_apply(tmp_path, sdk_scenario):
             sdk_fakes.Reply(text="证据已核对，请审核。"),
         ]
     )
-    runtime = cli_runtime.build_cli_runtime(tmp_path, scenario.runtime)
+    runtime = project_runtime.build_project_runtime(
+        tmp_path, autopatch_j_config.AppConfig(), scenario.runtime
+    )
     scanner = mock.MagicMock()
     scanner.scan.side_effect = [
         models.ScanResult(
@@ -129,7 +135,9 @@ def test_allow_continues_preparation_without_an_extra_user_turn(
             sdk_fakes.Reply(text="请审核"),
         ]
     )
-    runtime = cli_runtime.build_cli_runtime(tmp_path, scenario.runtime)
+    runtime = project_runtime.build_project_runtime(
+        tmp_path, autopatch_j_config.AppConfig(), scenario.runtime
+    )
     try:
         initial = runtime.repair.store.load()
         requested = runtime.repair.commit(
@@ -158,19 +166,18 @@ def test_scan_failure_is_reported_even_if_model_answer_omits_it(
             sdk_fakes.Reply(text="模型没有提及扫描失败。"),
         ]
     )
-    runtime = cli_runtime.build_cli_runtime(tmp_path, scenario.runtime)
+    runtime = project_runtime.build_project_runtime(
+        tmp_path, autopatch_j_config.AppConfig(), scenario.runtime
+    )
     scanner = mock.MagicMock()
     scanner.scan.return_value = models.ScanResult(
         "semgrep", ["A.java"], ["A.java"], "error", "runtime unavailable"
     )
     runtime.evidence.scanner = scanner
-    notices = []
     try:
-        runtime.agent.run(
-            "扫描 A.java",
-            on_observation=lambda message, summary: notices.append(message),
-        )
-        assert any("静态扫描失败" in message for message in notices)
+        with pytest.raises(errors.OperationError, match="runtime unavailable"):
+            runtime.agent.run("扫描 A.java")
+        assert len(scenario.requests) == 1
         assert not list(runtime.evidence.directory.glob("*.json"))
     finally:
         runtime.close()
@@ -205,7 +212,9 @@ def test_redundant_scope_request_guides_sdk_to_proposal_without_new_approval(
             sdk_fakes.Reply(text="请审核"),
         ]
     )
-    runtime = cli_runtime.build_cli_runtime(tmp_path, scenario.runtime)
+    runtime = project_runtime.build_project_runtime(
+        tmp_path, autopatch_j_config.AppConfig(), scenario.runtime
+    )
     try:
         initial = runtime.repair.store.load()
         requested = runtime.repair.commit(

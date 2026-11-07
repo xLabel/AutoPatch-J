@@ -1,9 +1,10 @@
 """确定性人工动作与统一 Agent 的终端适配，不做 LLM 意图或审核路由分类。"""
 
+from autopatch_j import error_messages
+from autopatch_j.agent import callbacks
 from autopatch_j.agent import result
+from autopatch_j.application import runtime as project_runtime
 from autopatch_j.cli import render
-from autopatch_j.cli import runtime as cli_runtime
-from autopatch_j import config
 from autopatch_j.core.repair import models
 
 
@@ -11,7 +12,9 @@ class UserInputRouter:
     """展示绑定的人工决定，其他自然语言交给统一项目 Agent。"""
 
     def __init__(
-        self, runtime: cli_runtime.CliRuntime, renderer: render.CliRenderer
+        self,
+        runtime: project_runtime.ProjectRuntime,
+        renderer: render.CliRenderer,
     ) -> None:
         self.runtime = runtime
         self.renderer = renderer
@@ -41,7 +44,9 @@ class UserInputRouter:
         if action in {"discard", "abort"}:
             if action == "discard" and displayed.status != "pending":
                 raise models.RepairError(
-                    "discard 只适用于待审提案；中断任务请先核查写入事实再 abort。"
+                    error_messages.INTERRUPTED_DISCARD
+                    if displayed.status in {"applying", "interrupted"}
+                    else error_messages.NO_REVIEW_PROPOSAL
                 )
             self.runtime.repair.end(displayed)
             self.renderer.print_plain(
@@ -56,19 +61,24 @@ class UserInputRouter:
             streamed = True
             self.renderer.print_plain(value, end="")
 
+        def observation(message: str, summary: str | None) -> None:
+            # 回调协议同时提供摘要，终端此处只展示完整观察。
+            del summary
+            self.renderer.print_plain(message)
+
         outcome = self.runtime.agent.run(
             text,
-            on_token=token,
-            on_tool_start=lambda name: self.renderer.print_step(
-                f"工具: {name}"
-            ),
-            on_observation=lambda message, summary: self.renderer.print_plain(
-                message
-            ),
-            on_reasoning=(
-                (lambda value: self.renderer.print_plain(value, end=""))
-                if config.GLOBAL_CONFIG.debug_mode
-                else None
+            output=callbacks.AgentCallbacks(
+                on_token=token,
+                on_tool_start=lambda name: self.renderer.print_step(
+                    f"工具: {name}"
+                ),
+                on_observation=observation,
+                on_reasoning=(
+                    (lambda value: self.renderer.print_plain(value, end=""))
+                    if self.runtime.settings.debug_mode
+                    else None
+                ),
             ),
         )
         self.renderer.print_blank()

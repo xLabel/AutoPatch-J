@@ -102,20 +102,6 @@ def test_memory_completion_stops_after_subcommand() -> None:
     assert not completions
 
 
-def test_command_completion_excludes_removed_doctor() -> None:
-    completer = cli_completer.AutoPatchCompleter(lambda unused_: [])
-    completions = list(
-        completer.get_completions(
-            document.Document(text="/do", cursor_position=3),
-            prompt_toolkit_completion.CompleteEvent(),
-        )
-    )
-
-    assert all(
-        completion.display_text != "/doctor" for completion in completions
-    )
-
-
 def test_mention_completion_only_exposes_files_and_directories() -> None:
     completer = cli_completer.AutoPatchCompleter(
         lambda unused_: [

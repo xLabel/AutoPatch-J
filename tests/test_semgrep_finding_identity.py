@@ -117,7 +117,7 @@ def test_finding_identity_round_trips_in_scan_artifact_schema(
     assert restored.to_dict() == scan.to_dict()
 
 
-def test_old_scan_artifact_schema_is_rejected() -> None:
+def test_incomplete_scan_artifact_schema_is_rejected() -> None:
     with pytest.raises(KeyError):
         models.ScanResult.from_dict(
             {

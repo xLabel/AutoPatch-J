@@ -2,13 +2,17 @@
 
 import json
 import pathlib
-import sqlite3
 import uuid
 
 from pydantic_ai_harness import memory
 
-STORAGE_ERRORS = (sqlite3.DatabaseError, OSError)
+from autopatch_j import error_messages
+
 PREFIX = "project/main/"
+
+
+class MemoryInputError(ValueError):
+    """用户可以调整的笔记路径或管理请求。"""
 
 
 class ProjectMemory:
@@ -40,7 +44,7 @@ class ProjectMemory:
             or parts.as_posix() == "."
             or "\\" in path
         ):
-            raise ValueError("笔记必须使用 notebook 内的相对路径")
+            raise MemoryInputError(error_messages.INVALID_MEMORY_PATH)
         return PREFIX + parts.as_posix()
 
     async def show(self, path: str = "MEMORY.md") -> memory.MemoryFile | None:
@@ -50,23 +54,24 @@ class ProjectMemory:
     async def forget(self, path: str) -> None:
         """显式删除文件；主笔记通过修订或 clear 处理。"""
         if self._path(path) == PREFIX + "MEMORY.md":
-            raise ValueError(
-                "MEMORY.md 受保护，请明确要求 Agent 修订内容，或使用 "
-                "/memory clear --confirm"
-            )
+            raise MemoryInputError(error_messages.PROTECTED_MEMORY)
         item = await self.show(path)
         if item is None:
-            raise LookupError(path)
+            raise MemoryInputError(error_messages.missing_note(path))
         await self.store.delete(self._path(path), expected_version=item.version)
 
     async def clear(self) -> None:
         """删除当前笔记，不删除项目会话；冲突时不覆盖并发修改。"""
-        for path in await self.paths():
-            item = await self.show(path)
-            if item is not None:
-                await self.store.delete(
-                    self._path(path), expected_version=item.version
-                )
+        try:
+            for path in await self.paths():
+                item = await self.show(path)
+                if item is not None:
+                    await self.store.delete(
+                        self._path(path), expected_version=item.version
+                    )
+        except Exception as exc:
+            exc.add_note(error_messages.clear_interrupted("操作未完成"))
+            raise
 
     async def export(self) -> pathlib.Path:
         """导出当前笔记，独占创建文件，不覆盖既有导出。"""
@@ -76,6 +81,19 @@ class ProjectMemory:
             if item is not None:
                 content[path] = item.content
         destination = self.state_dir / f"memory-export-{uuid.uuid4().hex}.json"
-        with destination.open("x", encoding="utf-8") as output:
-            json.dump(content, output, ensure_ascii=False, indent=2)
+        created = False
+        try:
+            with destination.open("x", encoding="utf-8") as output:
+                created = True
+                json.dump(content, output, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            if created:
+                exc.add_note(
+                    error_messages.incomplete_export(
+                        destination.relative_to(
+                            self.state_dir.parent
+                        ).as_posix()
+                    )
+                )
+            raise
         return destination

@@ -8,6 +8,7 @@ import pathlib
 import stat
 import tempfile
 
+from autopatch_j import error_messages
 from autopatch_j.core.project import repo_path
 from autopatch_j.core.project import source_text
 from autopatch_j.core.repair import checks
@@ -30,49 +31,82 @@ def prepare_file(
     """所有替换在内存中依次唯一匹配，保留未替换 bytes。"""
     path = repo_path.resolve_source_path(root, edit.path)
     decoded = source_text.read(path)
-    if not decoded.safe_to_write or b"\x00" in decoded.raw_bytes:
+    if b"\x00" in decoded.raw_bytes:
         raise models.RepairError(
             f"{edit.path} 不是可无损编辑的文本，不能生成补丁。"
         )
-    current = decoded.raw_bytes
+    candidate_bytes = decoded.raw_bytes
     spans = []
     for index, replacement in enumerate(edit.replacements, 1):
-        text = current.decode(decoded.encoding)
-        normalized = normalize_newlines(text)
-        old = normalize_newlines(replacement.old_text)
-        new = normalize_newlines(replacement.new_text)
-        start = normalized.find(old)
-        repeated = start >= 0 and normalized.find(old, start + 1) >= 0
-        if start < 0 or repeated:
+        candidate_text_before_edit = candidate_bytes.decode(decoded.encoding)
+        normalized_candidate = normalize_newlines(candidate_text_before_edit)
+        match_text = normalize_newlines(replacement.old_text)
+        replacement_text = normalize_newlines(replacement.new_text)
+        match_start = normalized_candidate.find(match_text)
+        repeated = (
+            match_start >= 0
+            and normalized_candidate.find(match_text, match_start + 1) >= 0
+        )
+        if match_start < 0 or repeated:
             count = "至少 2" if repeated else "0"
             raise models.RepairError(
-                f"{edit.path} 第 {index} 项 old_text 匹配 {count} 次，必须恰好一次。"
+                error_messages.replacement_matches(edit.path, index, count)
             )
-        if old == new:
-            raise models.RepairError(f"{edit.path} 第 {index} 项替换没有变化。")
+        if match_text == replacement_text:
+            raise models.RepairError(error_messages.no_change(edit.path))
         # 以原始字符索引建立边界，不能规范化整个文件后重新编码。
-        boundaries = [0]
-        position = 0
-        while position < len(text):
-            position += 2 if text[position : position + 2] == "\r\n" else 1
-            boundaries.append(position)
-        byte_start = len(text[: boundaries[start]].encode(decoded.encoding))
-        byte_end = len(
-            text[: boundaries[start + len(old)]].encode(decoded.encoding)
+        character_offsets = [0]
+        character_position = 0
+        while character_position < len(candidate_text_before_edit):
+            character_position += (
+                2
+                if candidate_text_before_edit[
+                    character_position : character_position + 2
+                ]
+                == "\r\n"
+                else 1
+            )
+            character_offsets.append(character_position)
+        byte_start = len(
+            candidate_text_before_edit[: character_offsets[match_start]].encode(
+                decoded.encoding
+            )
         )
-        inserted = new.replace("\n", decoded.newline).encode(decoded.encoding)
-        current = current[:byte_start] + inserted + current[byte_end:]
+        byte_end = len(
+            candidate_text_before_edit[
+                : character_offsets[match_start + len(match_text)]
+            ].encode(decoded.encoding)
+        )
+        try:
+            replacement_bytes = replacement_text.replace(
+                "\n", decoded.newline
+            ).encode(decoded.encoding)
+        except UnicodeEncodeError as exc:
+            raise models.RepairError(
+                error_messages.unencodable_replacement(
+                    edit.path, decoded.encoding
+                )
+            ) from exc
+        candidate_bytes = (
+            candidate_bytes[:byte_start]
+            + replacement_bytes
+            + candidate_bytes[byte_end:]
+        )
         spans.append(
             models.EditSpan(
-                start=byte_start, end=byte_end, replacement_length=len(inserted)
+                start=byte_start,
+                end=byte_end,
+                replacement_length=len(replacement_bytes),
             )
         )
-    if current == decoded.raw_bytes:
-        raise models.RepairError(f"{edit.path} 的所有替换合计没有变化。")
-    candidate_text = current.decode(decoded.encoding)
-    check = checks.check_java(edit.path, candidate_text)
-    if check.status == "failed":
-        raise models.RepairError(f"{edit.path}: {check.message}")
+    if candidate_bytes == decoded.raw_bytes:
+        raise models.RepairError(error_messages.no_change(edit.path))
+    candidate_text = candidate_bytes.decode(decoded.encoding)
+    syntax_check = checks.check_java_syntax(edit.path, candidate_text)
+    if syntax_check.status == "failed":
+        raise models.RepairError(
+            error_messages.invalid_candidate(edit.path, syntax_check.message)
+        )
     relative = path.relative_to(root.resolve()).as_posix()
     diff_lines = difflib.unified_diff(
         normalize_newlines(decoded.content).splitlines(keepends=True),
@@ -92,14 +126,14 @@ def prepare_file(
         path=relative,
         resolved_path=str(path),
         original=decoded.raw_bytes,
-        candidate=current,
+        candidate=candidate_bytes,
         original_sha256=digest(decoded.raw_bytes),
-        candidate_sha256=digest(current),
+        candidate_sha256=digest(candidate_bytes),
         encoding=decoded.encoding,
         permission_mode=stat.S_IMODE(path.stat().st_mode),
         diff=diff,
         spans=tuple(spans),
-        syntax=check,
+        syntax=syntax_check,
     )
 
 
@@ -123,7 +157,9 @@ def atomic_write(
         if mode is not None:
             temporary.chmod(mode)
         if expected is not None and path.read_bytes() != expected:
-            raise models.RepairError(f"{path.name} 在应用期间被外部修改。")
+            raise models.RepairError(
+                error_messages.source_changed_during_apply(path.name)
+            )
         os.replace(temporary, path)
         temporary = None
     finally:

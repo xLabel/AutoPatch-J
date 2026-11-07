@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from collections.abc import Sequence
+from collections.abc import Callable
 from typing import Protocol
 from unittest import mock
 from urllib import parse
@@ -11,6 +12,7 @@ from urllib import parse
 from _pytest import terminal as pytest_terminal
 import openai
 from pydantic_ai import models
+from pydantic_ai.models import test as test_model
 import pytest
 
 from autopatch_j import config as autopatch_j_config
@@ -81,6 +83,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
@@ -169,15 +172,24 @@ def make_mock_openai_sdk(
 
 
 @pytest.fixture(name="fake_llm_factory")
-def make_fake_llm_factory():
+def make_fake_llm_factory() -> (
+    Callable[[autopatch_j_config.AppConfig], runtime.ModelRuntime]
+):
+    def build(settings: autopatch_j_config.AppConfig) -> runtime.ModelRuntime:
+        # 保持正式模型工厂签名，离线资源不读取真实模型配置。
+        del settings
+        return runtime.ModelRuntime(
+            test_model.TestModel(),
+            context_window.resolve_context_profile(model="deepseek-flash"),
+        )
 
-    return lambda: runtime.ModelRuntime(
-        None, context_window.resolve_context_profile(model="deepseek-flash")
-    )
+    return build
 
 
 @pytest.fixture(name="sdk_scenario")
-def make_sdk_scenario(monkeypatch):
+def make_sdk_scenario(
+    monkeypatch: pytest.MonkeyPatch,
+) -> type[sdk_fakes.ScriptedModel]:
 
     monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", True)
     return sdk_fakes.ScriptedModel
@@ -194,23 +206,22 @@ def make_live_llm_client(
     if reason is not None:
         pytest.skip(reason)
 
-    error = _live_llm_config_error(autopatch_j_config.GLOBAL_CONFIG)
+    settings = autopatch_j_config.AppConfig.from_env()
+    error = _live_llm_config_error(settings)
     if error is not None:
         pytest.fail(f"真实 LLM 集成测试配置检查失败：{error}", pytrace=False)
 
-    endpoint = _safe_endpoint_label(
-        autopatch_j_config.GLOBAL_CONFIG.llm_base_url
-    )
+    endpoint = _safe_endpoint_label(settings.llm_base_url)
     terminal = request.config.pluginmanager.get_plugin("terminalreporter")
     if terminal is not None:
         terminal.write_line(
             "真实 LLM 集成测试配置："
-            f"model={autopatch_j_config.GLOBAL_CONFIG.llm_model}"
+            f"model={settings.llm_model}"
             f", "
             f"endpoint={endpoint}"
         )
 
-    llm = factory.build_model_runtime()
+    llm = factory.build_model_runtime(settings)
     if llm is None:
         pytest.fail(
             "真实 LLM 集成测试配置检查失败：LLM client 未创建", pytrace=False

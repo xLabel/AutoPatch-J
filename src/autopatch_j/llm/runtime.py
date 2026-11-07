@@ -8,6 +8,7 @@ from typing import TypeVar
 import openai
 from pydantic_ai import models
 
+from autopatch_j import error_messages
 from autopatch_j.llm import context_window
 
 ResultT = TypeVar("ResultT")
@@ -18,7 +19,7 @@ class ModelRuntime:
 
     def __init__(
         self,
-        model: models.Model | None,
+        model: models.Model,
         profile: context_window.ModelContextProfile,
         client: openai.AsyncOpenAI | None = None,
     ) -> None:
@@ -52,11 +53,27 @@ class ModelRuntime:
 
     def close(self) -> None:
         """关闭共享客户端与循环，重复关闭无副作用。"""
+        # 资源清理隔离边界，保留客户端关闭主异常及循环关闭次生异常。
+        # pylint: disable=broad-exception-caught
         if self.closed:
             return
         try:
             if self.client is not None:
                 self.runner.run(self.client.close())
-        finally:
-            self.runner.close()
-            self.closed = True
+        except BaseException as exc:
+            try:
+                self.runner.close()
+            except (
+                Exception
+            ) as close_error:  # pylint: disable=broad-exception-caught
+                exc.add_note(
+                    error_messages.failed("事件循环关闭", str(close_error))
+                )
+            finally:
+                self.closed = True
+            raise
+        else:
+            try:
+                self.runner.close()
+            finally:
+                self.closed = True

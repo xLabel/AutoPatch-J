@@ -2,6 +2,8 @@
 
 import pathlib
 
+from autopatch_j import error_messages
+from autopatch_j.core import errors
 from autopatch_j.core.project import repo_path
 from autopatch_j.core.repair import files
 from autopatch_j.core.repair import models
@@ -41,42 +43,36 @@ def verify(
         )
     ]
     target = proposal.target
-    if scanner is None or target is None:
+    if target is None:
         return (
             *checks,
             models.Check(
                 kind="target_rescan",
                 status="unverified",
-                message="缺少扫描目标绑定或扫描器，不能确认问题消失。",
+                message="缺少扫描目标绑定，不能确认问题消失。",
             ),
         )
     expected = {item.path: item.candidate_sha256 for item in proposal.files}
     expected.setdefault(target.identity.path, target.source_sha256)
-    try:
-        if any(
-            files.digest(repo_path.resolve_source_path(root, path).read_bytes())
-            != fingerprint
-            for path, fingerprint in expected.items()
-        ):
-            raise models.RepairError("验证前源码再次变化。")
-        result = scanner.scan(root, [target.identity.path])
-        if result.status != "ok":
-            raise models.RepairError(result.message)
-        if any(
-            files.digest(repo_path.resolve_source_path(root, path).read_bytes())
-            != fingerprint
-            for path, fingerprint in expected.items()
-        ):
-            raise models.RepairError("扫描期间源码再次变化。")
-    except (OSError, RuntimeError, ValueError) as exc:
-        return (
-            *checks,
-            models.Check(
-                kind="target_rescan",
-                status="unverified",
-                message=f"目标复扫未完成：{exc}",
-            ),
-        )
+    if scanner is None:
+        raise errors.OperationError(error_messages.APPLIED_NO_SCANNER)
+    if any(
+        files.digest(repo_path.resolve_source_path(root, path).read_bytes())
+        != fingerprint
+        for path, fingerprint in expected.items()
+    ):
+        raise errors.OperationError(error_messages.APPLIED_SOURCE_CHANGED)
+    result = scanner.scan(root, [target.identity.path])
+    if result.status != "ok":
+        raise errors.OperationError(
+            error_messages.failed("源码已应用，但复扫", result.message)
+        ) from RuntimeError(result.message)
+    if any(
+        files.digest(repo_path.resolve_source_path(root, path).read_bytes())
+        != fingerprint
+        for path, fingerprint in expected.items()
+    ):
+        raise errors.OperationError(error_messages.APPLIED_SOURCE_CHANGED)
     span = target_span(proposal)
     assert span is not None
     start, end = span

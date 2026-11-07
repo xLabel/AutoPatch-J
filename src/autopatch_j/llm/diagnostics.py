@@ -30,6 +30,12 @@ def format_raw_llm_exception(exc: Exception) -> str:
     if response_text and response_text != body_text:
         parts.append(f"{response_label}: {response_text}")
 
+    cause = exc.__cause__
+    if isinstance(cause, Exception):
+        parts.append(
+            f"cause: {type(cause).__name__}: {_safe_exception_message(cause)}"
+        )
+
     return _truncate("\n".join(parts))
 
 

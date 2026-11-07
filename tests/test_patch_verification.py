@@ -4,6 +4,7 @@ from unittest import mock
 
 import pytest
 
+from autopatch_j.core import errors
 from autopatch_j.core import finding
 from autopatch_j.core.repair import evidence
 from autopatch_j.core.repair import models
@@ -169,9 +170,10 @@ def test_scan_failure_after_write_never_reverses_applied_fact(
         scanner.scan.side_effect = OSError("scanner missing")
     else:
         scanner.scan.return_value = scanner_result([], "error")
-    result = repair.apply(state)
-    assert result.status == "applied"
-    assert result.checks[-1].status == "unverified"
+    with pytest.raises(errors.OperationError, match="源码已应用"):
+        repair.apply(state)
+    assert not repair.store.load().checks
+    assert "复扫失败" in (repair.store.load().last_apply_error or "")
     assert repair.store.load().status == "applied"
     assert b"n = 2" in (tmp_path / "A.java").read_bytes()
 
@@ -214,7 +216,7 @@ def test_scan_failures_and_midscan_changes_do_not_register_artifacts(tmp_path):
     scanner = mock.MagicMock()
     scanner.scan.return_value = scanner_result([], "error")
     evidence_store = evidence.EvidenceService(tmp_path, scanner)
-    with pytest.raises(models.RepairError, match="不能当作零"):
+    with pytest.raises(errors.OperationError, match="扫描失败"):
         evidence_store.scan(("A.java",))
     assert not list(evidence_store.directory.iterdir())
 
@@ -270,8 +272,9 @@ def test_rescan_cannot_overwrite_a_newer_task(tmp_path):
         return scanner_result([])
 
     scanner.scan.side_effect = next_task
-    result = repair.apply(state)
-    assert result.status == "applied"
-    assert "未覆盖后续任务" in result.message
+    with pytest.raises(models.StateConflict) as caught:
+        repair.apply(state)
+    assert "验证结果未写入当前任务" in str(caught.value)
+    assert "源码已应用" in str(caught.value)
     assert repair.store.load().goal == "另一个问题"
     assert repair.store.load().proposal is None

@@ -5,14 +5,18 @@ from typing import override
 from pydantic_ai import capabilities
 from pydantic_ai import messages as sdk_messages
 from pydantic_ai import models
-from pydantic_ai.models import openai as openai_model
 from pydantic_ai import tools
+from pydantic_ai.models import openai as openai_model
 
 from autopatch_j.llm import context_window
 
 
 class ModelFailure(RuntimeError):
     """模型未形成可采用的完整结果。"""
+
+    def __init__(self, finish_reason: object) -> None:
+        self.finish_reason = finish_reason
+        super().__init__(f"模型未正常完成：finish_reason={finish_reason!r}")
 
 
 def request_settings(
@@ -43,5 +47,5 @@ class FinishGuard[DepsT](capabilities.AbstractCapability[DepsT]):
         del ctx, request_context
         raw = (response.provider_details or {}).get("finish_reason")
         if raw not in {"stop", "tool_calls"}:
-            raise ModelFailure(f"模型未正常完成：finish_reason={raw!r}")
+            raise ModelFailure(raw)
         return response

@@ -23,9 +23,15 @@ class ScannerCatalog:
         }
 
     @classmethod
-    def default(cls) -> ScannerCatalog:
+    def default(cls, *, version: str, timeout: int) -> ScannerCatalog:
         """默认扫描器标识。"""
-        return cls([semgrep_scanner.SemgrepScanner()])
+        return cls(
+            [
+                semgrep_scanner.SemgrepScanner(
+                    required_version=version, timeout=timeout
+                )
+            ]
+        )
 
     def all(self) -> tuple[contracts.StaticScanner, ...]:
         """返回当前注册的扫描器实现，不包含未来占位项。"""
@@ -47,6 +53,3 @@ class ScannerCatalog:
             name.value if isinstance(name, models.ScannerName) else name.lower()
         )
         return self._scanners.get(scanner_name)
-
-
-DEFAULT_SCANNER_CATALOG = ScannerCatalog.default()

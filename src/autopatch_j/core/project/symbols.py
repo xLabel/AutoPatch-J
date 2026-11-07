@@ -14,5 +14,22 @@ class SymbolIndexEntry:
     name: str
     kind: str
     line: int = 0
-    container: str = ""
+    column: int = 0
+    end_line: int = 0
+    end_column: int = 0
+    owner: str = ""
+    signature: str = ""
     mtime: float = 0.0
+    source_sha256: str = ""
+    source_has_errors: bool = False
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SymbolSearchResult:
+    """稳定索引页只是定位提示，旧快照不能证明当前源码事实。"""
+
+    entries: list[SymbolIndexEntry]
+    total: int
+    next_offset: int | None
+    stale_paths: tuple[str, ...] = ()
+    notice: str = "索引仅用于定位，请读取当前源码；空结果不证明没有引用。"

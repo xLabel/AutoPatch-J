@@ -3,44 +3,47 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+hold_on_failure() {
+    result=$?
+    trap - EXIT
+    if [ "$result" -ne 0 ]; then
+        echo "AutoPatch-J 未能正常启动或关闭，请查看上方错误。"
+        if [ -t 0 ] && [ -t 1 ]; then
+            read -r -p "按回车关闭..." reply || true
+        fi
+    fi
+    exit "$result"
+}
+trap hold_on_failure EXIT
+
 if ! command -v python3 >/dev/null 2>&1; then
-    echo "[ERROR] Python not found. Please install Python 3.14 or higher."
+    echo "无法启动：未找到 Python，请安装 Python 3.14 或更高版本。"
     exit 1
 fi
 
 if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 14))'; then
-    echo "[ERROR] Python 3.14 or higher is required."
+    echo "无法启动：需要 Python 3.14 或更高版本。"
     exit 1
 fi
 
 if [ ! -d "$ROOT_DIR/.venv" ]; then
     echo "[BOOTSTRAP] Creating virtual environment..."
-    python3 -m venv "$ROOT_DIR/.venv"
+    if ! python3 -m venv "$ROOT_DIR/.venv"; then
+        echo "无法启动：运行环境创建失败，请检查上方错误。"
+        exit 1
+    fi
 fi
 
 if ! "$ROOT_DIR/.venv/bin/python" -c 'import sys; raise SystemExit(sys.version_info < (3, 14))'; then
-    echo "[ERROR] Existing .venv requires Python 3.14+. Recreate it with that interpreter."
+    echo "无法启动：现有 .venv 的 Python 版本不符合要求，请重建环境。"
     exit 1
 fi
 
 echo "[DEPENDENCY] Syncing project dependencies from pyproject.toml..."
-"$ROOT_DIR/.venv/bin/python" -m pip install --quiet -c "$ROOT_DIR/constraints.txt" -e "$ROOT_DIR"
-
-if [ -z "${AUTOPATCH_LLM_API_KEY:-}" ]; then
-    echo "[ERROR] AUTOPATCH_LLM_API_KEY is not set in your shell environment."
-    echo "Please export it before running this script, for example:"
-    echo "export AUTOPATCH_LLM_API_KEY='your-api-key'"
+if ! "$ROOT_DIR/.venv/bin/python" -m pip install --quiet -c "$ROOT_DIR/constraints.txt" -e "$ROOT_DIR"; then
+    echo "无法启动：依赖安装失败，请检查上方安装错误。"
     exit 1
 fi
-
-echo "[SCANNER] Ensuring managed Semgrep runtime..."
-"$ROOT_DIR/.venv/bin/python" - <<'PY'
-from autopatch_j.scanners.semgrep import runtime
-
-status, message = runtime.install_managed_semgrep_runtime()
-print(f"[{status.upper()}] {message}")
-raise SystemExit(0 if status == "ok" else 1)
-PY
 
 echo "[START] Launching AutoPatch-J (Demo Mode)..."
 cd "$ROOT_DIR/examples/demo-repo"

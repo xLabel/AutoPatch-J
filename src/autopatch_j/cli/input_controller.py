@@ -2,22 +2,76 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from collections.abc import Awaitable
 import pathlib
 import re
 from typing import Callable
+from typing import override
 
-from prompt_toolkit.application import current
+import prompt_toolkit
 from prompt_toolkit import buffer as prompt_buffer
 from prompt_toolkit import completion as prompt_completion
 from prompt_toolkit import history as prompt_toolkit_history
 from prompt_toolkit import key_binding
-from prompt_toolkit.key_binding import key_processor
-import prompt_toolkit
 from prompt_toolkit import styles
+from prompt_toolkit.application import current
+from prompt_toolkit.key_binding import key_processor
 
+from autopatch_j import error_messages
 from autopatch_j.cli import completer
-from autopatch_j import config
 from autopatch_j.core.project import symbols
+
+
+class _CliHistory(prompt_toolkit_history.FileHistory):
+    """历史文件故障仅停止对应历史操作，不进入原生异常弹屏。"""
+
+    def __init__(
+        self,
+        path: pathlib.Path,
+        on_error: Callable[[str, Exception], Awaitable[None]],
+    ) -> None:
+        super().__init__(str(path))
+        self.path = path
+        self.on_error = on_error
+        self.read_failed = False
+        self.write_failed = False
+        self.pending_errors: list[tuple[str, Exception]] = []
+
+    def _check_directory(self) -> None:
+        if self.path.parent.is_symlink():
+            raise ValueError(error_messages.STATE_REDIRECTED)
+
+    @override
+    async def load(self) -> AsyncGenerator[str]:
+        if self.read_failed:
+            return
+        try:
+            self._check_directory()
+            try:
+                self.path.stat()
+            except FileNotFoundError:
+                pass
+            async for entry in super().load():
+                yield entry
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.read_failed = True
+            await self.on_error("输入历史读取", exc)
+
+    @override
+    def append_string(self, string: str) -> None:
+        if self.write_failed:
+            return
+        try:
+            self._check_directory()
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.store_string(string)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            self.write_failed = True
+            # accept_handler 已接受输入；由同步主循环在执行业务前报告。
+            self.pending_errors.append(("输入历史保存", exc))
+        else:
+            self._loaded_strings.insert(0, string)
 
 
 class CliInputController:
@@ -27,9 +81,23 @@ class CliInputController:
         self,
         index_search: Callable[[str], list[symbols.SymbolIndexEntry]],
         repo_root: pathlib.Path | None,
+        on_error: Callable[[str, Exception], Awaitable[None]] | None = None,
     ) -> None:
         self._index_search = index_search
         self._repo_root = repo_root
+        self._on_error = on_error
+        self._completer = completer.AutoPatchCompleter(index_search, on_error)
+        self._history: _CliHistory | None = None
+
+    def resume_path_completion(self) -> None:
+        self._completer.path_completion_failed = False
+
+    def take_history_errors(self) -> list[tuple[str, Exception]]:
+        if self._history is None:
+            return []
+        errors = self._history.pending_errors[:]
+        self._history.pending_errors.clear()
+        return errors
 
     def set_repo_root(self, repo_root: pathlib.Path | None) -> None:
         """更新下次创建输入会话时使用的项目历史目录。"""
@@ -64,15 +132,15 @@ class CliInputController:
 
         history = None
         if self._repo_root:
-            history = prompt_toolkit_history.FileHistory(
-                str(
-                    config.get_project_state_dir(self._repo_root)
-                    / "history.txt"
-                )
-            )
+            path = self._repo_root / ".autopatch-j" / "history.txt"
+            if self._on_error is not None:
+                self._history = _CliHistory(path, self._on_error)
+                history = self._history
+            else:
+                history = prompt_toolkit_history.FileHistory(str(path))
 
         session = prompt_toolkit.PromptSession(
-            completer=completer.AutoPatchCompleter(self._index_search),
+            completer=self._completer,
             key_bindings=key_bindings,
             style=custom_style,
             complete_while_typing=True,
