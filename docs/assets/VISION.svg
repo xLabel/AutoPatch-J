@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1100" role="img" aria-labelledby="title description">
+  <title id="title">将代码修复融入研发流程</title>
+  <desc id="description">未来将代码修复融入研发流程：现有流水线触发 AutoPatch-J，修复提案通过 MR/PR 接入项目检查和人工评审，两类反馈返回修复任务。支持更多编程语言和静态分析工具，项目规范与长期记忆提供项目知识。</desc>
+  <defs>
+    <filter id="rough" x="-3%" y="-5%" width="106%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.009 0.021" numOctaves="2" seed="17" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="12" markerHeight="12" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M2 2 Q7 4 12 7 Q7 10 2 12"/></marker>
+    <marker id="approval-arrow" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="12" markerHeight="12" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M2 2 Q7 4 12 7 Q7 10 2 12"/></marker>
+  </defs>
+  <style>
+    .canvas { fill:#f5f6f7; }
+    text { fill:#24272b; font-family:"HanziPen SC","Hannotate SC","Kaiti SC","STKaiti","KaiTi","PingFang SC","Microsoft YaHei",sans-serif; font-size:32px; font-weight:600; }
+    .title { font-size:44px; } .heading { font-size:34px; } .small { font-size:28px; } .tiny { font-size:26px; } .brand { font-size:40px; }
+    .muted { fill:#545b63; }
+    .panel { fill:#f5f6f7; stroke:#737b84; stroke-width:2.3; stroke-linejoin:round; filter:url(#rough); }
+    .blue { fill:#edf3fc; stroke:#3869a4; } .blue-text { fill:#24588f; }
+    .purple { fill:#f3eff9; stroke:#8661aa; } .purple-text { fill:#704390; }
+    .orange { fill:#fbf1e6; stroke:#b46b24; } .orange-text { fill:#935111; }
+    .line { fill:none; stroke:#737b84; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; marker-end:url(#arrow); }
+    .approval { stroke:#b46b24; marker-end:url(#approval-arrow); } .dashed { stroke-dasharray:8 7; }
+    #arrow path { fill:none; stroke:#737b84; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+    #approval-arrow path { fill:none; stroke:#b46b24; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+    @media(prefers-color-scheme:dark) {
+      .canvas,.panel { fill:#181b20; } text { fill:#f1eee7; } .muted { fill:#b4bcc5; }
+      .panel { stroke:#a8afb8; } .blue { fill:#192b40; stroke:#8bb5e7; } .blue-text { fill:#a4c8f2; }
+      .purple { fill:#2b223b; stroke:#b99bd9; } .purple-text { fill:#d1b7ed; }
+      .orange { fill:#36291c; stroke:#e1a266; } .orange-text { fill:#f1bb84; }
+      .line,#arrow path { stroke:#a8afb8; } .approval,#approval-arrow path { stroke:#e1a266; }
+    }
+  </style>
+  <rect class="canvas" width="1600" height="1100" rx="18"/>
+  <text x="50" y="64" text-anchor="start" class="title">将代码修复融入研发流程</text>
+  <path class="panel" d="M42 107 Q800.0 102 1558 107 L1561 348 Q800.0 353 41 349 Z"/>
+  <text x="70" y="151" text-anchor="start" class="heading">研发协作</text>
+  <path class="panel " d="M72 192 Q185.0 187 298 192 L301 288 Q185.0 293 71 289 Z"/>
+  <g data-label-box="70,190,230,100">
+  <text x="185.0" y="229.5" text-anchor="middle" class="">代码变更</text>
+  <text x="185.0" y="272.5" text-anchor="middle" class="small muted">目标仓库</text>
+  </g>
+  <path class="panel " d="M372 192 Q495.0 187 618 192 L621 288 Q495.0 293 371 289 Z"/>
+  <g data-label-box="370,190,250,100">
+  <text x="495.0" y="229.5" text-anchor="middle" class="">流水线触发</text>
+  <text x="495.0" y="272.5" text-anchor="middle" class="small muted">现有 CI/CD</text>
+  </g>
+  <path class="panel " d="M692 192 Q805.0 187 918 192 L921 288 Q805.0 293 691 289 Z"/>
+  <g data-label-box="690,190,230,100">
+  <text x="805.0" y="229.5" text-anchor="middle" class="">MR / PR</text>
+  <text x="805.0" y="272.5" text-anchor="middle" class="small">修复提案</text>
+  </g>
+  <path class="panel " d="M992 192 Q1100.0 187 1208 192 L1211 288 Q1100.0 293 991 289 Z"/>
+  <g data-label-box="990,190,220,100">
+  <text x="1100.0" y="229.5" text-anchor="middle" class="">项目检查</text>
+  <text x="1100.0" y="272.5" text-anchor="middle" class="small muted">团队流水线</text>
+  </g>
+  <path class="panel orange" d="M1282 192 Q1405.0 187 1528 192 L1531 288 Q1405.0 293 1281 289 Z"/>
+  <g data-label-box="1280,190,250,100">
+  <text x="1405.0" y="229.5" text-anchor="middle" class="orange-text">人工评审</text>
+  <text x="1405.0" y="272.5" text-anchor="middle" class="small muted">修订 / 合入</text>
+  </g>
+  <path class="line " d="M308 240 L361 240"/>
+  <path class="line " d="M928 240 L981 240"/>
+  <path class="line " d="M1218 240 L1271 240"/>
+  <path class="panel" d="M42 442 Q800.0 437 1558 442 L1561 783 Q800.0 788 41 784 Z"/>
+  <text x="70" y="486" text-anchor="start" class="heading">修复能力</text>
+  <path class="panel " d="M72 532 Q195.0 527 318 532 L321 673 Q195.0 678 71 674 Z"/>
+  <g data-label-box="70,530,250,145">
+  <text x="195.0" y="572.5" text-anchor="middle" class="">问题线索</text>
+  <text x="195.0" y="613.5" text-anchor="middle" class="small">静态分析结果</text>
+  <text x="195.0" y="654.5" text-anchor="middle" class="small">源码 / 代码变更</text>
+  </g>
+  <path class="panel blue" d="M382 512 Q790.0 507 1198 512 L1201 713 Q790.0 718 381 714 Z"/>
+  <text x="790" y="553" text-anchor="middle" class="brand blue-text">AutoPatch-J</text>
+  <path class="panel blue" d="M417 569 Q525.0 564 633 569 L636 679 Q525.0 684 416 680 Z"/>
+  <g data-label-box="415,567,220,114">
+  <text x="525.0" y="610.5" text-anchor="middle" class="blue-text">调查与判断</text>
+  <text x="525.0" y="653.5" text-anchor="middle" class="small">源码与分析结果</text>
+  </g>
+  <path class="panel blue" d="M682 569 Q790.0 564 898 569 L901 679 Q790.0 684 681 680 Z"/>
+  <g data-label-box="680,567,220,114">
+  <text x="790.0" y="610.5" text-anchor="middle" class="blue-text">修复提案</text>
+  <text x="790.0" y="653.5" text-anchor="middle" class="small">补丁与理由</text>
+  </g>
+  <path class="panel blue" d="M947 569 Q1055.0 564 1163 569 L1166 679 Q1055.0 684 946 680 Z"/>
+  <g data-label-box="945,567,220,114">
+  <text x="1055.0" y="598" text-anchor="middle" class="blue-text">验证反馈</text>
+  <text x="1055.0" y="634" text-anchor="middle" class="small">语法检查</text>
+  <text x="1055.0" y="669" text-anchor="middle" class="small">告警复扫</text>
+  </g>
+  <path class="line" d="M328 606 L371 606"/>
+  <path class="line" d="M643 626 L671 626"/>
+  <path class="line" d="M908 626 L936 626"/>
+  <path class="line" d="M1055 686 L1055 702 L525 702 L525 686"/>
+  <path class="panel " d="M1282 522 Q1405.0 517 1528 522 L1531 688 Q1405.0 693 1281 689 Z"/>
+  <g data-label-box="1280,520,250,170">
+  <text x="1405.0" y="555" text-anchor="middle" class="">交付内容</text>
+  <text x="1405.0" y="595" text-anchor="middle" class="small">补丁 / 完整 diff</text>
+  <text x="1405.0" y="633" text-anchor="middle" class="small">修复说明</text>
+  <text x="1405.0" y="671" text-anchor="middle" class="small">验证结果</text>
+  </g>
+  <path class="line" d="M1208 606 L1271 606"/>
+  <path class="line" d="M495 298 L495 390 L290 390 L290 521"/>
+  <path class="line" d="M1405 511 L1405 410 L805 410 L805 298"/>
+  <path class="line dashed" d="M1100 298 L1100 365 L1580 365" style="marker-end:none"/>
+  <path class="line dashed" d="M1538 240 L1580 240 L1580 749 L1140 749 L1140 723"/>
+  <text x="1375" y="739" text-anchor="middle" class="small muted">检查结果与评审意见</text>
+  <path class="panel" d="M42 852 Q800.0 847 1558 852 L1561 1063 Q800.0 1068 41 1064 Z"/>
+  <text x="70" y="896" text-anchor="start" class="heading">语言与分析生态</text>
+  <path class="panel " d="M72 932 Q260.0 927 448 932 L451 1028 Q260.0 1033 71 1029 Z"/>
+  <g data-label-box="70,930,380,100">
+  <text x="260.0" y="969.5" text-anchor="middle" class="">语言支持</text>
+  <text x="260.0" y="1012.5" text-anchor="middle" class="small">Java → 更多编程语言</text>
+  </g>
+  <path class="panel " d="M512 932 Q745.0 927 978 932 L981 1028 Q745.0 1033 511 1029 Z"/>
+  <g data-label-box="510,930,470,100">
+  <text x="745.0" y="969.5" text-anchor="middle" class="">静态分析工具</text>
+  <text x="745.0" y="1012.5" text-anchor="middle" class="small">Semgrep → 各语言分析工具</text>
+  </g>
+  <path class="panel purple" d="M1042 932 Q1285.0 927 1528 932 L1531 1028 Q1285.0 1033 1041 1029 Z"/>
+  <g data-label-box="1040,930,490,100">
+  <text x="1285.0" y="969.5" text-anchor="middle" class="purple-text">项目知识</text>
+  <text x="1285.0" y="1012.5" text-anchor="middle" class="small">项目规范 · 长期记忆</text>
+  </g>
+  <path class="line dashed" d="M430 921 L430 805 L290 805 L290 684"/>
+  <path class="line dashed" d="M750 921 L750 825 L210 825 L210 684"/>
+  <path class="line dashed" d="M1285 921 L1285 825 L790 825 L790 723"/>
+</svg>

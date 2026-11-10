@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1040" role="img" aria-labelledby="title description">
+  <title id="title">AutoPatch-J 技术架构</title>
+  <desc id="description">CLI 接入 Agent；LLM 推理决策，Harness 调度工具并回传结果。上下文与长期记忆提供任务所需信息，长期记忆通过渐进式披露分层读取。人工评审与应用验证控制源码写入，执行结果在后续对话中提供；会话、记忆内容、任务与提案分别保存。</desc>
+  <defs>
+    <filter id="rough" x="-3%" y="-5%" width="106%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.009 0.021" numOctaves="2" seed="17" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="1.5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="12" markerHeight="12" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M2 2 Q7 4 12 7 Q7 10 2 12"/></marker>
+    <marker id="approval-arrow" viewBox="0 0 14 14" refX="12" refY="7" markerWidth="12" markerHeight="12" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M2 2 Q7 4 12 7 Q7 10 2 12"/></marker>
+  </defs>
+  <style>
+    .canvas { fill:#f5f6f7; }
+    text { fill:#24272b; font-family:"HanziPen SC","Hannotate SC","Kaiti SC","STKaiti","KaiTi","PingFang SC","Microsoft YaHei",sans-serif; font-size:32px; font-weight:600; }
+    .title { font-size:43px; } .heading { font-size:34px; } .small { font-size:28px; } .tiny { font-size:26px; } .brand { font-size:40px; }
+    .muted { fill:#545b63; }
+    .panel { fill:#f5f6f7; stroke:#737b84; stroke-width:2.3; stroke-linejoin:round; filter:url(#rough); }
+    .blue { fill:#edf3fc; stroke:#3869a4; } .blue-text { fill:#24588f; }
+    .purple { fill:#f3eff9; stroke:#8661aa; } .purple-text { fill:#704390; }
+    .orange { fill:#fbf1e6; stroke:#b46b24; } .orange-text { fill:#935111; }
+    .line { fill:none; stroke:#737b84; stroke-width:2.4; stroke-linecap:round; stroke-linejoin:round; marker-end:url(#arrow); }
+    .approval { stroke:#b46b24; marker-end:url(#approval-arrow); } .dashed { stroke-dasharray:8 7; }
+    #arrow path { fill:none; stroke:#737b84; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+    #approval-arrow path { fill:none; stroke:#b46b24; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+    @media(prefers-color-scheme:dark) {
+      .canvas,.panel { fill:#181b20; } text { fill:#f1eee7; } .muted { fill:#b4bcc5; }
+      .panel { stroke:#a8afb8; } .blue { fill:#192b40; stroke:#8bb5e7; } .blue-text { fill:#a4c8f2; }
+      .purple { fill:#2b223b; stroke:#b99bd9; } .purple-text { fill:#d1b7ed; }
+      .orange { fill:#36291c; stroke:#e1a266; } .orange-text { fill:#f1bb84; }
+      .line,#arrow path { stroke:#a8afb8; } .approval,#approval-arrow path { stroke:#e1a266; }
+    }
+  </style>
+  <rect class="canvas" width="1600" height="1040" rx="18"/>
+  <text x="40" y="61" text-anchor="start" class="title">AutoPatch-J 技术架构</text>
+  <path class="panel" d="M652 118 Q760 113 868 118 L871 180 Q760 185 651 181 Z"/>
+  <g data-label-box="650,116,220,66">
+  <text x="760" y="159" text-anchor="middle" class="heading">CLI</text>
+  </g>
+  <path class="line" d="M760 190 L760 242"/>
+  <path class="line approval" d="M878 149 L1370 149 L1370 242"/>
+  <path class="panel purple" d="M42 252 Q220.0 247 398 252 L401 468 Q220.0 473 41 469 Z"/>
+  <text x="220" y="297" text-anchor="middle" class="heading purple-text">上下文管理</text>
+  <text x="220" y="350" text-anchor="middle" class="small">系统提示词 · 项目规范</text>
+  <text x="220" y="397" text-anchor="middle" class="small">当前目标 · 已确认要求</text>
+  <text x="220" y="442" text-anchor="middle" class="small">相关源码 · 增量摘要</text>
+  <path class="line dashed" d="M408 350 L431 350"/>
+  <path class="panel purple" d="M42 517 Q220.0 512 398 517 L401 798 Q220.0 803 41 799 Z"/>
+  <text x="220" y="560" text-anchor="middle" class="heading purple-text">长期记忆</text>
+  <path class="panel purple" d="M67 587 Q220.0 582 373 587 L376 665 Q220.0 670 66 666 Z"/>
+  <g data-label-box="65,585,310,82">
+  <text x="220.0" y="618.5" text-anchor="middle" class="small">精简约定与主题入口</text>
+  <text x="220.0" y="653.5" text-anchor="middle" class="tiny muted">自动加入上下文</text>
+  </g>
+  <path class="line " d="M220 675 L220 692"/>
+  <path class="panel purple" d="M67 702 Q220.0 697 373 702 L376 780 Q220.0 785 66 781 Z"/>
+  <g data-label-box="65,700,310,82">
+  <text x="220.0" y="733.5" text-anchor="middle" class="small">详细内容</text>
+  <text x="220.0" y="768.5" text-anchor="middle" class="tiny muted">按需读取或检索</text>
+  </g>
+  <path class="line dashed" d="M408 626 L416 626 L416 435 L431 435"/>
+  <path class="panel blue" d="M442 252 Q760.0 247 1078 252 L1081 468 Q760.0 473 441 469 Z"/>
+  <text x="760" y="295" text-anchor="middle" class="brand blue-text">Agent</text>
+  <path class="panel blue" d="M467 328 Q547.5 323 628 328 L631 398 Q547.5 403 466 399 Z"/>
+  <g data-label-box="465,326,165,74">
+  <text x="547.5" y="354.0" text-anchor="middle" class="tiny muted">LLM</text>
+  <text x="547.5" y="387.0" text-anchor="middle" class="small">推理决策</text>
+  </g>
+  <path class="panel blue" d="M677 328 Q757.5 323 838 328 L841 398 Q757.5 403 676 399 Z"/>
+  <g data-label-box="675,326,165,74">
+  <text x="757.5" y="354.0" text-anchor="middle" class="tiny muted">Harness</text>
+  <text x="757.5" y="387.0" text-anchor="middle" class="small">工具调度</text>
+  </g>
+  <path class="panel blue" d="M887 328 Q967.5 323 1048 328 L1051 398 Q967.5 403 886 399 Z"/>
+  <g data-label-box="885,326,165,74">
+  <text x="967.5" y="354.0" text-anchor="middle" class="tiny muted">Harness</text>
+  <text x="967.5" y="387.0" text-anchor="middle" class="small">结果回传</text>
+  </g>
+  <path class="line " d="M638 365 L666 365"/>
+  <path class="line " d="M848 365 L876 365"/>
+  <path class="line " d="M968 408 L968 433 L548 433 L548 408"/>
+  <text x="760" y="458" text-anchor="middle" class="tiny">请求上限 · 循环检测</text>
+  <path class="line " d="M780 478 L780 506" marker-start="url(#arrow)"/>
+  <path class="panel blue" d="M442 517 Q760.0 512 1078 517 L1081 798 Q760.0 803 441 799 Z"/>
+  <text x="760" y="560" text-anchor="middle" class="heading blue-text">工具能力</text>
+  <path class="panel blue" d="M467 587 Q600.0 582 733 587 L736 669 Q600.0 674 466 670 Z"/>
+  <g data-label-box="465,585,270,86">
+  <text x="600.0" y="620.5" text-anchor="middle" class="">静态分析</text>
+  <text x="600.0" y="655.5" text-anchor="middle" class="tiny">Semgrep</text>
+  </g>
+  <path class="panel blue" d="M787 587 Q920.0 582 1053 587 L1056 669 Q920.0 674 786 670 Z"/>
+  <g data-label-box="785,585,270,86">
+  <text x="920.0" y="620.5" text-anchor="middle" class="small">源码与引用调查</text>
+  <text x="920.0" y="655.5" text-anchor="middle" class="tiny">Tree-sitter</text>
+  </g>
+  <path class="panel blue" d="M467 697 Q600.0 692 733 697 L736 779 Q600.0 784 466 780 Z"/>
+  <g data-label-box="465,695,270,86">
+  <text x="600.0" y="730.5" text-anchor="middle" class="">记忆读写</text>
+  <text x="600.0" y="765.5" text-anchor="middle" class="tiny">读取 · 检索 · 更新</text>
+  </g>
+  <path class="panel blue" d="M787 697 Q920.0 692 1053 697 L1056 779 Q920.0 784 786 780 Z"/>
+  <g data-label-box="785,695,270,86">
+  <text x="920.0" y="730.5" text-anchor="middle" class="">提案与任务状态</text>
+  <text x="920.0" y="765.5" text-anchor="middle" class="tiny">diff · Java 语法检查</text>
+  </g>
+  <path class="panel orange" d="M1182 252 Q1370.0 247 1558 252 L1561 468 Q1370.0 473 1181 469 Z"/>
+  <text x="1370" y="297" text-anchor="middle" class="heading orange-text">人工评审</text>
+  <text x="1370" y="350" text-anchor="middle" class="small">完整 diff · 修改理由</text>
+  <text x="1370" y="397" text-anchor="middle" class="small">修订方案 · 确认版本</text>
+  <text x="1370" y="442" text-anchor="middle" class="small">明确写入范围</text>
+  <path class="line " d="M1088 350 L1171 350"/>
+  <text x="1130" y="333" text-anchor="middle" class="tiny muted">提案</text>
+  <path class="line approval" d="M1370 478 L1370 506"/>
+  <text x="1440" y="502" text-anchor="middle" class="tiny orange-text">apply</text>
+  <path class="panel orange" d="M1182 517 Q1370.0 512 1558 517 L1561 798 Q1370.0 803 1181 799 Z"/>
+  <text x="1370" y="560" text-anchor="middle" class="heading orange-text">应用与验证</text>
+  <text x="1370" y="615" text-anchor="middle" class="small">批准范围 · 补丁版本</text>
+  <text x="1370" y="668" text-anchor="middle" class="small">源码基线核对 · 逐文件写入</text>
+  <text x="1370" y="721" text-anchor="middle" class="small">目标告警复扫</text>
+  <text x="1370" y="776" text-anchor="middle" class="tiny muted">执行结果 → 后续对话</text>
+  <path class="line dashed" d="M1172 760 L1130 760 L1130 420 L1088 420"/>
+  <path class="panel " d="M42 912 Q220.0 907 398 912 L401 993 Q220.0 998 41 994 Z"/>
+  <g data-label-box="40,910,360,85">
+  <text x="220.0" y="962.5" text-anchor="middle" class="">记忆内容</text>
+  </g>
+  <path class="panel " d="M442 912 Q540.0 907 638 912 L641 993 Q540.0 998 441 994 Z"/>
+  <g data-label-box="440,910,200,85">
+  <text x="540.0" y="962.5" text-anchor="middle" class="">会话</text>
+  </g>
+  <path class="panel " d="M662 912 Q760.0 907 858 912 L861 993 Q760.0 998 661 994 Z"/>
+  <g data-label-box="660,910,200,85">
+  <text x="760.0" y="962.5" text-anchor="middle" class="">符号索引</text>
+  </g>
+  <path class="panel " d="M882 912 Q980.0 907 1078 912 L1081 993 Q980.0 998 881 994 Z"/>
+  <g data-label-box="880,910,200,85">
+  <text x="980.0" y="962.5" text-anchor="middle" class="">项目源码</text>
+  </g>
+  <path class="panel " d="M1182 912 Q1370.0 907 1558 912 L1561 993 Q1370.0 998 1181 994 Z"/>
+  <g data-label-box="1180,910,380,85">
+  <text x="1370.0" y="962.5" text-anchor="middle" class="">任务与提案</text>
+  </g>
+  <path class="line " d="M220 808 L220 901"/>
+  <path class="line " d="M465 478 L465 494 L430 494 L430 865 L540 865 L540 901" marker-start="url(#arrow)"/>
+  <path class="line " d="M456 738 L442 738 Q430 720 418 738 L408 738" marker-start="url(#arrow)"/>
+  <path class="line " d="M760 808 L760 901"/>
+  <path class="line " d="M935 808 L935 901"/>
+  <path class="line approval" d="M1420 808 L1420 901"/>
+  <path class="line approval" d="M1250 808 L1250 865 L1040 865 L1040 901"/>
+</svg>
