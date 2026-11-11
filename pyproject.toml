@@ -25,12 +25,10 @@ dependencies = [
   "tree-sitter-java>=0.23.0",
 ]
 
-[project.optional-dependencies]
-test = [
+[dependency-groups]
+dev = [
     "pytest",
     "pytest-mock",
-]
-dev = [
     "black==26.10.1",
     "pylint==4.1.3",
     "pyrefly==1.4.0",

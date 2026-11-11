@@ -39,31 +39,31 @@ docstring 按公开 API、非平凡规模或非显然逻辑等原文条件判断
 
 ## 3. 安装与检查
 
-在仓库根目录、已激活的项目虚拟环境中执行：
+预先安装 uv 和 Python 3.14+，在仓库根目录执行：
 
 ```bash
-python -m pip install -c constraints.txt -e '.[test,dev]'
+uv sync --locked
 ```
 
-`dev` 固定 Black `26.10.1`、Pylint `4.1.3`、Pyrefly `1.4.0`；它们仅用于开发，不参与 CLI 启动。Black 和 Pyrefly 的配置同时约束工具版本。升级须同步依赖、配置与本页，并检查诊断和排版变化。
+`pyproject.toml` 声明直接依赖，`uv.lock` 锁定完整解析结果。`dev` 依赖组包含 pytest、pytest-mock，并固定 Black `26.10.1`、Pylint `4.1.3`、Pyrefly `1.4.0`；开发依赖不参与 CLI 启动，运行环境可用 `uv sync --locked --no-dev` 安装。Black 和 Pyrefly 的配置同时约束工具版本。升级须审查锁文件变化，同步依赖、配置与本页，并检查诊断和排版变化。日常命令使用 `--locked`，锁文件失效时停止，不自动重新解析。
 
 三项只读检查分别运行，保留各自退出码；一项失败后仍应取得其他项的结果：
 
 ```bash
-python -m black --check src tests
+uv run --locked python -m black --check src tests
 ```
 
 ```bash
-python -m pylint --rcfile=.pylintrc --py-version=3.14 --source-roots=src,tests --recursive=y --jobs=1 --enable=wrong-import-order,consider-using-with,consider-using-join --reports=no --score=no src tests
+uv run --locked python -m pylint --rcfile=.pylintrc --py-version=3.14 --source-roots=src,tests --recursive=y --jobs=1 --enable=wrong-import-order,consider-using-with,consider-using-join --reports=no --score=no src tests
 ```
 
 ```bash
-python -m pyrefly check --min-severity=warn
+uv run --locked python -m pyrefly check --min-severity=warn
 ```
 
 检查对象为 `src` 与 `tests` 两个目录中的自有 Python 文件；新增根入口、维护脚本或源码目录时同步上述命令及类型检查输入范围。第三方原件、虚拟环境、缓存与生成物不作为自有代码检查对象。缓存使用已忽略目录，原始报告保留在会话或系统临时目录，不提交诊断台账。
 
-Black 使用稳定默认排版、80 列和 Python 3.14 目标，不启用 preview 或 fast。原文明确允许的长导入、URL、路径和格式化器无法拆分等行长例外仍成立，docstring 首行限制另按原文核对。后续已获授权的编码任务可对本次处理的文件执行 `python -m black <文件路径>`；不得为检查顺便批量格式化无关文件。
+Black 使用稳定默认排版、80 列和 Python 3.14 目标，不启用 preview 或 fast。原文明确允许的长导入、URL、路径和格式化器无法拆分等行长例外仍成立，docstring 首行限制另按原文核对。后续已获授权的编码任务可对本次处理的文件执行 `uv run --locked python -m black <文件路径>`；不得为检查顺便批量格式化无关文件。
 
 选择 Black 是采用 Google 列举的成熟排版选项；Pyink 的附加排版选择及对既有 Google 代码风格的适配不是本项目当前需要，不并用两个格式化器。排版器负责排版，不负责翻译规范或证明业务正确。
 
@@ -81,11 +81,11 @@ Pyrefly 采用显式 `default` preset、Python 3.14 目标、`src` 与仓库根�
 
 不使用 baseline、批量忽略或 `exit-zero` 获得通过。必要抑制按原文定向说明理由；已有抑制须纳入结果解释，不能把其屏蔽的内容说成检查通过。
 
-需要核对生产源码接口时，可定向运行 `python -m pyrefly check --preset strict src/autopatch_j --min-severity=warn`，按实际诊断审查，不据此批量修改全局 preset 或要求测试代码全部 strict。
+需要核对生产源码接口时，可定向运行 `uv run --locked python -m pyrefly check --preset strict src/autopatch_j --min-severity=warn`，按实际诊断审查，不据此批量修改全局 preset 或要求测试代码全部 strict。
 
-涉及安装与资源交付时，在临时目录通过 `python -m pip wheel --no-deps --wheel-dir <临时目录> .` 构建 wheel，使用隔离构建准备后端；再在临时虚拟环境按 `constraints.txt` 安装构建产物。从仓库外核对包来源、两个 Python CLI 入口、内置规则资源和无 Key 时保留诊断交互、拒绝模型请求的行为，避免 editable install 掩盖打包遗漏。此检查在本地执行，不混入默认网络隔离测试，不调用真实模型；临时构建产物不提交。
+涉及安装与资源交付时，将当前打包输入和锁文件复制到全新临时目录，通过 `uv sync --locked --no-dev --no-editable` 使用隔离构建安装，避免 editable install 掩盖打包遗漏。从仓库外核对包来源、两个 Python CLI 入口、内置规则资源和无 Key 时保留诊断交互、拒绝模型请求的行为。此检查在本地执行，不混入默认网络隔离测试，不调用真实模型；临时构建产物不提交。
 
-涉及模块删除或移动时，核对 wheel 清单没有已删除模块，不能只看源码目录。为避免已有 `build/` 缓存混入旧文件，可将当前打包输入复制到全新临时目录后构建，不复制构建缓存或旧 egg-info；保留尚未提交的新源码，不用 Git 历史代替当前产物。
+涉及模块删除或移动时，还要核对安装产物的文件清单没有已删除模块，不能只看源码目录。临时副本不复制构建缓存或旧 egg-info；保留尚未提交的新源码，不用 Git 历史代替当前产物。
 
 ## 4. 编码与审查
 

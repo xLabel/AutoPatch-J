@@ -242,6 +242,7 @@ raise SystemExit(__main__.main())
     result = subprocess.run(
         [sys.executable, "-c", script],
         cwd=tmp_path,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         capture_output=True,
         text=True,
         check=False,

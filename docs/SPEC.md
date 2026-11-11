@@ -154,7 +154,7 @@ reset 由应用层在同一修复锁内协调任务结束和索引组件清理�
 
 ### 6.1 配置与协议
 
-Python 3.14+；固定 `pydantic-ai-slim[openai]==2.63.0`、`pydantic-ai-harness==0.63.0`、`openai==3.40.0`、`filelock==4.2.4`。完整解析版本在 `constraints.txt`，安装使用 `python -m pip install -c constraints.txt -e '.[test,dev]'`。固定依赖不代表固定模型服务端版本。
+Python 3.14+；固定 `pydantic-ai-slim[openai]==2.63.0`、`pydantic-ai-harness==0.63.0`、`openai==3.40.0`、`filelock==4.2.4`。`pyproject.toml` 声明直接依赖，`uv.lock` 锁定完整解析结果；开发环境使用 `uv sync --locked`，包含测试与检查工具的 `dev` 依赖组。示例启动脚本通过 uv 使用项目环境，以 demo 为工作目录，不安装开发依赖，也不自动下载 uv 或 Python。固定依赖不代表固定模型服务端版本。
 
 | 环境变量 | 默认值与用途 |
 |---|---|
@@ -230,7 +230,7 @@ Python 报错文案集中在 [error_messages](../src/autopatch_j/error_messages.
 
 ## 8. 验证契约与能力限制
 
-`pytest -q` 是确定性完整回归，默认阻止真实 OpenAI client 和原生模型网络调用；只允许明确 FunctionModel/TestModel 或 MockTransport。扫描器与传输可以替代，补丁判断、文件 IO、状态转换、人工绑定及 SQLite 持久化保留真实组件。
+`uv run --locked python -m pytest -q` 是确定性完整回归，默认阻止真实 OpenAI client 和原生模型网络调用；只允许明确 FunctionModel/TestModel 或 MockTransport。扫描器与传输可以替代，补丁判断、文件 IO、状态转换、人工绑定及 SQLite 持久化保留真实组件。
 
 真实 LLM 用例标记 live_llm，需本次明确同意并以 `--run-live-llm` 启用；先行确定性失败或首个 live 失败阻止后续请求。输出只显示模型和安全 endpoint origin。授权要求见 [AGENTS](../AGENTS.md#实现与验证)。
 

@@ -16,35 +16,12 @@ hold_on_failure() {
 }
 trap hold_on_failure EXIT
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "无法启动：未找到 Python，请安装 Python 3.14 或更高版本。"
+if ! command -v uv >/dev/null 2>&1; then
+    echo "无法启动：未找到 uv。安装指引：https://docs.astral.sh/uv/getting-started/installation/"
     exit 1
 fi
 
-if ! python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 14))'; then
-    echo "无法启动：需要 Python 3.14 或更高版本。"
-    exit 1
-fi
-
-if [ ! -d "$ROOT_DIR/.venv" ]; then
-    echo "[BOOTSTRAP] Creating virtual environment..."
-    if ! python3 -m venv "$ROOT_DIR/.venv"; then
-        echo "无法启动：运行环境创建失败，请检查上方错误。"
-        exit 1
-    fi
-fi
-
-if ! "$ROOT_DIR/.venv/bin/python" -c 'import sys; raise SystemExit(sys.version_info < (3, 14))'; then
-    echo "无法启动：现有 .venv 的 Python 版本不符合要求，请重建环境。"
-    exit 1
-fi
-
-echo "[DEPENDENCY] Syncing project dependencies from pyproject.toml..."
-if ! "$ROOT_DIR/.venv/bin/python" -m pip install --quiet -c "$ROOT_DIR/constraints.txt" -e "$ROOT_DIR"; then
-    echo "无法启动：依赖安装失败，请检查上方安装错误。"
-    exit 1
-fi
-
+# uv 校验 Python、锁文件并准备项目环境；模型配置由 CLI 诊断。
 echo "[START] Launching AutoPatch-J (Demo Mode)..."
 cd "$ROOT_DIR/examples/demo-repo"
-"$ROOT_DIR/.venv/bin/python" -m autopatch_j
+uv run --project "$ROOT_DIR" --locked --no-dev --no-python-downloads python -m autopatch_j
